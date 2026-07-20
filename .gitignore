@@ -1,0 +1,8 @@
+.gradle/
+build/
+out/
+.idea/
+!.run/
+*.iml
+.superpowers/
+data/
