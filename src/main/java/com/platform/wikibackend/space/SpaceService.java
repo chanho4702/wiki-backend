@@ -1,23 +1,30 @@
 package com.platform.wikibackend.space;
 
+import com.platform.wikibackend.attachment.LocalFileStorage;
 import com.platform.wikibackend.common.ForbiddenException;
 import com.platform.wikibackend.common.NotFoundException;
+import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
+import com.platform.wikibackend.repository.AttachmentRepository;
+import com.platform.wikibackend.repository.PageRepository;
+import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import com.platform.wikibackend.space.dto.SpaceCreateRequest;
 import com.platform.wikibackend.space.dto.SpaceResponse;
 import com.platform.wikibackend.space.dto.SpaceUpdateRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -26,6 +33,10 @@ public class SpaceService {
     private final SpaceRepository spaces;
     private final PermissionClient permissions;
     private final EventRelay events;
+    private final PageRepository pages;
+    private final PageRevisionRepository revisions;
+    private final AttachmentRepository attachments;
+    private final LocalFileStorage storage;
 
     @Transactional(readOnly = true)
     public List<SpaceResponse> listAccessible(long userId) {
@@ -63,6 +74,20 @@ public class SpaceService {
     public void delete(long userId, long spaceId) {
         if (!spaces.existsById(spaceId)) throw new NotFoundException("스페이스 없음: " + spaceId);
         require(userId, spaceId, WikiAction.ADMIN);
+
+        // 스페이스 전체 정리 — 디스크 파일은 DB cascade가 못 지우므로 코드로. (H2 테스트 환경엔 FK도 없음)
+        List<Page> all = pages.findBySpaceIdOrderById(spaceId);
+        for (Page p : all) {
+            attachments.findByPageId(p.getId()).forEach(a -> {
+                if (!storage.delete(a.getStorageKey())) {
+                    log.warn("첨부 파일 삭제 실패(고아 파일 — 무해): key={}", a.getStorageKey());
+                }
+            });
+            attachments.deleteByPageId(p.getId());
+            revisions.deleteByPageId(p.getId());
+        }
+        pages.deleteAll(all);
+
         spaces.deleteById(spaceId);
         events.afterCommit(WikiEvents.spaceDeleted(userId, spaceId));
     }

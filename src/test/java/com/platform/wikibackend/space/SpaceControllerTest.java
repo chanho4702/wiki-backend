@@ -1,9 +1,15 @@
 package com.platform.wikibackend.space;
 
+import com.platform.wikibackend.domain.Attachment;
+import com.platform.wikibackend.domain.Page;
+import com.platform.wikibackend.domain.PageRevision;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.event.RecordingEventPublisher;
 import com.platform.wikibackend.permission.FakePermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
+import com.platform.wikibackend.repository.AttachmentRepository;
+import com.platform.wikibackend.repository.PageRepository;
+import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +33,9 @@ class SpaceControllerTest {
 
     @Autowired WebApplicationContext context;
     @Autowired SpaceRepository spaces;
+    @Autowired PageRepository pageRepo;
+    @Autowired PageRevisionRepository revisionRepo;
+    @Autowired AttachmentRepository attachmentRepo;
     @Autowired FakePermissionClient perms;
     @Autowired RecordingEventPublisher events;
     MockMvc mvc;
@@ -34,6 +43,9 @@ class SpaceControllerTest {
     @BeforeEach
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        attachmentRepo.deleteAll();
+        revisionRepo.deleteAll();
+        pageRepo.deleteAll();
         spaces.deleteAll();
         perms.reset();
         events.reset();
@@ -97,5 +109,21 @@ class SpaceControllerTest {
         mvc.perform(delete("/api/wiki/spaces/" + s.getId()).with(asUser(2L, "Bob")))
                 .andExpect(status().isNoContent());
         assertThat(events.events.stream().filter(e -> e.hasSpaceDeleted())).hasSize(1);
+    }
+
+    @Test
+    void 스페이스를_삭제하면_페이지_리비전_첨부_행이_함께_정리된다() throws Exception {
+        Space s = spaces.save(Space.of("gone", "삭제될 곳", null, 9L));
+        perms.allow(2L, s.getId(), WikiAction.ADMIN);
+        Page p = pageRepo.save(Page.of(s.getId(), null, "t", "c", 9L));
+        revisionRepo.save(PageRevision.snapshotOf(p));
+        attachmentRepo.save(Attachment.of(p.getId(), "f.png", "image/png", 4L, "no-such-key", 9L));
+
+        mvc.perform(delete("/api/wiki/spaces/" + s.getId()).with(asUser(2L, "Bob")))
+                .andExpect(status().isNoContent());
+
+        assertThat(pageRepo.findBySpaceIdOrderById(s.getId())).isEmpty();
+        assertThat(revisionRepo.findByPageIdOrderByVersionDesc(p.getId())).isEmpty();
+        assertThat(attachmentRepo.findByPageId(p.getId())).isEmpty();
     }
 }
