@@ -1,5 +1,6 @@
 package com.platform.wikibackend.page;
 
+import com.platform.wikibackend.attachment.LocalFileStorage;
 import com.platform.wikibackend.common.ConflictException;
 import com.platform.wikibackend.common.NotFoundException;
 import com.platform.wikibackend.domain.Page;
@@ -13,10 +14,12 @@ import com.platform.wikibackend.page.dto.PageUpdateRequest;
 import com.platform.wikibackend.page.dto.RevisionMeta;
 import com.platform.wikibackend.page.dto.RevisionResponse;
 import com.platform.wikibackend.permission.WikiAction;
+import com.platform.wikibackend.repository.AttachmentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,12 +29,15 @@ import java.util.Objects;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class PageService {
 
     private final PageRepository pages;
     private final PageRevisionRepository revisions;
     private final SpaceService spaces;
     private final EventRelay events;
+    private final AttachmentRepository attachments;
+    private final LocalFileStorage storage;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -83,9 +89,17 @@ public class PageService {
             delete(userId, child.getId());
         }
 
+        // 첨부 파일 정리 — 디스크 파일과 DB 행 모두
+        attachments.findByPageId(pageId).forEach(a -> {
+            if (!storage.delete(a.getStorageKey())) {
+                log.warn("첨부 파일 삭제 실패(고아 파일 — 무해): key={}", a.getStorageKey());
+            }
+        });
+        attachments.deleteByPageId(pageId);
+
         // 리비전 명시 삭제 — H2 테스트 스키마는 FK 없음(Long 컬럼만) → 고아 방지
         revisions.deleteByPageId(pageId);
-        pages.delete(p); // cascade: 첨부 (첨부 파일 정리는 Task 11)
+        pages.delete(p);
         events.afterCommit(WikiEvents.pageDeleted(userId, pageId, spaceId));
     }
 
