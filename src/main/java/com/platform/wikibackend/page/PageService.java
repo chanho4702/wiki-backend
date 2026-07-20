@@ -81,7 +81,9 @@ public class PageService {
             delete(userId, child.getId());
         }
 
-        pages.delete(p); // cascade: 리비전·첨부 (첨부 파일 정리는 Task 11)
+        // 리비전 명시 삭제 — H2 테스트 스키마는 FK 없음(Long 컬럼만) → 고아 방지
+        revisions.deleteByPageId(pageId);
+        pages.delete(p); // cascade: 첨부 (첨부 파일 정리는 Task 11)
         events.afterCommit(WikiEvents.pageDeleted(userId, pageId, spaceId));
     }
 

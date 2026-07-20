@@ -43,6 +43,7 @@ class PageControllerTest {
     @BeforeEach
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        revisions.deleteAll();
         pages.deleteAll();
         spaces.deleteAll();
         perms.reset();
@@ -119,6 +120,8 @@ class PageControllerTest {
                 .andExpect(status().isNoContent());
 
         assertThat(pages.findById(child)).isEmpty();
+        assertThat(revisions.findByPageIdOrderByVersionDesc(root)).isEmpty();
+        assertThat(revisions.findByPageIdOrderByVersionDesc(child)).isEmpty();
         assertThat(events.events).anyMatch(e -> e.hasPageDeleted());
     }
 }
