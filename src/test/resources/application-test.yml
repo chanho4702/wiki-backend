@@ -6,8 +6,12 @@ spring:
     username: sa
     password: ""
   jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: create
+    properties:
+      hibernate:
+        globally_quoted_identifiers: true
   flyway:
     enabled: false
   security:
