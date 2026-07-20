@@ -6,12 +6,11 @@ spring:
     username: sa
     password: ""
   jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
-      ddl-auto: create
-    properties:
-      hibernate:
-        globally_quoted_identifiers: true
+      ddl-auto: create-drop
+  test:
+    database:
+      replace: none   # @DataJpaTest가 이 yml의 H2 URL(NON_KEYWORDS=KEY)을 그대로 쓰게 함
   flyway:
     enabled: false
   security:
