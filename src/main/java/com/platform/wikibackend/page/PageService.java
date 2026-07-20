@@ -10,6 +10,8 @@ import com.platform.wikibackend.page.dto.PageCreateRequest;
 import com.platform.wikibackend.page.dto.PageResponse;
 import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.page.dto.PageUpdateRequest;
+import com.platform.wikibackend.page.dto.RevisionMeta;
+import com.platform.wikibackend.page.dto.RevisionResponse;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
@@ -107,5 +109,33 @@ public class PageService {
                 cursor = pages.findById(cursor).map(Page::getParentId).orElse(null);
             }
         }
+    }
+
+    @Transactional(readOnly = true)
+    public List<RevisionMeta> listRevisions(long userId, long pageId) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        return revisions.findByPageIdOrderByVersionDesc(pageId).stream().map(RevisionMeta::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public RevisionResponse getRevision(long userId, long pageId, int version) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        return revisions.findByPageIdAndVersion(pageId, version)
+                .map(RevisionResponse::from)
+                .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
+    }
+
+    /** 복원 = 해당 리비전 내용으로 새 버전 생성(이력 보존 — 스펙). */
+    public PageResponse restore(long userId, long pageId, int version) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
+                .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
+        p.edit(target.getTitle(), target.getContent(), userId);
+        revisions.save(PageRevision.snapshotOf(p));
+        events.afterCommit(WikiEvents.pageUpdated(userId, p));
+        return PageResponse.from(p);
     }
 }
