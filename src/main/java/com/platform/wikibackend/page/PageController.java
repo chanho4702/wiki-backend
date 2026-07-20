@@ -1,0 +1,51 @@
+package com.platform.wikibackend.page;
+
+import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.PageResponse;
+import com.platform.wikibackend.page.dto.PageTreeItem;
+import com.platform.wikibackend.page.dto.PageUpdateRequest;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+import static com.platform.wikibackend.space.SpaceController.userId;
+
+@RestController
+@RequiredArgsConstructor
+public class PageController {
+
+    private final PageService pages;
+
+    @PostMapping("/api/wiki/pages")
+    @ResponseStatus(HttpStatus.CREATED)
+    public PageResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody PageCreateRequest req) {
+        return pages.create(userId(jwt), req);
+    }
+
+    @GetMapping("/api/wiki/pages/{id}")
+    public PageResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return pages.get(userId(jwt), id);
+    }
+
+    @GetMapping("/api/wiki/spaces/{spaceId}/pages")
+    public List<PageTreeItem> tree(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+        return pages.tree(userId(jwt), spaceId);
+    }
+
+    @PutMapping("/api/wiki/pages/{id}")
+    public PageResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                               @Valid @RequestBody PageUpdateRequest req) {
+        return pages.update(userId(jwt), id, req);
+    }
+
+    @DeleteMapping("/api/wiki/pages/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        pages.delete(userId(jwt), id);
+    }
+}
