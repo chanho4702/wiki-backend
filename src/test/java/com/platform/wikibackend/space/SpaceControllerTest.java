@@ -116,6 +116,7 @@ class SpaceControllerTest {
         Space s = spaces.save(Space.of("gone", "삭제될 곳", null, 9L));
         perms.allow(2L, s.getId(), WikiAction.ADMIN);
         Page p = pageRepo.save(Page.of(s.getId(), null, "t", "c", 9L));
+        Page child = pageRepo.save(Page.of(s.getId(), p.getId(), "자식", "c", 9L));
         revisionRepo.save(PageRevision.snapshotOf(p));
         attachmentRepo.save(Attachment.of(p.getId(), "f.png", "image/png", 4L, "no-such-key", 9L));
 
@@ -125,5 +126,6 @@ class SpaceControllerTest {
         assertThat(pageRepo.findBySpaceIdOrderById(s.getId())).isEmpty();
         assertThat(revisionRepo.findByPageIdOrderByVersionDesc(p.getId())).isEmpty();
         assertThat(attachmentRepo.findByPageId(p.getId())).isEmpty();
+        assertThat(pageRepo.findById(child.getId())).isEmpty();
     }
 }

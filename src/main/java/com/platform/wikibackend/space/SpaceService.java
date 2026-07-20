@@ -86,7 +86,10 @@ public class SpaceService {
             attachments.deleteByPageId(p.getId());
             revisions.deleteByPageId(p.getId());
         }
-        pages.deleteAll(all);
+        // 개별 DELETE(deleteAll)는 운영 PG에서 부모 페이지 삭제가 자식을 cascade로 먼저 지운 뒤
+        // 이어지는 자식 개별 DELETE가 0행 → Hibernate StaleStateException(500)을 낸다.
+        // 단일 bulk DELETE(deleteAllInBatch)는 row count를 기대하지 않아 cascade와 충돌하지 않는다.
+        pages.deleteAllInBatch(all);
 
         spaces.deleteById(spaceId);
         events.afterCommit(WikiEvents.spaceDeleted(userId, spaceId));
