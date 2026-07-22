@@ -1,8 +1,10 @@
 package com.platform.wikibackend.permission;
 
 import com.platform.proto.org.v1.*;
+import com.platform.wikibackend.common.ServiceUnavailableException;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
+import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -14,6 +16,7 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** GrpcPermissionClient 단위 검증 — in-process 가짜 org 서버로 매핑·캐시·fail-closed를 본다. */
 class GrpcPermissionClientTest {
@@ -22,15 +25,17 @@ class GrpcPermissionClientTest {
         final AtomicInteger checkCalls = new AtomicInteger();
         volatile boolean allow = true;
         volatile boolean fail = false;
+        volatile Status failStatus = Status.UNAVAILABLE;
 
         @Override public void checkPermission(CheckPermissionRequest req, StreamObserver<CheckPermissionResponse> out) {
             checkCalls.incrementAndGet();
-            if (fail) { out.onError(io.grpc.Status.UNAVAILABLE.asRuntimeException()); return; }
+            if (fail) { out.onError(failStatus.asRuntimeException()); return; }
             out.onNext(CheckPermissionResponse.newBuilder().setAllowed(allow).build());
             out.onCompleted();
         }
 
         @Override public void listUserGrants(ListUserGrantsRequest req, StreamObserver<ListUserGrantsResponse> out) {
+            if (fail) { out.onError(failStatus.asRuntimeException()); return; }
             out.onNext(ListUserGrantsResponse.newBuilder()
                     .addGrants(Grant.newBuilder().setResourceType(ResourceType.SPACE).setResourceId("3").setRole(Role.VIEWER))
                     .addGrants(Grant.newBuilder().setResourceType(ResourceType.GLOBAL).setResourceId("").setRole(Role.VIEWER))
@@ -72,9 +77,23 @@ class GrpcPermissionClientTest {
     }
 
     @Test
-    void org_불능이면_fail_closed_false() {
+    void org_불능_UNAVAILABLE이면_503으로_전파한다() {
+        // org-service 다운(전송 장애) → fail-closed로 조용히 삼키지 않고 ServiceUnavailableException(→503) 전파
         stubOrg.fail = true;
-        assertThat(client.isAllowed(2L, 5L, WikiAction.VIEW)).isFalse();
+        stubOrg.failStatus = Status.UNAVAILABLE;
+        assertThatThrownBy(() -> client.isAllowed(2L, 5L, WikiAction.VIEW))
+                .isInstanceOf(ServiceUnavailableException.class);
+        assertThatThrownBy(() -> client.accessibleSpaces(2L))
+                .isInstanceOf(ServiceUnavailableException.class);
+    }
+
+    @Test
+    void 가용성_외_gRPC_오류는_여전히_fail_closed다() {
+        // 전송 장애가 아닌 오류(예: INTERNAL)는 기존대로 안전하게 fail-closed(거부/빈 목록)
+        stubOrg.fail = true;
+        stubOrg.failStatus = Status.INTERNAL;
+        assertThat(client.isAllowed(3L, 5L, WikiAction.VIEW)).isFalse();
+        assertThat(client.accessibleSpaces(3L).all()).isFalse();
     }
 
     @Test
