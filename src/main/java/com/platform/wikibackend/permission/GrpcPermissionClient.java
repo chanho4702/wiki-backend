@@ -3,6 +3,9 @@ package com.platform.wikibackend.permission;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.platform.proto.org.v1.*;
+import com.platform.wikibackend.common.ServiceUnavailableException;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -39,6 +42,10 @@ public class GrpcPermissionClient implements PermissionClient {
                         .setAction(toProto(k.action()))
                         .build()).getAllowed();
             } catch (Exception e) {
+                if (isUnavailable(e)) {
+                    log.error("권한 서비스 불가 — 503 전파: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
+                    throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
+                }
                 log.warn("권한조회 실패 — fail-closed: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
                 return false;
             }
@@ -59,6 +66,10 @@ public class GrpcPermissionClient implements PermissionClient {
                     .collect(Collectors.toSet());
             return new AccessScope(false, ids);
         } catch (Exception e) {
+            if (isUnavailable(e)) {
+                log.error("권한 서비스 불가 — 503 전파: user={}", userId, e);
+                throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
+            }
             log.warn("grant 목록 조회 실패 — fail-closed(빈 목록): user={}", userId, e);
             return new AccessScope(false, Set.of());
         }
@@ -77,6 +88,15 @@ public class GrpcPermissionClient implements PermissionClient {
             log.warn("자동 ADMIN 부여 실패: user={} space={}", userId, spaceId, e);
             return false;
         }
+    }
+
+    /** gRPC 전송/가용성 장애(org-service 다운·타임아웃)만 판별 — 이 경우에만 503으로 전파한다. */
+    private static boolean isUnavailable(Throwable e) {
+        if (e instanceof StatusRuntimeException sre) {
+            Status.Code code = sre.getStatus().getCode();
+            return code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED;
+        }
+        return false;
     }
 
     private static Action toProto(WikiAction a) {
