@@ -43,9 +43,19 @@ public class PageController {
         return pages.update(userId(jwt), id, req);
     }
 
+    @PostMapping("/api/wiki/pages/{id}/publish")
+    public PageResponse publish(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return pages.publish(userId(jwt), id);
+    }
+
+    /**
+     * children=promote|cascade — 자식이 있을 때만 의미가 있다. 미지정이면 자식이 있는 경우 409.
+     * (Spring 기본 enum 변환은 대소문자를 구분해 소문자 값을 거부하므로 문자열로 받아 변환한다.)
+     */
     @DeleteMapping("/api/wiki/pages/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
-        pages.delete(userId(jwt), id);
+    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                       @RequestParam(required = false) String children) {
+        pages.delete(userId(jwt), id, ChildrenPolicy.from(children));
     }
 }

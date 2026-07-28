@@ -25,6 +25,14 @@ public class Page {
     @Column(name = "parent_id")
     private Long parentId; // NULL = 루트
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    private PageType type;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    private PageStatus status;
+
     @Column(nullable = false)
     private String title;
 
@@ -49,9 +57,18 @@ public class Page {
     private Instant updatedAt;
 
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
+        return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
+    }
+
+    public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId,
+                          PageType type, PageStatus status) {
         Page p = new Page();
         p.spaceId = spaceId;
         p.parentId = parentId;
+        // 폴더는 게시 개념이 없다 — 초안으로 만들어달라는 요청이 와도 게시 상태로 고정한다(기획 P3)
+        p.type = type == null ? PageType.PAGE : type;
+        p.status = p.type == PageType.FOLDER ? PageStatus.PUBLISHED
+                : (status == null ? PageStatus.PUBLISHED : status);
         p.title = title;
         p.content = content;
         p.version = 1;
@@ -70,5 +87,13 @@ public class Page {
 
     public void moveTo(Long newParentId) {
         this.parentId = newParentId;
+    }
+
+    /**
+     * 초안을 게시한다. 이미 게시된 문서면 아무것도 하지 않는다(멱등).
+     * 게시는 내용 변경이 아니므로 version을 올리지 않는다 — 리비전도 쌓이지 않는다.
+     */
+    public void publish() {
+        this.status = PageStatus.PUBLISHED;
     }
 }
