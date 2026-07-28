@@ -114,4 +114,39 @@ class AttachmentTest {
 
         assertThat(attachments.findByPageId(pageId)).isEmpty();
     }
+
+    /** 첨부가 사라졌는데 색인에 남으면 검색 결과가 404로 이어진다(proto v0.3.0). */
+    @Test
+    void 첨부_단건_삭제는_AttachmentDeleted_이벤트를_낸다() throws Exception {
+        String body = mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+        events.reset();
+
+        mvc.perform(delete("/api/wiki/attachments/" + id).with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isNoContent());
+
+        assertThat(events.events).anyMatch(e -> e.hasAttachmentDeleted()
+                && e.getAttachmentDeleted().getAttachmentId() == id
+                && e.getAttachmentDeleted().getPageId() == pageId);
+    }
+
+    /**
+     * 페이지·스페이스 삭제로 딸려 사라지는 첨부는 개별 이벤트를 내지 않는다 —
+     * 상위 PageDeleted로 소비자가 함께 정리한다(큰 트리 삭제 시 스트림 폭주 방지).
+     */
+    @Test
+    void 페이지_삭제로_딸려간_첨부는_개별_이벤트를_내지_않는다() throws Exception {
+        mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
+                .with(asUser(EDITOR, "Alice"))).andExpect(status().isCreated());
+        events.reset();
+
+        mvc.perform(delete("/api/wiki/pages/" + pageId).with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isNoContent());
+
+        assertThat(events.events).anyMatch(e -> e.hasPageDeleted());
+        assertThat(events.events).noneMatch(e -> e.hasAttachmentDeleted());
+    }
 }

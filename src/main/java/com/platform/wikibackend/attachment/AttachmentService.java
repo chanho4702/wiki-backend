@@ -76,6 +76,7 @@ public class AttachmentService {
         if (!storage.delete(a.getStorageKey())) {
             log.warn("첨부 파일 삭제 실패(고아 파일 — 무해): key={}", a.getStorageKey());
         }
+        events.afterCommit(WikiEvents.attachmentDeleted(userId, a, page.getSpaceId()));
     }
 
     public record DownloadItem(Attachment meta, Resource resource) {}

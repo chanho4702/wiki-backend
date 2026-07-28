@@ -21,10 +21,11 @@ public class FakePermissionClient implements PermissionClient {
     private final Set<Key> allowed = new HashSet<>();
     private final Set<Long> allowAllUsers = new HashSet<>();
     public final List<long[]> grantedAdmins = new ArrayList<>(); // [userId, spaceId] 기록
+    public final List<Long> revokedSpaces = new ArrayList<>();   // 회수 호출된 spaceId 기록
 
     public void allow(long userId, long spaceId, WikiAction action) { allowed.add(new Key(userId, spaceId, action)); }
     public void allowAll(long userId) { allowAllUsers.add(userId); }
-    public void reset() { allowed.clear(); allowAllUsers.clear(); grantedAdmins.clear(); }
+    public void reset() { allowed.clear(); allowAllUsers.clear(); grantedAdmins.clear(); revokedSpaces.clear(); }
 
     @Override
     public boolean isAllowed(long userId, long spaceId, WikiAction action) {
@@ -46,5 +47,15 @@ public class FakePermissionClient implements PermissionClient {
         allow(userId, spaceId, WikiAction.EDIT);
         allow(userId, spaceId, WikiAction.ADMIN);
         return true;
+    }
+
+    @Override
+    public int revokeSpaceGrants(long spaceId) {
+        revokedSpaces.add(spaceId);
+        int revoked = 0;
+        for (Key k : Set.copyOf(allowed)) {
+            if (k.spaceId() == spaceId && allowed.remove(k)) revoked++;
+        }
+        return revoked;
     }
 }

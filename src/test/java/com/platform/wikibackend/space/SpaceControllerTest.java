@@ -128,4 +128,39 @@ class SpaceControllerTest {
         assertThat(attachmentRepo.findByPageId(p.getId())).isEmpty();
         assertThat(pageRepo.findById(child.getId())).isEmpty();
     }
+
+    // ── proto v0.3.0 — 스테일 색인·고아 grant 방지 ──
+
+    /** 이름이 바뀌었는데 이벤트가 안 나가면 색인의 스페이스 표시명이 옛 이름으로 남는다. */
+    @Test
+    void 스페이스를_수정하면_SpaceUpdated_이벤트가_발행된다() throws Exception {
+        Space s = spaces.save(Space.of("ops", "운영", null, 9L));
+        perms.allow(2L, s.getId(), WikiAction.ADMIN);
+        events.reset();
+
+        mvc.perform(put("/api/wiki/spaces/" + s.getId()).with(asUser(2L, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"운영팀 위키\",\"description\":null}"))
+                .andExpect(status().isOk());
+
+        assertThat(events.events).anyMatch(e -> e.hasSpaceUpdated()
+                && e.getSpaceUpdated().getSpaceId() == s.getId()
+                && e.getSpaceUpdated().getName().equals("운영팀 위키"));
+    }
+
+    /**
+     * 스페이스가 사라져도 org의 grant가 남으면, 같은 id가 재사용될 때 예전 멤버에게
+     * 권한이 되살아난다.
+     */
+    @Test
+    void 스페이스를_삭제하면_org의_grant도_회수한다() throws Exception {
+        Space s = spaces.save(Space.of("gone", "사라질 곳", null, 9L));
+        perms.allow(2L, s.getId(), WikiAction.ADMIN);
+
+        mvc.perform(delete("/api/wiki/spaces/" + s.getId()).with(asUser(2L, "Bob")))
+                .andExpect(status().isNoContent());
+
+        assertThat(perms.revokedSpaces).contains(s.getId());
+        assertThat(perms.isAllowed(2L, s.getId(), WikiAction.ADMIN)).isFalse(); // 실제로 회수됐다
+    }
 }

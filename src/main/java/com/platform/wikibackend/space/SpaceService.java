@@ -68,6 +68,7 @@ public class SpaceService {
         Space s = spaces.findById(spaceId).orElseThrow(() -> new NotFoundException("스페이스 없음: " + spaceId));
         require(userId, spaceId, WikiAction.ADMIN);
         s.update(req.name(), req.description());
+        events.afterCommit(WikiEvents.spaceUpdated(userId, s));
         return SpaceResponse.from(s);
     }
 
@@ -92,6 +93,9 @@ public class SpaceService {
         pages.deleteAllInBatch(all);
 
         spaces.deleteById(spaceId);
+        // 스페이스가 사라져도 org의 grant는 남는다 — 같은 id가 재사용되면 예전 멤버에게
+        // 권한이 되살아나므로 함께 회수한다(v0.3.0 RevokeGrant). 실패해도 삭제는 되돌리지 않는다.
+        permissions.revokeSpaceGrants(spaceId);
         events.afterCommit(WikiEvents.spaceDeleted(userId, spaceId));
     }
 

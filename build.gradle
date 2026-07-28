@@ -20,14 +20,19 @@ repositories {
 }
 
 ext { set('springCloudVersion', '2025.1.2') }
+ext { set('testcontainersVersion', '1.21.3') }
 dependencyManagement {
-    imports { mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}" }
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+        // Boot 4 BOM이 testcontainers 버전을 관리하지 않아 직접 가져온다
+        mavenBom "org.testcontainers:testcontainers-bom:${testcontainersVersion}"
+    }
 }
 
 def grpcVersion = '1.69.0'
 
 dependencies {
-    implementation 'com.platform:common-proto:0.2.0'
+    implementation 'com.platform:common-proto:0.3.0'
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -47,6 +52,10 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-data-jpa-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation "io.grpc:grpc-inprocess:${grpcVersion}"
+    // Flyway 마이그레이션 ↔ 엔티티 정합 검증용 실 Postgres — H2(create-drop)로는 마이그레이션이 안 돌아 못 잡는다
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:junit-jupiter'
     testRuntimeOnly 'com.h2database:h2'
 }
 tasks.named('test') { useJUnitPlatform() }

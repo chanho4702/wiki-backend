@@ -90,6 +90,20 @@ public class GrpcPermissionClient implements PermissionClient {
         }
     }
 
+    @Override
+    public int revokeSpaceGrants(long spaceId) {
+        try {
+            return stub.revokeGrant(RevokeGrantRequest.newBuilder()
+                    .setResourceType(ResourceType.SPACE)
+                    .setResourceId(String.valueOf(spaceId))
+                    .build()).getRevoked();
+        } catch (Exception e) {
+            // 스페이스는 이미 지워졌다 — 되돌릴 수 없으니 실패를 전파하지 않고 남은 고아 grant를 로그로 알린다
+            log.warn("스페이스 grant 회수 실패(고아 grant 잔존): space={}", spaceId, e);
+            return 0;
+        }
+    }
+
     /** gRPC 전송/가용성 장애(org-service 다운·타임아웃)만 판별 — 이 경우에만 503으로 전파한다. */
     private static boolean isUnavailable(Throwable e) {
         if (e instanceof StatusRuntimeException sre) {
