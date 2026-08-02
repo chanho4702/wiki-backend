@@ -1,6 +1,7 @@
 package com.platform.wikibackend.grpc;
 
 import com.platform.proto.wiki.v1.AttachmentMeta;
+import com.platform.proto.wiki.v1.GetAttachmentMetaRequest;
 import com.platform.proto.wiki.v1.GetPageContentRequest;
 import com.platform.proto.wiki.v1.ListAttachmentsRequest;
 import com.platform.proto.wiki.v1.ListPageContentsRequest;
@@ -119,6 +120,53 @@ class WikiContentGrpcServiceTest {
         // 색인기는 이걸 "이미 지워졌다"로 읽는다 — 삭제와 조회가 경합해도 색인이 수렴하는 근거
         assertThatThrownBy(() -> stub.getPageContent(
                 GetPageContentRequest.newBuilder().setPageId(9999L).build()))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(e -> assertThat(((StatusRuntimeException) e).getStatus().getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+    }
+
+    @Test
+    void 스페이스가_사라진_고아_페이지는_NOT_FOUND가_아니라_FAILED_PRECONDITION이다() {
+        // 색인기는 NOT_FOUND를 "이미 지워졌다"로 읽고 색인에서 뺀다. 페이지가 살아 있는데
+        // 스페이스만 없는 건 데이터 불일치지 삭제가 아니다 — 삭제로 처리하면 스페이스가
+        // 복구돼도 새 이벤트가 오기 전까지 색인이 돌아오지 않는다.
+        // 존재하지 않는 spaceId로 직접 만든다. 스페이스를 만들었다 지우면 영속성 컨텍스트
+        // 1차 캐시가 그대로 돌려줘서 고아 상태가 재현되지 않는다(H2엔 FK가 없어 가능한 상태).
+        Page p = pages.save(Page.of(999_999L, null, "고아", "본문", 1L));
+
+        assertThatThrownBy(() -> stub.getPageContent(
+                GetPageContentRequest.newBuilder().setPageId(p.getId()).build()))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(e -> assertThat(((StatusRuntimeException) e).getStatus().getCode())
+                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+    }
+
+    @Test
+    void 첨부_단건_조달은_스페이스_표시명까지_채워_돌려준다() {
+        // AttachmentAdded 이벤트에는 파일명·크기·업로더·스페이스 표시명이 없다 —
+        // 전량 스트림을 매 이벤트마다 훑을 수 없어 단건 RPC가 필요하다
+        Space s = spaces.save(Space.of("doc", "문서함", null, 1L));
+        Page p = pages.save(Page.of(s.getId(), null, "제안서", "본문", 1L));
+        Attachment a = attachments.save(
+                Attachment.of(p.getId(), "제안서.pdf", "application/pdf", 2048L, "uuid-9", 5L));
+
+        AttachmentMeta got = stub.getAttachmentMeta(
+                GetAttachmentMetaRequest.newBuilder().setAttachmentId(a.getId()).build());
+
+        assertThat(got.getAttachmentId()).isEqualTo(a.getId());
+        assertThat(got.getSpaceId()).isEqualTo(s.getId());
+        assertThat(got.getSpaceKey()).isEqualTo("doc");
+        assertThat(got.getSpaceName()).isEqualTo("문서함");
+        assertThat(got.getFilename()).isEqualTo("제안서.pdf");
+        assertThat(got.getContentType()).isEqualTo("application/pdf");
+        assertThat(got.getSizeBytes()).isEqualTo(2048L);
+        assertThat(got.getUploadedBy()).isEqualTo(5L);
+    }
+
+    @Test
+    void 없는_첨부는_NOT_FOUND다() {
+        assertThatThrownBy(() -> stub.getAttachmentMeta(
+                GetAttachmentMetaRequest.newBuilder().setAttachmentId(9999L).build()))
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(e -> assertThat(((StatusRuntimeException) e).getStatus().getCode())
                         .isEqualTo(Status.Code.NOT_FOUND));

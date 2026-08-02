@@ -1,6 +1,7 @@
 package com.platform.wikibackend.grpc;
 
 import com.platform.proto.wiki.v1.AttachmentMeta;
+import com.platform.proto.wiki.v1.GetAttachmentMetaRequest;
 import com.platform.proto.wiki.v1.GetPageContentRequest;
 import com.platform.proto.wiki.v1.ListAttachmentsRequest;
 import com.platform.proto.wiki.v1.ListPageContentsRequest;
@@ -56,8 +57,13 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
         }
         Optional<Space> space = spaceRepository.findById(page.get().getSpaceId());
         if (space.isEmpty()) {
-            observer.onError(Status.NOT_FOUND
-                    .withDescription("space not found for page: " + request.getPageId())
+            // NOT_FOUND가 아니다. 색인기는 NOT_FOUND를 "이미 지워졌다"로 읽고 색인에서 빼는데,
+            // 이건 페이지가 살아 있는데 스페이스만 사라진 **데이터 불일치**다. 삭제로 처리하면
+            // 스페이스가 복구돼도 새 이벤트가 오기 전까지 색인이 돌아오지 않는다.
+            log.error("고아 페이지 — 스페이스가 없다: page={} space={}",
+                    request.getPageId(), page.get().getSpaceId());
+            observer.onError(Status.FAILED_PRECONDITION
+                    .withDescription("space missing for page: " + request.getPageId())
                     .asRuntimeException());
             return;
         }
@@ -93,6 +99,23 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
 
     @Override
     @Transactional(readOnly = true)
+    public void getAttachmentMeta(GetAttachmentMetaRequest request, StreamObserver<AttachmentMeta> observer) {
+        Optional<AttachmentIndexRow> row = attachmentRepository.findForIndexingById(request.getAttachmentId());
+        if (row.isEmpty()) {
+            // 페이지와 같은 계약: 없으면 삭제로 간주해 색인에서 뺀다.
+            // (조인 대상인 페이지·스페이스가 사라진 경우도 여기로 온다 — 첨부는 상위가 사라지면
+            //  함께 정리되는 게 정상이라 페이지처럼 FAILED_PRECONDITION으로 나누지 않는다.)
+            observer.onError(Status.NOT_FOUND
+                    .withDescription("attachment not found: " + request.getAttachmentId())
+                    .asRuntimeException());
+            return;
+        }
+        observer.onNext(toProto(row.get()));
+        observer.onCompleted();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public void listAttachments(ListAttachmentsRequest request, StreamObserver<AttachmentMeta> observer) {
         long cursor = 0L;
         while (true) {
@@ -100,20 +123,26 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                     attachmentRepository.findForIndexing(cursor, request.getSpaceId(), Limit.of(BATCH));
             if (batch.isEmpty()) break;
             for (AttachmentIndexRow a : batch) {
-                observer.onNext(AttachmentMeta.newBuilder()
-                        .setAttachmentId(a.attachmentId())
-                        .setPageId(a.pageId())
-                        .setSpaceId(a.spaceId())
-                        .setFilename(a.filename())
-                        .setContentType(a.contentType())
-                        .setSizeBytes(a.sizeBytes())
-                        .setUploadedBy(a.uploadedBy())
-                        .setCreatedAt(a.createdAt().toEpochMilli())
-                        .build());
+                observer.onNext(toProto(a));
             }
             cursor = batch.getLast().attachmentId();
         }
         observer.onCompleted();
+    }
+
+    private static AttachmentMeta toProto(AttachmentIndexRow a) {
+        return AttachmentMeta.newBuilder()
+                .setAttachmentId(a.attachmentId())
+                .setPageId(a.pageId())
+                .setSpaceId(a.spaceId())
+                .setSpaceKey(a.spaceKey())
+                .setSpaceName(a.spaceName())
+                .setFilename(a.filename())
+                .setContentType(a.contentType())
+                .setSizeBytes(a.sizeBytes())
+                .setUploadedBy(a.uploadedBy())
+                .setCreatedAt(a.createdAt().toEpochMilli())
+                .build();
     }
 
     private static PageContent toProto(Page p, Space s) {
