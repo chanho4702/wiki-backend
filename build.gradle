@@ -8,6 +8,9 @@ version = '0.0.1-SNAPSHOT'
 java { toolchain { languageVersion = JavaLanguageVersion.of(24) } }
 
 repositories {
+    // 미발행 common-proto를 로컬에서 먼저 물려 개발할 때만 켠다: -PuseMavenLocal
+    // (기본은 꺼둔다 — 켜두면 스테일한 로컬 아티팩트가 발행본을 가려 CI와 결과가 갈린다)
+    if (providers.gradleProperty('useMavenLocal').isPresent()) { mavenLocal() }
     mavenCentral()
     // common-proto 소비 — GitHub Packages (로컬: GITHUB_TOKEN env, CI: Actions access 부여 후 GITHUB_TOKEN)
     maven {
@@ -32,7 +35,7 @@ dependencyManagement {
 def grpcVersion = '1.69.0'
 
 dependencies {
-    implementation 'com.platform:common-proto:0.3.0'
+    implementation 'com.platform:common-proto:0.4.0'
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -44,6 +47,7 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"
+    implementation "io.grpc:grpc-services:${grpcVersion}"   // 리플렉션(grpcurl 디버깅용) — org-service와 동일
     implementation 'com.github.ben-manes.caffeine:caffeine'
     runtimeOnly 'org.postgresql:postgresql'
     compileOnly 'org.projectlombok:lombok:1.18.46'

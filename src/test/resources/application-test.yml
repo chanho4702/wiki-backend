@@ -30,6 +30,8 @@ platform:
   org-grpc:
     host: localhost
     port: 9131
+  grpc:
+    enabled: false   # 실 포트 바인딩 금지 — gRPC 테스트는 in-process 서버로 띄운다
   wiki:
     files-dir: ${java.io.tmpdir}/wiki-test-files
   events:
