@@ -32,7 +32,11 @@ public class EventRelay {
         try {
             publisher.publish(event);
         } catch (Exception e) {
-            log.warn("이벤트 발행 실패(비차단): type={} id={}", event.getPayloadCase(), event.getEventId(), e);
+            // ERROR인 이유: 발행 실패는 곧 색인 유실이고, 화면은 멀쩡해 보여 아무도 모른다.
+            // 실제로 dev가 스트림 미지원 Redis에 붙어 12일간 조용히 전부 유실됐다(2026-08-02).
+            // 요청은 계속 성공시킨다 — 정합의 최종 근거는 DB이고 색인은 재색인으로 보정한다(스펙).
+            log.error("이벤트 발행 실패 — 색인 유실됨(비차단): type={} id={}",
+                    event.getPayloadCase(), event.getEventId(), e);
         }
     }
 }
