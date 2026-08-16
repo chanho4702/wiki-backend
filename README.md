@@ -120,9 +120,17 @@ Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을
 - 외부 object mapping은 긴 원본 ID 대신 source identity의 SHA-256 key로 멱등성을 보장하고,
   `migration_issue`에는 구조화된 code/path만 기록한다.
 
-현재 경계는 IR v1 golden fixture와 migration checkpoint 저장 모델까지 검증한다. provider 원본
-추출기·정규화 변환기와 worker/API는 이 경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본
-포맷은 바꾸지 않는다.
+Notion은 `snapshotVersion: 1` envelope에 page 응답과 parent block ID별 paginated
+`Retrieve block children` 원본 응답을 함께 보존한다. normalizer는 현재 `Notion-Version: 2026-03-11`
+계약을 명시적으로 확인하고 pagination·재귀 children 누락을 부분 import로 진행하지 않는다. rich text,
+heading, paragraph, list/task, panel, column, page link와 복사 완료 media를 IR로 바꾸며, 미지원 block과
+복사되지 않은 media는 `opaque + migration issue`로 보존한다. Notion-hosted 임시 URL은 IR에 복사하지
+않는다. 근거는 [page content API](https://developers.notion.com/guides/data-apis/working-with-page-content)와
+[file retrieval guide](https://developers.notion.com/guides/data-apis/retrieving-files)를 따른다.
+
+현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer까지
+검증한다. 실제 Notion API extractor와 media copier, Confluence DC normalizer, worker/API는 이 경계
+위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
 
 ## 환경 변수
 
