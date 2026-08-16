@@ -43,7 +43,24 @@ public class AttachmentController {
         String encoded = URLEncoder.encode(item.meta().getFilename(), StandardCharsets.UTF_8).replace("+", "%20");
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.parseMediaType(item.meta().getContentType()))
+                .contentLength(item.meta().getSizeBytes())
+                .body(item.resource());
+    }
+
+    /** 권한 확인 후 안전한 래스터 이미지만 인라인으로 제공한다(SVG/HTML 실행 차단). */
+    @GetMapping("/api/wiki/attachments/{id}/inline")
+    public ResponseEntity<Resource> inline(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
+        String encoded = URLEncoder.encode(item.meta().getFilename(), StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encoded)
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=60, no-transform")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Cross-Origin-Resource-Policy", "same-origin")
+                .contentType(MediaType.parseMediaType(item.meta().getContentType()))
+                .contentLength(item.meta().getSizeBytes())
                 .body(item.resource());
     }
 

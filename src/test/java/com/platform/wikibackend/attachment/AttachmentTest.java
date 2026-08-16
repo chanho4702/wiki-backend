@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.core.io.Resource;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -20,6 +21,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -32,6 +34,7 @@ class AttachmentTest {
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
     @Autowired AttachmentRepository attachments;
+    @Autowired LocalFileStorage localStorage;
     @Autowired FakePermissionClient perms;
     @Autowired RecordingEventPublisher events;
     MockMvc mvc;
@@ -59,8 +62,12 @@ class AttachmentTest {
         pageId = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
     }
 
+    private static final byte[] PNG_BYTES = new byte[]{
+            (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4
+    };
+
     private MockMultipartFile png() {
-        return new MockMultipartFile("file", "스크린샷.png", "image/png", new byte[]{1, 2, 3, 4});
+        return new MockMultipartFile("file", "스크린샷.png", "image/png", PNG_BYTES);
     }
 
     @Test
@@ -72,7 +79,9 @@ class AttachmentTest {
         mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
                         .with(asUser(EDITOR, "Alice")))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.filename").value("스크린샷.png"));
+                .andExpect(jsonPath("$.filename").value("스크린샷.png"))
+                .andExpect(jsonPath("$.contentType").value("image/png"))
+                .andExpect(jsonPath("$.checksumSha256", matchesPattern("[0-9a-f]{64}")));
 
         assertThat(events.events).anyMatch(e -> e.hasAttachmentAdded());
     }
@@ -87,7 +96,53 @@ class AttachmentTest {
         mvc.perform(get("/api/wiki/attachments/" + id).with(asUser(VIEWER, "Bob")))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")))
-                .andExpect(content().bytes(new byte[]{1, 2, 3, 4}));
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(content().bytes(PNG_BYTES));
+    }
+
+    @Test
+    void 인라인_이미지는_VIEW_권한과_보안_헤더를_요구한다() throws Exception {
+        String body = mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
+                        .with(asUser(EDITOR, "Alice")))
+                .andReturn().getResponse().getContentAsString();
+        long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+
+        mvc.perform(get("/api/wiki/attachments/" + id + "/inline").with(asUser(VIEWER, "Bob")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("inline")))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Cross-Origin-Resource-Policy", "same-origin"))
+                .andExpect(content().contentType("image/png"))
+                .andExpect(content().bytes(PNG_BYTES));
+
+        mvc.perform(get("/api/wiki/attachments/" + id + "/inline").with(asUser(99L, "Mallory")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 브라우저_MIME을_신뢰하지_않고_파일_시그니처로_판정한다() throws Exception {
+        MockMultipartFile lyingPng = new MockMultipartFile(
+                "file", "actually.png", "text/html", PNG_BYTES);
+
+        mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(lyingPng)
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.contentType").value("image/png"));
+    }
+
+    @Test
+    void HTML을_이미지로_위장해도_인라인_실행되지_않는다() throws Exception {
+        MockMultipartFile disguisedHtml = new MockMultipartFile(
+                "file", "attack.png", "image/png", "<script>alert(1)</script>".getBytes());
+        String body = mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(disguisedHtml)
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.contentType").value("application/octet-stream"))
+                .andReturn().getResponse().getContentAsString();
+        long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+
+        mvc.perform(get("/api/wiki/attachments/" + id + "/inline").with(asUser(VIEWER, "Bob")))
+                .andExpect(status().isUnsupportedMediaType());
     }
 
     @Test
@@ -96,12 +151,16 @@ class AttachmentTest {
                         .with(asUser(EDITOR, "Alice")))
                 .andReturn().getResponse().getContentAsString();
         long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+        var meta = attachments.findById(id).orElseThrow();
+        Resource stored = localStorage.open(meta.getStorageBucket(), meta.getStorageKey(), meta.getStorageVersion());
+        assertThat(stored.exists()).isTrue();
 
         mvc.perform(delete("/api/wiki/attachments/" + id).with(asUser(EDITOR, "Alice")))
                 .andExpect(status().isNoContent());
         mvc.perform(get("/api/wiki/attachments/" + id).with(asUser(EDITOR, "Alice")))
                 .andExpect(status().isNotFound());
         assertThat(attachments.findByPageId(pageId)).isEmpty();
+        assertThat(stored.exists()).isFalse();
     }
 
     @Test

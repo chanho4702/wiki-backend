@@ -1,6 +1,6 @@
 package com.platform.wikibackend.page;
 
-import com.platform.wikibackend.attachment.LocalFileStorage;
+import com.platform.wikibackend.attachment.AttachmentStorageRouter;
 import com.platform.wikibackend.common.ConflictException;
 import com.platform.wikibackend.common.NotFoundException;
 import com.platform.wikibackend.domain.Page;
@@ -40,7 +40,7 @@ public class PageService {
     private final SpaceService spaces;
     private final EventRelay events;
     private final AttachmentRepository attachments;
-    private final LocalFileStorage storage;
+    private final AttachmentStorageRouter storage;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -129,9 +129,8 @@ public class PageService {
 
         // 첨부 파일 정리 — 디스크 파일과 DB 행 모두
         attachments.findByPageId(pageId).forEach(a -> {
-            if (!storage.delete(a.getStorageKey())) {
-                log.warn("첨부 파일 삭제 실패(고아 파일 — 무해): key={}", a.getStorageKey());
-            }
+            storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
+                    a.getStorageKey(), a.getStorageVersion());
         });
         attachments.deleteByPageId(pageId);
 

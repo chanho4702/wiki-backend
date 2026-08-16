@@ -1,6 +1,6 @@
 package com.platform.wikibackend.space;
 
-import com.platform.wikibackend.attachment.LocalFileStorage;
+import com.platform.wikibackend.attachment.AttachmentStorageRouter;
 import com.platform.wikibackend.common.ForbiddenException;
 import com.platform.wikibackend.common.NotFoundException;
 import com.platform.wikibackend.domain.Page;
@@ -36,7 +36,7 @@ public class SpaceService {
     private final PageRepository pages;
     private final PageRevisionRepository revisions;
     private final AttachmentRepository attachments;
-    private final LocalFileStorage storage;
+    private final AttachmentStorageRouter storage;
 
     @Transactional(readOnly = true)
     public List<SpaceResponse> listAccessible(long userId) {
@@ -80,9 +80,8 @@ public class SpaceService {
         List<Page> all = pages.findBySpaceIdOrderById(spaceId);
         for (Page p : all) {
             attachments.findByPageId(p.getId()).forEach(a -> {
-                if (!storage.delete(a.getStorageKey())) {
-                    log.warn("첨부 파일 삭제 실패(고아 파일 — 무해): key={}", a.getStorageKey());
-                }
+                storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
+                        a.getStorageKey(), a.getStorageVersion());
             });
             attachments.deleteByPageId(p.getId());
             revisions.deleteByPageId(p.getId());

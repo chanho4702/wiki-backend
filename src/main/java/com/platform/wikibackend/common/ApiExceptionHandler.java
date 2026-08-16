@@ -29,4 +29,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ServiceUnavailableException.class)
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     public Map<String, String> unavailable(ServiceUnavailableException e) { return Map.of("error", e.getMessage()); }
+
+    @ExceptionHandler(UnsafeInlineMediaTypeException.class)
+    @ResponseStatus(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+    public Map<String, String> unsupportedInline(UnsafeInlineMediaTypeException e) {
+        return Map.of("error", e.getMessage());
+    }
 }

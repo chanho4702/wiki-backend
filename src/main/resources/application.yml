@@ -47,6 +47,17 @@ platform:
     port: ${WIKI_GRPC_PORT:9111}
   wiki:
     files-dir: ${WIKI_FILES_DIR:./data/attachments}
+    storage:
+      # 기존 첨부는 행별 storage_backend로 계속 읽고, 신규 업로드 대상만 전환한다.
+      write-backend: ${WIKI_STORAGE_WRITE_BACKEND:local}
+      s3:
+        enabled: ${WIKI_S3_ENABLED:false}
+        bucket: ${WIKI_S3_BUCKET:wiki-attachments}
+        region: ${WIKI_S3_REGION:ap-northeast-2}
+        endpoint: ${WIKI_S3_ENDPOINT:}
+        path-style-access: ${WIKI_S3_PATH_STYLE_ACCESS:false}
+        access-key: ${WIKI_S3_ACCESS_KEY:}
+        secret-key: ${WIKI_S3_SECRET_KEY:}
   events:
     enabled: true
 
