@@ -20,7 +20,7 @@ search-service는 내부 gRPC로 페이지·첨부 메타데이터를 가져가 
 | 런타임 | Java 24 · Spring Boot 4.0.6 · Gradle |
 | REST | `:9110` / dev `:19110` · `/api/wiki/**` |
 | 내부 gRPC | `:9111` · `WikiContentService` |
-| 데이터 | PostgreSQL `wikidb` · Flyway · 로컬 첨부 파일 저장소 |
+| 데이터 | PostgreSQL `wikidb` · Flyway · S3 호환 첨부 저장소(LOCAL 레거시 읽기 지원) |
 | 인증·인가 | auth-server RS256 JWT 검증 + org-service `SPACE` grant |
 | 이벤트 | Redis Streams `platform:events:v1` |
 
@@ -65,7 +65,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 버전 | `GET /api/wiki/pages/{pageId}/revisions[/{version}]` | VIEW |
 | 복원 | `POST /api/wiki/pages/{pageId}/revisions/{version}/restore` | EDIT |
 | 첨부 | `POST/GET /api/wiki/pages/{pageId}/attachments` | EDIT / VIEW |
-| 첨부 | `GET/DELETE /api/wiki/attachments/{id}` | VIEW / EDIT |
+| 첨부 확정 | `POST /api/wiki/pages/{pageId}/attachments/confirm` | EDIT |
+| 첨부 | `GET /api/wiki/attachments/{id}[/inline]`, `DELETE /api/wiki/attachments/{id}` | VIEW / EDIT |
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -75,8 +76,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 
 ```text
 gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQL
-                                   │                └─ 첨부 메타데이터
-                                   ├─파일──────────▶ 로컬 저장소
+                    (N개)          │                └─ 첨부 메타데이터
+                                   ├─S3 API───────▶ 공유 오브젝트 저장소
                                    ├─gRPC─────────▶ org-service (SPACE 권한)
                                    ├─XADD─────────▶ Redis Streams
                                    └◀─gRPC──────── search-service (색인 원문 조달)
@@ -87,8 +88,11 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 - 이벤트는 정본 트랜잭션 커밋 이후 발행하고 본문을 싣지 않는다. Redis 발행 실패가 정본을
   롤백하지는 않으며 검색 색인은 재색인으로 복구한다.
 - gRPC `WikiContentService`는 search-service 전용이고 컨테이너 외부에 공개하지 않는다.
-- 첨부 파일은 UUID storage key로 저장한다. DB에는 메타데이터만 두며, 스페이스 삭제 시
-  revision·첨부 메타데이터와 실제 파일을 함께 정리한다.
+- 첨부 파일은 UUID storage key로 공유 S3에 저장하고 DB에는 backend·bucket·version·checksum을
+  기록한다. 어느 위키 노드가 업로드했든 다른 노드가 같은 객체를 읽을 수 있다. 기존 `LOCAL` 행은
+  레거시 볼륨에서 계속 읽으며, 스페이스 삭제 시 revision·첨부 메타데이터와 실제 객체를 함께 정리한다.
+- 에디터 선업로드는 `PENDING`으로 저장한 뒤 페이지 본문 저장 후 확정한다. 저장 전에 이탈한 객체는
+  스케줄러가 최신 본문 참조를 대조해 확정하거나 보존기간 뒤 제거한다.
 
 ## 환경 변수
 
@@ -102,9 +106,16 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 | `WIKI_GRPC_ENABLED` / `WIKI_GRPC_PORT` | `true` / `9111` | 콘텐츠 조달 gRPC |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | 이벤트 스트림 |
 | `EVENTS_ENABLED` | `true` | 이벤트 발행 on/off |
-| `WIKI_FILES_DIR` | `./data/attachments` | 첨부 파일 저장 경로 |
+| `WIKI_STORAGE_WRITE_BACKEND` | `local` | 신규 첨부 저장소(`local` / `s3`) |
+| `WIKI_S3_ENABLED` / `WIKI_S3_BUCKET` | `false` / `wiki-attachments` | S3 저장소 활성화·버킷 |
+| `WIKI_S3_REGION` / `WIKI_S3_ENDPOINT` | `ap-northeast-2` / 빈 값 | S3 리전·호환 endpoint |
+| `WIKI_S3_PATH_STYLE_ACCESS` | `false` | S3Mock·일부 호환 저장소 path-style |
+| `WIKI_S3_ACCESS_KEY` / `WIKI_S3_SECRET_KEY` | 빈 값 | S3 요청 서명 자격증명 |
+| `WIKI_FILES_DIR` | `./data/attachments` | 기존 LOCAL 첨부 읽기 경로 |
 | `WIKI_MAX_ATTACHMENT_MB` | `20` | 파일·요청 최대 크기(MB) |
+| `WIKI_PENDING_ATTACHMENT_RETENTION` | `PT24H` | PENDING 첨부 정리 유예 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
+| `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
 
 ## 테스트와 배포
 
@@ -114,9 +125,9 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 docker build -t wiki-backend .
 ```
 
-`FlywaySchemaValidationTest`는 Testcontainers PostgreSQL을 사용하므로 Docker가 필요하다.
-`Dockerfile`은 런타임 전용이며 먼저 `bootJar`를 실행해야 한다. 컨테이너에서는 Eureka 등록을
-끄고 gateway-server의 `WIKI_SERVICE_URI`와 내부 DNS로 연결한다.
+`FlywaySchemaValidationTest`와 S3 다중 노드 저장소 통합 테스트는 Testcontainers를 사용하므로
+Docker가 필요하다. `Dockerfile`은 런타임 전용이며 먼저 `bootJar`를 실행해야 한다. Compose에서는
+각 위키 인스턴스가 Eureka에 등록되고 gateway-server의 `lb://wiki-backend`가 REST 요청을 분산한다.
 
 ## 디렉터리 구조
 
@@ -124,7 +135,7 @@ docker build -t wiki-backend .
 src/main/java/com/platform/wikibackend/
 ├─ space/        스페이스 REST·서비스·DTO
 ├─ page/         페이지·revision REST와 도메인 로직
-├─ attachment/   첨부 REST·로컬 파일 저장소
+├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행

@@ -30,29 +30,36 @@ class S3AttachmentStorageIntegrationTest {
             .withEnv("COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS", BUCKET);
 
     @Test
-    void 실제_S3_API로_버전_객체를_저장_조회_삭제한다() throws Exception {
-        try (S3Client client = S3Client.builder()
-                .endpointOverride(URI.create("http://" + S3MOCK.getHost() + ":" + S3MOCK.getMappedPort(9090)))
-                .region(Region.AP_NORTHEAST_2)
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
-                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
-                .build()) {
-            client.putBucketVersioning(PutBucketVersioningRequest.builder()
+    void 한_노드가_저장한_버전_객체를_독립된_다른_노드가_조회_삭제한다() throws Exception {
+        URI endpoint = URI.create("http://" + S3MOCK.getHost() + ":" + S3MOCK.getMappedPort(9090));
+        try (S3Client writerClient = newClient(endpoint);
+             S3Client readerClient = newClient(endpoint)) {
+            writerClient.putBucketVersioning(PutBucketVersioningRequest.builder()
                     .bucket(BUCKET)
                     .versioningConfiguration(VersioningConfiguration.builder()
                             .status(BucketVersioningStatus.ENABLED)
                             .build())
                     .build());
-            S3AttachmentStorage storage = new S3AttachmentStorage(client, BUCKET);
+            S3AttachmentStorage writerNode = new S3AttachmentStorage(writerClient, BUCKET);
+            S3AttachmentStorage readerNode = new S3AttachmentStorage(readerClient, BUCKET);
             byte[] bytes = new byte[]{1, 2, 3, 4};
 
-            StoredObject stored = storage.store(new ByteArrayInputStream(bytes), bytes.length, "image/png");
+            StoredObject stored = writerNode.store(new ByteArrayInputStream(bytes), bytes.length, "image/png");
 
             assertThat(stored.bucket()).isEqualTo(BUCKET);
             assertThat(stored.version()).isNotBlank();
-            assertThat(storage.open(stored.bucket(), stored.key(), stored.version()).getContentAsByteArray())
+            assertThat(readerNode.open(stored.bucket(), stored.key(), stored.version()).getContentAsByteArray())
                     .containsExactly(bytes);
-            assertThat(storage.delete(stored.bucket(), stored.key(), stored.version())).isTrue();
+            assertThat(readerNode.delete(stored.bucket(), stored.key(), stored.version())).isTrue();
         }
+    }
+
+    private static S3Client newClient(URI endpoint) {
+        return S3Client.builder()
+                .endpointOverride(endpoint)
+                .region(Region.AP_NORTHEAST_2)
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .build();
     }
 }
