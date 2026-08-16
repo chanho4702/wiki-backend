@@ -65,6 +65,9 @@ platform:
       interval: ${WIKI_ATTACHMENT_RECONCILIATION_INTERVAL:PT1H}
       initial-delay: ${WIKI_ATTACHMENT_RECONCILIATION_INITIAL_DELAY:PT5M}
       batch-size: ${WIKI_ATTACHMENT_RECONCILIATION_BATCH_SIZE:100}
+    collaboration:
+      # Access Token을 WebSocket query에 싣지 않기 위한 1회용 Redis ticket. 5분 초과는 부팅 시 거부한다.
+      ticket-ttl: ${WIKI_COLLABORATION_TICKET_TTL:PT1M}
   events:
     enabled: true
 

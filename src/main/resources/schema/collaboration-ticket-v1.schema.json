@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://platform.local/schemas/collaboration-ticket-v1.schema.json",
+  "title": "Collaboration Ticket Payload v1",
+  "description": "wiki-backend가 Redis에 TTL로 저장하고 collaboration service가 GETDEL로 소비하는 계약",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "pageId",
+    "userId",
+    "displayName",
+    "room",
+    "permission",
+    "issuedAt",
+    "expiresAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "pageId": { "type": "integer", "minimum": 1 },
+    "userId": { "type": "integer", "minimum": 1 },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "room": { "type": "string", "pattern": "^page:[1-9][0-9]*$" },
+    "permission": { "const": "EDIT" },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  }
+}

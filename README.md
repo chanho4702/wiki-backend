@@ -67,6 +67,7 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 첨부 | `POST/GET /api/wiki/pages/{pageId}/attachments` | EDIT / VIEW |
 | 첨부 확정 | `POST /api/wiki/pages/{pageId}/attachments/confirm` | EDIT |
 | 첨부 | `GET /api/wiki/attachments/{id}[/inline]`, `DELETE /api/wiki/attachments/{id}` | VIEW / EDIT |
+| 공동 편집 ticket | `POST /api/wiki/pages/{pageId}/collaboration-ticket` | EDIT |
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -93,6 +94,10 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
   레거시 볼륨에서 계속 읽으며, 스페이스 삭제 시 revision·첨부 메타데이터와 실제 객체를 함께 정리한다.
 - 에디터 선업로드는 `PENDING`으로 저장한 뒤 페이지 본문 저장 후 확정한다. 저장 전에 이탈한 객체는
   스케줄러가 최신 본문 참조를 대조해 확정하거나 보존기간 뒤 제거한다.
+- 공동 편집 WebSocket에는 Access Token을 query로 보내지 않는다. 기존 JWT로 EDIT 권한을 확인해
+  60초 opaque ticket을 발급하고, Redis에는 원문이 아닌 SHA-256 key와 v1 payload만 TTL로 저장한다.
+  collaboration service는 `GETDEL`로 ticket을 원자적으로 한 번만 소비한다. payload 계약은
+  `schema/collaboration-ticket-v1.schema.json`이 정본이다.
 
 ## 환경 변수
 
@@ -114,6 +119,7 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 | `WIKI_FILES_DIR` | `./data/attachments` | 기존 LOCAL 첨부 읽기 경로 |
 | `WIKI_MAX_ATTACHMENT_MB` | `20` | 파일·요청 최대 크기(MB) |
 | `WIKI_PENDING_ATTACHMENT_RETENTION` | `PT24H` | PENDING 첨부 정리 유예 |
+| `WIKI_COLLABORATION_TICKET_TTL` | `PT1M` | WebSocket 접속용 1회 ticket TTL(최대 5분) |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
 
@@ -136,6 +142,7 @@ src/main/java/com/platform/wikibackend/
 ├─ space/        스페이스 REST·서비스·DTO
 ├─ page/         페이지·revision REST와 도메인 로직
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
+├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행

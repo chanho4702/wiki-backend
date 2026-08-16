@@ -36,5 +36,7 @@ platform:
     files-dir: ${java.io.tmpdir}/wiki-test-files
     attachment-reconciliation:
       enabled: false
+    collaboration:
+      ticket-ttl: PT1M
   events:
     enabled: false   # 실 Redis 발행 비활성 — 테스트는 인메모리 페이크 빈
