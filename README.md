@@ -128,9 +128,16 @@ heading, paragraph, list/task, panel, column, page link와 복사 완료 media�
 않는다. 근거는 [page content API](https://developers.notion.com/guides/data-apis/working-with-page-content)와
 [file retrieval guide](https://developers.notion.com/guides/data-apis/retrieving-files)를 따른다.
 
-현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer까지
-검증한다. 실제 Notion API extractor와 media copier, Confluence DC normalizer, worker/API는 이 경계
-위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
+Confluence DC는 특정 제품 버전을 아직 보장하지 않고, 공식 storage format의 공통 XML 부분집합만
+fixture parser로 검증한다. heading/paragraph/mark/list/task/panel/layout/table/page link를 IR로 바꾸고,
+복사 완료 attachment image만 `mediaId`로 연결한다. custom macro와 미지원 element는
+`opaque + sourceRef + issue`로 남긴다. XML parser는 DOCTYPE, entity, processing instruction과 외부
+DTD/schema 접근을 차단한다. 근거는 [Atlassian storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)을
+따르며 실제 고객/사내 DC 버전을 확보한 뒤 별도 compatibility matrix를 만든다.
+
+현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer,
+Confluence 공통 storage parser까지 검증한다. 실제 provider extractor와 media copier, worker/API는 이
+경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
 
 ## 환경 변수
 
