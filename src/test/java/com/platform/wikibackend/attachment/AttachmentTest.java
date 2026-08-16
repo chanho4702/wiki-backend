@@ -35,6 +35,7 @@ class AttachmentTest {
     @Autowired PageRepository pages;
     @Autowired AttachmentRepository attachments;
     @Autowired LocalFileStorage localStorage;
+    @Autowired AttachmentReconciliationService reconciliation;
     @Autowired FakePermissionClient perms;
     @Autowired RecordingEventPublisher events;
     MockMvc mvc;
@@ -70,6 +71,16 @@ class AttachmentTest {
         return new MockMultipartFile("file", "스크린샷.png", "image/png", PNG_BYTES);
     }
 
+    private long uploadPending(String filename) throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", filename, "image/png", PNG_BYTES);
+        String body = mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments")
+                        .file(file).param("pending", "true")
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+    }
+
     @Test
     void EDIT_사용자만_업로드할_수_있고_이벤트가_발행된다() throws Exception {
         mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
@@ -84,6 +95,82 @@ class AttachmentTest {
                 .andExpect(jsonPath("$.checksumSha256", matchesPattern("[0-9a-f]{64}")));
 
         assertThat(events.events).anyMatch(e -> e.hasAttachmentAdded());
+    }
+
+    @Test
+    void 에디터_pending_업로드는_본문_저장_뒤에만_확정된다() throws Exception {
+        long id = uploadPending("pending.png");
+        assertThat(attachments.findById(id).orElseThrow().getLifecycleStatus())
+                .isEqualTo(AttachmentLifecycleStatus.PENDING);
+        assertThat(events.events).noneMatch(e -> e.hasAttachmentAdded());
+
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/attachments/confirm")
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"attachmentIds\":[" + id + "]}"))
+                .andExpect(status().isBadRequest());
+
+        String durableUrl = "/api/wiki/attachments/" + id + "/inline";
+        mvc.perform(put("/api/wiki/pages/" + pageId)
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"t\",\"content\":\"![pending](" + durableUrl
+                                + ")\",\"parentId\":null,\"expectedVersion\":1}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/attachments/confirm")
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"attachmentIds\":[" + id + "]}"))
+                .andExpect(status().isNoContent());
+
+        var confirmed = attachments.findById(id).orElseThrow();
+        assertThat(confirmed.getLifecycleStatus()).isEqualTo(AttachmentLifecycleStatus.CONFIRMED);
+        assertThat(confirmed.getConfirmedAt()).isNotNull();
+        assertThat(events.events).anyMatch(e -> e.hasAttachmentAdded()
+                && e.getAttachmentAdded().getAttachmentId() == id);
+    }
+
+    @Test
+    void reconciliation은_참조된_pending을_살리고_고아만_삭제한다() throws Exception {
+        long referencedId = uploadPending("referenced.png");
+        long orphanId = uploadPending("orphan.png");
+        var orphan = attachments.findById(orphanId).orElseThrow();
+        Resource orphanResource = localStorage.open(
+                orphan.getStorageBucket(), orphan.getStorageKey(), orphan.getStorageVersion());
+        assertThat(orphanResource.exists()).isTrue();
+
+        String durableUrl = "/api/wiki/attachments/" + referencedId + "/inline";
+        mvc.perform(put("/api/wiki/pages/" + pageId)
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"t\",\"content\":\"![kept](" + durableUrl
+                                + ")\",\"parentId\":null,\"expectedVersion\":1}"))
+                .andExpect(status().isOk());
+        events.reset();
+
+        var result = reconciliation.reconcileExpired(java.time.Instant.now().plusSeconds(60), 100);
+
+        assertThat(result.examined()).isEqualTo(2);
+        assertThat(result.confirmed()).isEqualTo(1);
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(attachments.findById(referencedId).orElseThrow().getLifecycleStatus())
+                .isEqualTo(AttachmentLifecycleStatus.CONFIRMED);
+        assertThat(attachments.findById(orphanId)).isEmpty();
+        assertThat(orphanResource.exists()).isFalse();
+        assertThat(events.events).anyMatch(e -> e.hasAttachmentAdded()
+                && e.getAttachmentAdded().getAttachmentId() == referencedId);
+    }
+
+    @Test
+    void pending_업로드_취소는_추가되지_않은_첨부의_삭제_이벤트를_내지_않는다() throws Exception {
+        long id = uploadPending("cancelled.png");
+        events.reset();
+
+        mvc.perform(delete("/api/wiki/attachments/" + id).with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isNoContent());
+
+        assertThat(events.events).noneMatch(e -> e.hasAttachmentAdded() || e.hasAttachmentDeleted());
     }
 
     @Test

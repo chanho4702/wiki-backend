@@ -58,6 +58,13 @@ platform:
         path-style-access: ${WIKI_S3_PATH_STYLE_ACCESS:false}
         access-key: ${WIKI_S3_ACCESS_KEY:}
         secret-key: ${WIKI_S3_SECRET_KEY:}
+    attachment-reconciliation:
+      # 에디터가 저장 전에 닫혀 남긴 PENDING 업로드를 최신 본문과 대조해 확정/삭제한다.
+      enabled: ${WIKI_ATTACHMENT_RECONCILIATION_ENABLED:true}
+      pending-retention: ${WIKI_PENDING_ATTACHMENT_RETENTION:PT24H}
+      interval: ${WIKI_ATTACHMENT_RECONCILIATION_INTERVAL:PT1H}
+      initial-delay: ${WIKI_ATTACHMENT_RECONCILIATION_INITIAL_DELAY:PT5M}
+      batch-size: ${WIKI_ATTACHMENT_RECONCILIATION_BATCH_SIZE:100}
   events:
     enabled: true
 

@@ -2,6 +2,7 @@ package com.platform.wikibackend.domain;
 
 import com.platform.wikibackend.attachment.StorageBackend;
 import com.platform.wikibackend.attachment.StoredObject;
+import com.platform.wikibackend.attachment.AttachmentLifecycleStatus;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -48,6 +49,13 @@ public class Attachment {
     @Column(name = "checksum_sha256", length = 64)
     private String checksumSha256;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "lifecycle_status", nullable = false, length = 16)
+    private AttachmentLifecycleStatus lifecycleStatus;
+
+    @Column(name = "confirmed_at")
+    private Instant confirmedAt;
+
     @Column(name = "uploaded_by", nullable = false, updatable = false)
     private Long uploadedBy;
 
@@ -58,12 +66,21 @@ public class Attachment {
     public static Attachment of(Long pageId, String filename, String contentType,
                                 Long sizeBytes, String storageKey, Long uploadedBy) {
         return of(pageId, filename, contentType, sizeBytes,
-                new StoredObject(StorageBackend.LOCAL, null, storageKey, null), null, uploadedBy);
+                new StoredObject(StorageBackend.LOCAL, null, storageKey, null), null, uploadedBy,
+                AttachmentLifecycleStatus.CONFIRMED);
     }
 
     public static Attachment of(Long pageId, String filename, String contentType,
                                 Long sizeBytes, StoredObject storedObject,
                                 String checksumSha256, Long uploadedBy) {
+        return of(pageId, filename, contentType, sizeBytes, storedObject, checksumSha256, uploadedBy,
+                AttachmentLifecycleStatus.CONFIRMED);
+    }
+
+    public static Attachment of(Long pageId, String filename, String contentType,
+                                Long sizeBytes, StoredObject storedObject,
+                                String checksumSha256, Long uploadedBy,
+                                AttachmentLifecycleStatus lifecycleStatus) {
         Attachment a = new Attachment();
         a.pageId = pageId;
         a.filename = filename;
@@ -75,6 +92,16 @@ public class Attachment {
         a.storageVersion = storedObject.version();
         a.checksumSha256 = checksumSha256;
         a.uploadedBy = uploadedBy;
+        a.lifecycleStatus = lifecycleStatus;
+        a.confirmedAt = lifecycleStatus == AttachmentLifecycleStatus.CONFIRMED ? Instant.now() : null;
         return a;
+    }
+
+    /** 멱등 확정 — 재시도나 reconciliation이 같은 첨부를 다시 확인해도 시각을 덮어쓰지 않는다. */
+    public void confirm() {
+        if (lifecycleStatus == AttachmentLifecycleStatus.PENDING) {
+            lifecycleStatus = AttachmentLifecycleStatus.CONFIRMED;
+            confirmedAt = Instant.now();
+        }
     }
 }

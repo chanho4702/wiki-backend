@@ -25,6 +25,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +40,10 @@ public class AttachmentService {
     private final EventRelay events;
 
     public AttachmentResponse upload(long userId, long pageId, MultipartFile file) {
+        return upload(userId, pageId, file, false);
+    }
+
+    public AttachmentResponse upload(long userId, long pageId, MultipartFile file, boolean pending) {
         Page page = pages.getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         try {
@@ -55,9 +61,15 @@ public class AttachmentService {
 
             String filename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unnamed";
             String checksum = HexFormat.of().formatHex(digest.digest());
+            AttachmentLifecycleStatus lifecycleStatus = pending
+                    ? AttachmentLifecycleStatus.PENDING
+                    : AttachmentLifecycleStatus.CONFIRMED;
             Attachment saved = attachments.save(
-                    Attachment.of(pageId, filename, contentType, file.getSize(), stored, checksum, userId));
-            events.afterCommit(WikiEvents.attachmentAdded(userId, saved, page.getSpaceId()));
+                    Attachment.of(pageId, filename, contentType, file.getSize(), stored, checksum, userId,
+                            lifecycleStatus));
+            if (!pending) {
+                events.afterCommit(WikiEvents.attachmentAdded(userId, saved, page.getSpaceId()));
+            }
             return AttachmentResponse.from(saved);
         } catch (IOException e) {
             throw new UncheckedIOException("업로드 스트림 읽기 실패", e);
@@ -84,6 +96,40 @@ public class AttachmentService {
                 a.getStorageKey(), a.getStorageVersion()));
     }
 
+    /**
+     * 페이지 저장과 별도 요청이므로 서버의 최신 본문을 다시 검사한다. 클라이언트가 임의 ID를
+     * 확정하거나 저장 실패한 이미지를 장기 보존 상태로 바꾸지 못한다.
+     */
+    public void confirm(long userId, long pageId, List<Long> attachmentIds) {
+        Page page = pages.getOwned(pageId);
+        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        if (attachmentIds == null || attachmentIds.isEmpty()) return;
+
+        Set<Long> uniqueIds = new LinkedHashSet<>(attachmentIds);
+        List<Attachment> found = attachments.findAllById(uniqueIds);
+        if (found.size() != uniqueIds.size()) {
+            throw new NotFoundException("확정할 첨부 중 존재하지 않는 항목이 있습니다");
+        }
+
+        for (Attachment attachment : found) {
+            if (!attachment.getPageId().equals(pageId)) {
+                throw new IllegalArgumentException("다른 페이지의 첨부는 확정할 수 없습니다");
+            }
+            String durableUrl = AttachmentReferences.inlineUrl(attachment.getId());
+            if (!page.getContent().contains(durableUrl)) {
+                throw new IllegalArgumentException("본문에서 참조하지 않는 첨부는 확정할 수 없습니다: "
+                        + attachment.getId());
+            }
+        }
+
+        for (Attachment attachment : found) {
+            if (attachment.getLifecycleStatus() == AttachmentLifecycleStatus.PENDING) {
+                attachment.confirm();
+                events.afterCommit(WikiEvents.attachmentAdded(userId, attachment, page.getSpaceId()));
+            }
+        }
+    }
+
     @Transactional(readOnly = true)
     public DownloadItem inline(long userId, long attachmentId) {
         DownloadItem item = download(userId, attachmentId);
@@ -101,7 +147,11 @@ public class AttachmentService {
         attachments.delete(a);
         storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
                 a.getStorageKey(), a.getStorageVersion());
-        events.afterCommit(WikiEvents.attachmentDeleted(userId, a, page.getSpaceId()));
+        // PENDING은 아직 AttachmentAdded를 발행하지 않은 임시 객체다. 취소 정리에 Deleted만 내보내면
+        // 검색 소비자가 보지 못한 엔티티의 삭제 이벤트를 받게 되므로 확정 첨부만 발행한다.
+        if (a.getLifecycleStatus() == AttachmentLifecycleStatus.CONFIRMED) {
+            events.afterCommit(WikiEvents.attachmentDeleted(userId, a, page.getSpaceId()));
+        }
     }
 
     public record DownloadItem(Attachment meta, Resource resource) {}

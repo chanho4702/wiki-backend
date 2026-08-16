@@ -1,6 +1,7 @@
 package com.platform.wikibackend.attachment;
 
 import com.platform.wikibackend.attachment.dto.AttachmentResponse;
+import com.platform.wikibackend.attachment.dto.ConfirmAttachmentsRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -27,8 +28,17 @@ public class AttachmentController {
     @PostMapping("/api/wiki/pages/{pageId}/attachments")
     @ResponseStatus(HttpStatus.CREATED)
     public AttachmentResponse upload(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
-                                     @RequestParam("file") MultipartFile file) {
-        return service.upload(userId(jwt), pageId, file);
+                                     @RequestParam("file") MultipartFile file,
+                                     @RequestParam(name = "pending", defaultValue = "false") boolean pending) {
+        return service.upload(userId(jwt), pageId, file, pending);
+    }
+
+    /** 페이지 저장 뒤 본문에 남은 에디터 업로드를 장기 보존 대상으로 확정한다. */
+    @PostMapping("/api/wiki/pages/{pageId}/attachments/confirm")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirm(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
+                        @RequestBody ConfirmAttachmentsRequest request) {
+        service.confirm(userId(jwt), pageId, request.attachmentIds());
     }
 
     @GetMapping("/api/wiki/pages/{pageId}/attachments")
