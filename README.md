@@ -105,6 +105,21 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
   collaboration service는 `GETDEL`로 ticket을 원자적으로 한 번만 소비한다. payload 계약은
   `schema/collaboration-ticket-v1.schema.json`이 정본이다.
 
+## 마이그레이션 기반
+
+Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을 곧바로 `Page.content`에
+저장하지 않는다. 먼저 `schema/document-ir-v1.schema.json`의 provider 중립 Document IR로
+정규화하고 `DocumentIrValidator`의 런타임 문법·의미 검증을 통과해야 한다.
+
+- schema의 버전·provider·block/mark type·ID/checksum 규칙을 런타임과 공유한다.
+- block ID와 media ID 중복, 선언되지 않은 media 참조, 만료 URL 직접 저장을 거부한다.
+- 지원하지 않는 원본 구조는 `opaque + sourceRef`로 보존하며 원본 payload는 IR 밖에 둔다.
+- 검증 오류는 stable code와 JSON path만 반환하고 문서 본문이나 원본 값을 반사하지 않는다.
+
+현재 경계는 IR v1 golden fixture를 검증한다. provider 원본 추출기·정규화 변환기와
+job/checkpoint/retry 저장 모델은 이 경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은
+바꾸지 않는다.
+
 ## 환경 변수
 
 | 변수 | 기본값 | 용도 |
@@ -149,6 +164,7 @@ src/main/java/com/platform/wikibackend/
 ├─ page/         페이지·revision REST와 도메인 로직
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
+├─ migration/    Document IR 검증과 단계적 외부 문서 가져오기 기반
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행

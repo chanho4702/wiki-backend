@@ -2,28 +2,29 @@ package com.platform.wikibackend.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.platform.wikibackend.migration.ir.DocumentIrValidationCode;
+import com.platform.wikibackend.migration.ir.DocumentIrValidationException;
+import com.platform.wikibackend.migration.ir.DocumentIrValidator;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Document IR v1의 provider 중립 불변식을 golden fixture로 고정한다.
- *
- * JSON Schema는 외부 importer/worker가 공유하는 문법 계약이고, 이 테스트는 JSON Schema만으로
- * 표현하기 어려운 block ID 유일성, media 참조 무결성, 만료 URL 금지 같은 의미 계약을 검증한다.
- * 아직 런타임 저장 포맷을 바꾸지 않으며 fixture도 운영 코드에서 읽지 않는다.
+ * Document IR v1의 provider 중립 문법·의미 계약을 golden fixture와 런타임 validator로 고정한다.
  */
 class DocumentIrContractTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final DocumentIrValidator VALIDATOR = new DocumentIrValidator(JSON);
     private static final String SCHEMA = "/schema/document-ir-v1.schema.json";
     private static final String NOTION = "/fixtures/document-ir/notion-page-v1.json";
     private static final String CONFLUENCE = "/fixtures/document-ir/confluence-page-v1.json";
@@ -40,13 +41,65 @@ class DocumentIrContractTest {
     }
 
     @Test
-    void Notion_fixture가_v1_의미_계약을_충족한다() throws IOException {
-        validate(read(NOTION), read(SCHEMA));
+    void Notion_fixture가_런타임_v1_계약을_충족한다() throws IOException {
+        VALIDATOR.validate(read(NOTION));
     }
 
     @Test
-    void Confluence_DC_fixture가_v1_의미_계약을_충족한다() throws IOException {
-        validate(read(CONFLUENCE), read(SCHEMA));
+    void Confluence_DC_fixture가_런타임_v1_계약을_충족한다() throws IOException {
+        VALIDATOR.validate(read(CONFLUENCE));
+    }
+
+    @Test
+    void 직렬화된_IR도_같은_경계에서_파싱하고_검증한다() throws IOException {
+        byte[] input = JSON.writeValueAsBytes(read(NOTION));
+
+        JsonNode document = VALIDATOR.parseAndValidate(input);
+
+        assertThat(document.path("documentId").asText()).isEqualTo("notion:workspace-acme:page-42");
+    }
+
+    @Test
+    void 잘못된_JSON은_원문을_노출하지_않고_거부한다() {
+        String sensitive = "private migration body";
+
+        assertFailure(
+                () -> VALIDATOR.parseAndValidate(("{\"title\":\"" + sensitive + "\"")
+                        .getBytes(StandardCharsets.UTF_8)),
+                DocumentIrValidationCode.INVALID_JSON,
+                "/")
+                .satisfies(exception -> assertThat(exception.getMessage()).doesNotContain(sensitive));
+    }
+
+    @Test
+    void 스키마에_없는_최상위_필드는_거부한다() throws IOException {
+        ObjectNode document = (ObjectNode) read(NOTION);
+        document.put("rawPayload", "must-not-cross-runtime-boundary");
+
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.ADDITIONAL_PROPERTY_FORBIDDEN,
+                "/*");
+    }
+
+    @Test
+    void 지원하지_않는_스키마_버전은_구분해서_거부한다() throws IOException {
+        ObjectNode document = (ObjectNode) read(NOTION);
+        document.put("schemaVersion", 2);
+
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.UNSUPPORTED_SCHEMA_VERSION,
+                "/schemaVersion");
+    }
+
+    @Test
+    void 중복_media_id는_거부한다() throws IOException {
+        ObjectNode document = (ObjectNode) read(NOTION);
+        ArrayNode assets = (ArrayNode) document.path("assets");
+        assets.add(assets.get(0).deepCopy());
+
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.DUPLICATE_MEDIA_ID,
+                "/assets/1/mediaId");
     }
 
     @Test
@@ -55,93 +108,73 @@ class DocumentIrContractTest {
         String duplicate = document.at("/root/content/0/id").asText();
         ((ObjectNode) document.at("/root/content/1")).put("id", duplicate);
 
-        assertThatThrownBy(() -> validate(document, read(SCHEMA)))
-                .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("block ID 중복");
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.DUPLICATE_BLOCK_ID,
+                "/root/content/1/id");
+    }
+
+    @Test
+    void 선언되지_않은_media_id_참조는_거부한다() throws IOException {
+        JsonNode document = read(NOTION);
+        ((ObjectNode) document.at("/root/content/3/attrs")).put("mediaId", "missing-media");
+
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.UNDECLARED_MEDIA_ID,
+                "/root/content/3/attrs/mediaId");
     }
 
     @Test
     void image에_만료_URL을_직접_저장하면_거부한다() throws IOException {
         JsonNode document = read(NOTION);
-        ObjectNode attrs = (ObjectNode) document.at("/root/content/3/attrs");
-        attrs.remove("mediaId");
-        attrs.put("url", "https://secure.notion-static.com/temporary-signed-url");
+        ((ObjectNode) document.at("/root/content/3/attrs"))
+                .put("url", "https://secure.notion-static.com/temporary-signed-url");
 
-        assertThatThrownBy(() -> validate(document, read(SCHEMA)))
-                .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("mediaId");
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.EMBEDDED_MEDIA_LOCATION_FORBIDDEN,
+                "/root/content/3/attrs/url");
     }
 
-    private static void validate(JsonNode document, JsonNode schema) {
-        assertThat(document.path("schemaVersion").asInt()).as("schemaVersion").isEqualTo(1);
-        assertThat(document.path("documentId").asText()).as("documentId").isNotBlank();
-        assertThat(document.path("title").isTextual()).as("title").isTrue();
-        assertThat(document.at("/source/provider").asText())
-                .as("source provider")
-                .isIn("native", "notion", "confluence-dc");
-        assertThat(document.at("/source/payloadRef").asText()).as("원본 payloadRef").isNotBlank();
-        assertThat(document.at("/source/checksum").asText()).as("원본 checksum").matches("[a-f0-9]{64}");
+    @Test
+    void opaque_block의_source_ref가_없으면_거부한다() throws IOException {
+        JsonNode document = read(CONFLUENCE);
+        ((ObjectNode) document.at("/root/content/4")).remove("sourceRef");
 
-        Set<String> mediaIds = new HashSet<>();
-        document.path("assets").forEach(asset -> {
-            assertThat(asset.path("mediaId").asText()).as("asset mediaId").isNotBlank();
-            assertThat(asset.path("checksum").asText()).as("asset checksum").matches("[a-f0-9]{64}");
-            assertThat(mediaIds.add(asset.path("mediaId").asText())).as("mediaId 중복").isTrue();
-        });
-
-        JsonNode root = document.path("root");
-        assertThat(root.path("type").asText()).as("root type").isEqualTo("doc");
-        Set<String> blockIds = new HashSet<>();
-        walk(root, allowedTypes(schema), idPattern(schema), blockIds, mediaIds);
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.REQUIRED_FIELD_MISSING,
+                "/root/content/4/sourceRef");
     }
 
-    private static void walk(JsonNode block, Set<String> allowedTypes, Pattern idPattern,
-                             Set<String> blockIds, Set<String> mediaIds) {
-        String id = block.path("id").asText();
-        String type = block.path("type").asText();
+    @Test
+    void page_link의_target이_비어_있으면_거부한다() throws IOException {
+        JsonNode document = read(NOTION);
+        ((ObjectNode) document.at("/root/content/2/attrs")).set("target", JSON.createObjectNode());
 
-        assertThat(id).as("block ID").isNotBlank();
-        assertThat(idPattern.matcher(id).matches()).as("block ID 형식: %s", id).isTrue();
-        assertThat(blockIds.add(id)).as("block ID 중복: %s", id).isTrue();
-        assertThat(type).as("block type: %s", id).isIn(allowedTypes);
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.PAGE_LINK_TARGET_MISSING,
+                "/root/content/2/attrs/target");
+    }
 
-        if ("text".equals(type)) {
-            assertThat(block.path("text").isTextual()).as("text node 본문: %s", id).isTrue();
-        }
+    @Test
+    void source_timestamp가_date_time이_아니면_거부한다() throws IOException {
+        JsonNode document = read(NOTION);
+        ((ObjectNode) document.path("source")).put("capturedAt", "2026-08-17");
 
-        if ("image".equals(type) || "attachment".equals(type)) {
-            JsonNode attrs = block.path("attrs");
-            String mediaId = attrs.path("mediaId").asText();
-            assertThat(mediaId).as("%s mediaId: %s", type, id).isNotBlank();
-            assertThat(mediaIds).as("선언되지 않은 mediaId: %s", mediaId).contains(mediaId);
-            assertThat(attrs.has("src")).as("media src 직접 저장 금지: %s", id).isFalse();
-            assertThat(attrs.has("url")).as("media URL 직접 저장 금지: %s", id).isFalse();
-        }
+        assertFailure(() -> VALIDATOR.validate(document),
+                DocumentIrValidationCode.INVALID_VALUE,
+                "/source/capturedAt");
+    }
 
-        if ("opaque".equals(type)) {
-            JsonNode sourceRef = block.path("sourceRef");
-            assertThat(sourceRef.path("provider").asText()).as("opaque provider: %s", id)
-                    .isIn("notion", "confluence-dc");
-            assertThat(sourceRef.path("objectId").asText()).as("opaque objectId: %s", id).isNotBlank();
-            assertThat(sourceRef.path("sourceType").asText()).as("opaque sourceType: %s", id).isNotBlank();
-            assertThat(sourceRef.path("path").asText()).as("opaque path: %s", id).isNotBlank();
-            assertThat(sourceRef.path("checksum").asText()).as("opaque checksum: %s", id)
-                    .matches("[a-f0-9]{64}");
-        }
-
-        if ("pageLink".equals(type)) {
-            JsonNode target = block.at("/attrs/target");
-            boolean hasTarget = target.hasNonNull("internalPageId")
-                    || target.hasNonNull("externalObjectId")
-                    || target.hasNonNull("href");
-            assertThat(hasTarget).as("pageLink target: %s", id).isTrue();
-        }
-
-        JsonNode content = block.path("content");
-        if (!content.isMissingNode()) {
-            assertThat(content.isArray()).as("content 배열: %s", id).isTrue();
-            content.forEach(child -> walk(child, allowedTypes, idPattern, blockIds, mediaIds));
-        }
+    private static org.assertj.core.api.AbstractThrowableAssert<?, ? extends Throwable> assertFailure(
+            org.assertj.core.api.ThrowableAssert.ThrowingCallable callable,
+            DocumentIrValidationCode code,
+            String path) {
+        return assertThatThrownBy(callable)
+                .isInstanceOf(DocumentIrValidationException.class)
+                .satisfies(throwable -> {
+                    DocumentIrValidationException exception = (DocumentIrValidationException) throwable;
+                    assertThat(exception.getCode()).isEqualTo(code);
+                    assertThat(exception.getPath()).isEqualTo(path);
+                });
     }
 
     private static Set<String> allowedTypes(JsonNode schema) {
@@ -149,12 +182,6 @@ class DocumentIrContractTest {
         schema.at("/$defs/block/properties/type/enum").forEach(node -> result.add(node.asText()));
         assertThat(result).as("schema block type enum").isNotEmpty();
         return result;
-    }
-
-    private static Pattern idPattern(JsonNode schema) {
-        String pattern = schema.at("/$defs/block/properties/id/pattern").asText();
-        assertThat(pattern).as("schema block ID pattern").isNotBlank();
-        return Pattern.compile(pattern);
     }
 
     private static JsonNode read(String resource) throws IOException {
