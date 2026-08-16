@@ -1,0 +1,160 @@
+package com.platform.wikibackend.migration.model;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.Instant;
+
+@Entity
+@Table(name = "migration_item", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_migration_item_source", columnNames = {"job_id", "source_key"}),
+        @UniqueConstraint(name = "uk_migration_item_job_id", columnNames = {"job_id", "id"})
+})
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class MigrationItem {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "job_id", nullable = false, updatable = false)
+    private Long jobId;
+
+    @Column(name = "source_key", nullable = false, length = 64, updatable = false)
+    private String sourceKey;
+
+    @Column(name = "external_object_id", nullable = false, length = 512, updatable = false)
+    private String externalObjectId;
+
+    @Column(name = "source_version", length = 100, updatable = false)
+    private String sourceVersion;
+
+    @Column(name = "source_checksum", nullable = false, length = 64, updatable = false)
+    private String sourceChecksum;
+
+    @Column(name = "payload_ref", nullable = false, length = 1024, updatable = false)
+    private String payloadRef;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    private MigrationStage stage;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    private MigrationItemStatus status;
+
+    @Column(name = "retry_count", nullable = false)
+    private Integer retryCount;
+
+    @Column(name = "next_attempt_at")
+    private Instant nextAttemptAt;
+
+    @Column(name = "target_page_id")
+    private Long targetPageId;
+
+    @Column(name = "last_error_code", length = 128)
+    private String lastErrorCode;
+
+    @Column(name = "dead_lettered_at")
+    private Instant deadLetteredAt;
+
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion;
+
+    public static MigrationItem pending(Long jobId, String externalObjectId, String sourceVersion,
+                                        String sourceChecksum, String payloadRef) {
+        MigrationItem item = new MigrationItem();
+        item.jobId = MigrationSourceKey.require(jobId, "jobId");
+        item.externalObjectId = MigrationSourceKey.requireText(externalObjectId, "externalObjectId", 512);
+        item.sourceKey = MigrationSourceKey.item(item.externalObjectId);
+        item.sourceVersion = optionalText(sourceVersion, "sourceVersion", 100);
+        item.sourceChecksum = MigrationSourceKey.requireChecksum(sourceChecksum);
+        item.payloadRef = MigrationSourceKey.requireText(payloadRef, "payloadRef", 1024);
+        item.stage = MigrationStage.EXTRACT;
+        item.status = MigrationItemStatus.PENDING;
+        item.retryCount = 0;
+        return item;
+    }
+
+    public static String sourceKeyFor(String externalObjectId) {
+        return MigrationSourceKey.item(externalObjectId);
+    }
+
+    public void begin(Instant now) {
+        Instant startedAt = MigrationSourceKey.require(now, "now");
+        if (status != MigrationItemStatus.PENDING && status != MigrationItemStatus.RETRY_WAIT) {
+            throw new IllegalStateException("Migration item cannot begin from " + status);
+        }
+        if (status == MigrationItemStatus.RETRY_WAIT && nextAttemptAt.isAfter(startedAt)) {
+            throw new IllegalStateException("Migration item retry is not due");
+        }
+        status = MigrationItemStatus.RUNNING;
+        nextAttemptAt = null;
+    }
+
+    public void completeStage(MigrationStage nextStage) {
+        requireRunning();
+        MigrationStage next = MigrationSourceKey.require(nextStage, "nextStage");
+        if (next.ordinal() != stage.ordinal() + 1) {
+            throw new IllegalStateException("Migration stage must advance exactly once");
+        }
+        stage = next;
+        status = next == MigrationStage.DONE ? MigrationItemStatus.COMPLETED : MigrationItemStatus.PENDING;
+    }
+
+    public void scheduleRetry(String errorCode, Instant nextAttemptAt) {
+        requireRunning();
+        this.lastErrorCode = MigrationSourceKey.requireText(errorCode, "errorCode", 128);
+        this.nextAttemptAt = MigrationSourceKey.require(nextAttemptAt, "nextAttemptAt");
+        retryCount += 1;
+        status = MigrationItemStatus.RETRY_WAIT;
+    }
+
+    public void deadLetter(String errorCode, Instant now) {
+        requireRunning();
+        lastErrorCode = MigrationSourceKey.requireText(errorCode, "errorCode", 128);
+        deadLetteredAt = MigrationSourceKey.require(now, "now");
+        nextAttemptAt = null;
+        status = MigrationItemStatus.DEAD_LETTER;
+    }
+
+    public void bindTargetPage(Long pageId) {
+        targetPageId = MigrationSourceKey.require(pageId, "pageId");
+    }
+
+    private void requireRunning() {
+        if (status != MigrationItemStatus.RUNNING) {
+            throw new IllegalStateException("Migration item must be RUNNING but was " + status);
+        }
+    }
+
+    private static String optionalText(String value, String name, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        return MigrationSourceKey.requireText(value, name, maxLength);
+    }
+}

@@ -4,6 +4,15 @@ import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageStatus;
 import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.domain.Space;
+import com.platform.wikibackend.migration.model.MigrationIssue;
+import com.platform.wikibackend.migration.model.MigrationIssueSeverity;
+import com.platform.wikibackend.migration.model.MigrationItem;
+import com.platform.wikibackend.migration.model.MigrationJob;
+import com.platform.wikibackend.migration.model.MigrationJobMode;
+import com.platform.wikibackend.migration.model.MigrationProvider;
+import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
+import com.platform.wikibackend.migration.repository.MigrationItemRepository;
+import com.platform.wikibackend.migration.repository.MigrationJobRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.Test;
@@ -25,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 부팅을 거부한다. 그 간극을 이 테스트가 메운다.
  *
  * 여기서 하는 일:
- * 1. 빈 Postgres에 Flyway로 V1→V2를 적용하고
+ * 1. 빈 Postgres에 Flyway로 V1→현재 버전을 적용하고
  * 2. `ddl-auto: validate`로 컨텍스트를 띄운다(불일치면 컨텍스트 로딩 실패 = 테스트 실패)
  * 3. 실제 INSERT/SELECT로 H2에는 없는 제약(FK·CHECK)까지 살아 있는지 본다.
  *
@@ -47,6 +56,9 @@ class FlywaySchemaValidationTest {
 
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
+    @Autowired MigrationJobRepository migrationJobs;
+    @Autowired MigrationItemRepository migrationItems;
+    @Autowired MigrationIssueRepository migrationIssues;
 
     /**
      * 컨텍스트가 떴다는 것 자체가 "마이그레이션 결과 스키마 == 엔티티 매핑"의 증거다
@@ -81,5 +93,24 @@ class FlywaySchemaValidationTest {
         pages.flush();
 
         assertThat(pages.findById(child.getId())).isEmpty();
+    }
+
+    @Test
+    void V6_migration_checkpoint가_실제_Postgres에_저장된다() {
+        Space space = spaces.save(Space.of("migration", "마이그레이션", null, 1L));
+        MigrationJob job = migrationJobs.save(MigrationJob.create(
+                MigrationProvider.NOTION, "workspace-acme", space.getId(), 1L, MigrationJobMode.DRY_RUN));
+        MigrationItem item = migrationItems.save(MigrationItem.pending(
+                job.getId(), "page-42", "v1", "d".repeat(64),
+                "imports/notion/job-1/page-42.json"));
+        migrationIssues.save(MigrationIssue.of(
+                job.getId(), item.getId(), MigrationIssueSeverity.WARNING,
+                "UNSUPPORTED_BLOCK", "/blocks/4"));
+
+        assertThat(migrationItems.findByJobIdAndSourceKey(job.getId(), item.getSourceKey()))
+                .get()
+                .extracting(MigrationItem::getId)
+                .isEqualTo(item.getId());
+        assertThat(migrationIssues.findByJobIdOrderByIdAsc(job.getId())).hasSize(1);
     }
 }

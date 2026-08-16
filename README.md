@@ -115,10 +115,14 @@ Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을
 - block ID와 media ID 중복, 선언되지 않은 media 참조, 만료 URL 직접 저장을 거부한다.
 - 지원하지 않는 원본 구조는 `opaque + sourceRef`로 보존하며 원본 payload는 IR 밖에 둔다.
 - 검증 오류는 stable code와 JSON path만 반환하고 문서 본문이나 원본 값을 반사하지 않는다.
+- `migration_job`과 `migration_item`은 extract → normalize → media copy → resolve → verify
+  checkpoint, retry 시각·횟수, dead letter 상태를 PostgreSQL에 보존한다.
+- 외부 object mapping은 긴 원본 ID 대신 source identity의 SHA-256 key로 멱등성을 보장하고,
+  `migration_issue`에는 구조화된 code/path만 기록한다.
 
-현재 경계는 IR v1 golden fixture를 검증한다. provider 원본 추출기·정규화 변환기와
-job/checkpoint/retry 저장 모델은 이 경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은
-바꾸지 않는다.
+현재 경계는 IR v1 golden fixture와 migration checkpoint 저장 모델까지 검증한다. provider 원본
+추출기·정규화 변환기와 worker/API는 이 경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본
+포맷은 바꾸지 않는다.
 
 ## 환경 변수
 
