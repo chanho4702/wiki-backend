@@ -61,6 +61,7 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 페이지 | `GET /api/wiki/pages/{id}` | VIEW |
 | 페이지 트리 | `GET /api/wiki/spaces/{spaceId}/pages` | VIEW |
 | 페이지 | `PUT/DELETE /api/wiki/pages/{id}` | EDIT |
+| 공동 초안 확정 | `PUT /api/wiki/pages/{id}/collaboration-draft` | EDIT |
 | 게시 | `POST /api/wiki/pages/{id}/publish` | EDIT |
 | 버전 | `GET /api/wiki/pages/{pageId}/revisions[/{version}]` | VIEW |
 | 복원 | `POST /api/wiki/pages/{pageId}/revisions/{version}/restore` | EDIT |
@@ -72,6 +73,11 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
 기록해 이력을 보존한다. 부모 변경 시 자기 자손 아래로 이동하는 순환도 거부한다.
+
+공동 초안 확정은 `expectedPageVersion`과 `expectedGeneration`을 모두 검사한다. page와
+`collaboration_document` metadata를 같은 PostgreSQL transaction에서 row lock한 뒤 page revision과
+generation을 함께 한 단계 전진시키므로, 동시 저장 중 하나만 성공하고 이전 세션의 늦은 요청은
+`409 Conflict`로 끝난다. Yjs binary state 자체는 계속 collaboration-service만 읽고 쓴다.
 
 ## 서비스 경계
 

@@ -1,6 +1,8 @@
 package com.platform.wikibackend.page;
 
 import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
+import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
 import com.platform.wikibackend.page.dto.PageResponse;
 import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.page.dto.PageUpdateRequest;
@@ -41,6 +43,14 @@ public class PageController {
     public PageResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
                                @Valid @RequestBody PageUpdateRequest req) {
         return pages.update(userId(jwt), id, req);
+    }
+
+    @PutMapping("/api/wiki/pages/{id}/collaboration-draft")
+    public CollaborationDraftCommitResponse commitCollaborationDraft(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @Valid @RequestBody CollaborationDraftCommitRequest req) {
+        return pages.commitCollaborationDraft(userId(jwt), id, req);
     }
 
     @PostMapping("/api/wiki/pages/{id}/publish")

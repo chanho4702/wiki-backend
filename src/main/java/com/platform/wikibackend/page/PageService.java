@@ -6,9 +6,12 @@ import com.platform.wikibackend.common.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRevision;
 import com.platform.wikibackend.domain.PageStatus;
+import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
+import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
 import com.platform.wikibackend.page.dto.PageResponse;
 import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.page.dto.PageUpdateRequest;
@@ -16,6 +19,7 @@ import com.platform.wikibackend.page.dto.RevisionMeta;
 import com.platform.wikibackend.page.dto.RevisionResponse;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AttachmentRepository;
+import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
@@ -41,6 +45,7 @@ public class PageService {
     private final EventRelay events;
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
+    private final CollaborationDraftMetadataRepository collaborationDrafts;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -80,6 +85,35 @@ public class PageService {
         revisions.save(PageRevision.snapshotOf(p));
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
         return PageResponse.from(p);
+    }
+
+    /**
+     * 사용자가 현재 보고 있는 Yjs projection을 게시 revision으로 확정한다. page와 collaboration metadata를
+     * 같은 DB transaction/row lock으로 전진시켜 두 동시 저장과 이전 generation의 늦은 요청을 막는다.
+     */
+    public CollaborationDraftCommitResponse commitCollaborationDraft(
+            long userId,
+            long pageId,
+            CollaborationDraftCommitRequest req) {
+        // 모든 writer가 page → collaboration 순서로 잠가 교착을 피한다.
+        Page page = pages.findByIdForUpdate(pageId)
+                .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
+        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        CollaborationDraftMetadata draft = collaborationDrafts
+                .findByRoomForUpdate(CollaborationDraftMetadata.room(pageId))
+                .orElseThrow(() -> new ConflictException("공동 초안이 준비되지 않았습니다"));
+
+        if (!Objects.equals(page.getVersion(), req.expectedPageVersion())
+                || !Objects.equals(draft.getBasePageVersion(), req.expectedPageVersion().longValue())
+                || !Objects.equals(draft.getGeneration(), req.expectedGeneration())) {
+            throw new ConflictException("공동 초안 버전이 변경되었습니다. 동기화 후 다시 저장하세요");
+        }
+
+        page.edit(req.title(), req.content(), userId);
+        draft.advanceTo(page.getVersion());
+        revisions.save(PageRevision.snapshotOf(page));
+        events.afterCommit(WikiEvents.pageUpdated(userId, page));
+        return new CollaborationDraftCommitResponse(PageResponse.from(page), draft.getGeneration());
     }
 
     /**
