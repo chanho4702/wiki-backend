@@ -7,6 +7,7 @@ import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.migration.model.MigrationIssue;
 import com.platform.wikibackend.migration.model.MigrationIssueSeverity;
 import com.platform.wikibackend.migration.model.MigrationItem;
+import com.platform.wikibackend.migration.model.MigrationItemStatus;
 import com.platform.wikibackend.migration.model.MigrationJob;
 import com.platform.wikibackend.migration.model.MigrationJobMode;
 import com.platform.wikibackend.migration.model.MigrationProvider;
@@ -23,6 +24,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -112,5 +115,43 @@ class FlywaySchemaValidationTest {
                 .extracting(MigrationItem::getId)
                 .isEqualTo(item.getId());
         assertThat(migrationIssues.findByJobIdOrderByIdAsc(job.getId())).hasSize(1);
+    }
+
+    /**
+     * V7의 lease CHECK는 H2 스키마(create-drop)에는 없다. RUNNING과 소유자/만료가 항상 함께
+     * 움직이는지는 실제 Postgres에서만 확인된다.
+     */
+    @Test
+    void V7_worker_lease는_RUNNING_상태와_함께만_존재한다() {
+        Space space = spaces.save(Space.of("lease", "점유", null, 1L));
+        MigrationJob job = migrationJobs.save(MigrationJob.create(
+                MigrationProvider.NOTION, "workspace-acme", space.getId(), 1L, MigrationJobMode.IMPORT));
+        MigrationItem item = migrationItems.saveAndFlush(MigrationItem.pending(
+                job.getId(), "page-77", "v1", "e".repeat(64), "imports/notion/job-2/page-77.json"));
+        Instant claimedAt = Instant.parse("2026-08-18T09:00:00Z");
+
+        assertThat(migrationItems.claim(item.getId(), "worker-a", "token-1",
+                claimedAt.plusSeconds(300), claimedAt, MigrationItemStatus.RUNNING,
+                MigrationItemStatus.PENDING, MigrationItemStatus.RETRY_WAIT)).isEqualTo(1);
+
+        assertThat(migrationItems.findById(item.getId()).orElseThrow())
+                .satisfies(running -> {
+                    assertThat(running.getStatus()).isEqualTo(MigrationItemStatus.RUNNING);
+                    assertThat(running.getClaimedBy()).isEqualTo("worker-a");
+                    assertThat(running.getClaimToken()).isEqualTo("token-1");
+                    assertThat(running.getLeaseExpiresAt()).isEqualTo(claimedAt.plusSeconds(300));
+                });
+
+        MigrationItem running = migrationItems.findById(item.getId()).orElseThrow();
+        running.scheduleRetry("NOTION_TIMEOUT", claimedAt.plusSeconds(60));
+        migrationItems.saveAndFlush(running);
+
+        assertThat(migrationItems.findById(item.getId()).orElseThrow())
+                .satisfies(waiting -> {
+                    assertThat(waiting.getStatus()).isEqualTo(MigrationItemStatus.RETRY_WAIT);
+                    assertThat(waiting.getClaimedBy()).isNull();
+                    assertThat(waiting.getClaimToken()).isNull();
+                    assertThat(waiting.getLeaseExpiresAt()).isNull();
+                });
     }
 }

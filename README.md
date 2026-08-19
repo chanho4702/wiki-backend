@@ -69,6 +69,10 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 첨부 확정 | `POST /api/wiki/pages/{pageId}/attachments/confirm` | EDIT |
 | 첨부 | `GET /api/wiki/attachments/{id}[/inline]`, `DELETE /api/wiki/attachments/{id}` | VIEW / EDIT |
 | 공동 편집 ticket | `POST /api/wiki/pages/{pageId}/collaboration-ticket` | EDIT |
+| 마이그레이션 job | `POST /api/wiki/migrations`, `GET /api/wiki/migrations/{id}` | 대상 스페이스 ADMIN |
+| 마이그레이션 원본 등록 | `POST /api/wiki/migrations/{id}/items` | 대상 스페이스 ADMIN |
+| 마이그레이션 시작·취소 | `POST /api/wiki/migrations/{id}/start`, `.../cancel` | 대상 스페이스 ADMIN |
+| 마이그레이션 보고서 | `GET /api/wiki/migrations/{id}/report` | 대상 스페이스 ADMIN |
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -119,6 +123,10 @@ Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을
   checkpoint, retry 시각·횟수, dead letter 상태를 PostgreSQL에 보존한다.
 - 외부 object mapping은 긴 원본 ID 대신 source identity의 SHA-256 key로 멱등성을 보장하고,
   `migration_issue`에는 구조화된 code/path만 기록한다.
+- worker는 item을 lease로 점유한다. stage 실행은 트랜잭션 밖에서 돌고 점유·결과 기록만 짧은
+  트랜잭션으로 끊으므로, 외부 API 호출이 DB 커넥션을 잡고 있지 않는다.
+- 같은 item을 두 노드가 노리면 낙관적 락으로 한쪽만 이긴다. 노드가 죽어 결과를 기록하지 못한
+  item은 lease 만료 뒤 다른 노드가 회수해 재시도 대기로 되돌린다.
 
 Notion은 `snapshotVersion: 1` envelope에 page 응답과 parent block ID별 paginated
 `Retrieve block children` 원본 응답을 함께 보존한다. normalizer는 현재 `Notion-Version: 2026-03-11`
@@ -135,9 +143,29 @@ fixture parser로 검증한다. heading/paragraph/mark/list/task/panel/layout/ta
 DTD/schema 접근을 차단한다. 근거는 [Atlassian storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)을
 따르며 실제 고객/사내 DC 버전을 확보한 뒤 별도 compatibility matrix를 만든다.
 
+### job 수명주기와 보고서
+
+job은 `PENDING`(원본 등록) → `RUNNING`(등록 마감, worker 처리) → `COMPLETED`/`FAILED`/`CANCELLED`로
+움직인다. `start` 뒤의 원본 등록은 `409`이며, 같은 외부 객체를 다시 등록해도 item은 늘지 않는다.
+job 상태 전이(`start`/`cancel`)와 그 상태에 기대는 동작(원본 등록·item 점유)은 job 행 잠금으로
+직렬화한다. 취소된 job은 새 item을 집지 않고, 취소 직전에 시작된 stage의 결과도 반영하지 않는다.
+worker tick은 전용 스레드에서 돌아 다른 주기 작업(첨부 reconciliation)을 막지 않으며, 이전 tick이
+끝나지 않았으면 건너뛴다.
+
+worker는 `MigrationStageHandler`(provider × stage)를 찾아 실행하고 결과에 따라 다음 단계로
+전진시키거나 지수 백오프로 재시도한다. 재시도 상한을 넘기거나 처리기가 없는 stage는 즉시 dead
+letter가 되고 `migration_issue`에 ERROR로 남는다. 처리 대상이 모두 소진되면 job은 마감되며 dead
+letter가 하나라도 있으면 `FAILED`다.
+
+`GET /api/wiki/migrations/{id}/report`는 dry-run과 실제 import가 같은 형태로 낸다 — 상태별·단계별
+item 수, severity/code별 손실 집계, dead letter 목록이다. `DRY_RUN`은 대상 페이지를 만들지 않으므로
+`migration_object_map`도 남기지 않는다. 보고서에는 아직 옮기지 않은 외부 객체 ID가 들어가므로
+VIEW가 아니라 대상 스페이스 ADMIN만 열 수 있다.
+
 현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer,
-Confluence 공통 storage parser까지 검증한다. 실제 provider extractor와 media copier, worker/API는 이
-경계 위에 순차적으로 추가하며, 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
+Confluence 공통 storage parser, worker 실행기와 job/report API까지 검증한다. 실제 provider
+extractor와 media copier는 `MigrationStageHandler`로 이 경계 위에 순차적으로 붙이며, 기존
+`Page.content` 정본 포맷은 바꾸지 않는다.
 
 ## 환경 변수
 
@@ -160,6 +188,10 @@ Confluence 공통 storage parser까지 검증한다. 실제 provider extractor�
 | `WIKI_MAX_ATTACHMENT_MB` | `20` | 파일·요청 최대 크기(MB) |
 | `WIKI_PENDING_ATTACHMENT_RETENTION` | `PT24H` | PENDING 첨부 정리 유예 |
 | `WIKI_COLLABORATION_TICKET_TTL` | `PT1M` | WebSocket 접속용 1회 ticket TTL(최대 5분) |
+| `platform.wiki.migration-worker.enabled` | `true` | migration worker 스케줄러 on/off |
+| `platform.wiki.migration-worker.lease` | `PT5M` | item 점유 lease(노드 장애 회수 지연) |
+| `platform.wiki.migration-worker.max-attempts` | `5` | dead letter 전 최대 시도 횟수 |
+| `platform.wiki.migration-worker.retry-backoff[-max]` | `PT30S` / `PT30M` | 지수 백오프 기준·상한 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
 
@@ -183,7 +215,7 @@ src/main/java/com/platform/wikibackend/
 ├─ page/         페이지·revision REST와 도메인 로직
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
-├─ migration/    Document IR 검증과 단계적 외부 문서 가져오기 기반
+├─ migration/    Document IR 검증·job REST와 worker 실행기(단계적 외부 문서 가져오기)
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행

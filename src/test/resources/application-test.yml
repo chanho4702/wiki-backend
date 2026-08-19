@@ -36,6 +36,8 @@ platform:
     files-dir: ${java.io.tmpdir}/wiki-test-files
     attachment-reconciliation:
       enabled: false
+    migration-worker:
+      enabled: false   # 스케줄러 자동 tick 금지 — worker 테스트가 시각을 직접 넣는다
     collaboration:
       ticket-ttl: PT1M
   events:

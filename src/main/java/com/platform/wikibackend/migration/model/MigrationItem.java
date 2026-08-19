@@ -72,6 +72,15 @@ public class MigrationItem {
     @Column(name = "dead_lettered_at")
     private Instant deadLetteredAt;
 
+    @Column(name = "claimed_by", length = 64)
+    private String claimedBy;
+
+    @Column(name = "claim_token", length = 36)
+    private String claimToken;
+
+    @Column(name = "lease_expires_at")
+    private Instant leaseExpiresAt;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -103,16 +112,24 @@ public class MigrationItem {
         return MigrationSourceKey.item(externalObjectId);
     }
 
-    public void begin(Instant now) {
-        Instant startedAt = MigrationSourceKey.require(now, "now");
-        if (status != MigrationItemStatus.PENDING && status != MigrationItemStatus.RETRY_WAIT) {
-            throw new IllegalStateException("Migration item cannot begin from " + status);
+    /** 점유 중이지만 lease가 만료돼 소유 노드를 더 이상 신뢰할 수 없는 상태. */
+    public boolean isLeaseExpired(Instant now) {
+        return status == MigrationItemStatus.RUNNING
+                && !leaseExpiresAt.isAfter(MigrationSourceKey.require(now, "now"));
+    }
+
+    /** lease가 만료된 RUNNING item을 재시도 대기로 되돌린다. 아직 유효하면 false. */
+    public boolean releaseExpiredLease(String errorCode, Instant now, Instant nextAttemptAt) {
+        Instant observedAt = MigrationSourceKey.require(now, "now");
+        if (status != MigrationItemStatus.RUNNING || leaseExpiresAt.isAfter(observedAt)) {
+            return false;
         }
-        if (status == MigrationItemStatus.RETRY_WAIT && nextAttemptAt.isAfter(startedAt)) {
-            throw new IllegalStateException("Migration item retry is not due");
-        }
-        status = MigrationItemStatus.RUNNING;
-        nextAttemptAt = null;
+        this.lastErrorCode = MigrationSourceKey.requireText(errorCode, "errorCode", 128);
+        this.nextAttemptAt = MigrationSourceKey.require(nextAttemptAt, "nextAttemptAt");
+        this.retryCount += 1;
+        status = MigrationItemStatus.RETRY_WAIT;
+        releaseLease();
+        return true;
     }
 
     public void completeStage(MigrationStage nextStage) {
@@ -123,6 +140,7 @@ public class MigrationItem {
         }
         stage = next;
         status = next == MigrationStage.DONE ? MigrationItemStatus.COMPLETED : MigrationItemStatus.PENDING;
+        releaseLease();
     }
 
     public void scheduleRetry(String errorCode, Instant nextAttemptAt) {
@@ -131,6 +149,7 @@ public class MigrationItem {
         this.nextAttemptAt = MigrationSourceKey.require(nextAttemptAt, "nextAttemptAt");
         retryCount += 1;
         status = MigrationItemStatus.RETRY_WAIT;
+        releaseLease();
     }
 
     public void deadLetter(String errorCode, Instant now) {
@@ -139,10 +158,17 @@ public class MigrationItem {
         deadLetteredAt = MigrationSourceKey.require(now, "now");
         nextAttemptAt = null;
         status = MigrationItemStatus.DEAD_LETTER;
+        releaseLease();
     }
 
     public void bindTargetPage(Long pageId) {
         targetPageId = MigrationSourceKey.require(pageId, "pageId");
+    }
+
+    private void releaseLease() {
+        claimedBy = null;
+        claimToken = null;
+        leaseExpiresAt = null;
     }
 
     private void requireRunning() {

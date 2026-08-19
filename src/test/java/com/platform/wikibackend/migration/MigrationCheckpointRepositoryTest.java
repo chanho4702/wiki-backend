@@ -47,6 +47,11 @@ class MigrationCheckpointRepositoryTest {
     @Autowired PageRepository pages;
     @Autowired SpaceRepository spaces;
 
+    private int claim(Long itemId, String claimToken, Instant now) {
+        return items.claim(itemId, "worker-a", claimToken, now.plusSeconds(300), now,
+                MigrationItemStatus.RUNNING, MigrationItemStatus.PENDING, MigrationItemStatus.RETRY_WAIT);
+    }
+
     @BeforeEach
     void clean() {
         issues.deleteAllInBatch();
@@ -71,31 +76,41 @@ class MigrationCheckpointRepositoryTest {
         Instant retryAt = startedAt.plusSeconds(60);
 
         job.start(startedAt);
-        item.begin(startedAt);
-        item.scheduleRetry("NOTION_RATE_LIMITED", retryAt);
         jobs.saveAndFlush(job);
-        items.saveAndFlush(item);
+        assertThat(claim(item.getId(), "token-1", startedAt)).isEqualTo(1);
+
+        MigrationItem running = items.findById(item.getId()).orElseThrow();
+        assertThat(running.getClaimedBy()).isEqualTo("worker-a");
+        assertThat(running.getClaimToken()).isEqualTo("token-1");
+        running.scheduleRetry("NOTION_RATE_LIMITED", retryAt);
+        items.saveAndFlush(running);
 
         MigrationItem waiting = items.findById(item.getId()).orElseThrow();
         assertThat(waiting.getStage()).isEqualTo(MigrationStage.EXTRACT);
         assertThat(waiting.getStatus()).isEqualTo(MigrationItemStatus.RETRY_WAIT);
         assertThat(waiting.getRetryCount()).isEqualTo(1);
         assertThat(waiting.getNextAttemptAt()).isEqualTo(retryAt);
-        assertThat(jobs.findByStatusOrderByCreatedAtAscIdAsc(MigrationJobStatus.RUNNING)).containsExactly(job);
+        assertThat(waiting.getClaimedBy()).isNull();
+        // 점유 UPDATE가 영속성 컨텍스트를 비우므로 같은 인스턴스가 아니다 — id로 대조한다.
+        assertThat(jobs.findByStatusOrderByCreatedAtAscIdAsc(MigrationJobStatus.RUNNING))
+                .extracting(MigrationJob::getId).containsExactly(job.getId());
 
-        assertThatThrownBy(() -> waiting.begin(retryAt.minusSeconds(1)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("not due");
+        // 재시도 시각 전에는 아무도 집지 못한다.
+        assertThat(claim(item.getId(), "token-2", retryAt.minusSeconds(1))).isZero();
+        assertThat(claim(item.getId(), "token-3", retryAt)).isEqualTo(1);
 
-        waiting.begin(retryAt);
-        waiting.completeStage(MigrationStage.NORMALIZE);
-        items.saveAndFlush(waiting);
+        MigrationItem retried = items.findById(item.getId()).orElseThrow();
+        retried.completeStage(MigrationStage.NORMALIZE);
+        items.saveAndFlush(retried);
 
         assertThat(items.findById(item.getId()).orElseThrow())
                 .satisfies(saved -> {
                     assertThat(saved.getStage()).isEqualTo(MigrationStage.NORMALIZE);
                     assertThat(saved.getStatus()).isEqualTo(MigrationItemStatus.PENDING);
                     assertThat(saved.getNextAttemptAt()).isNull();
+                    assertThat(saved.getClaimedBy()).isNull();
+                    assertThat(saved.getClaimToken()).isNull();
+                    assertThat(saved.getLeaseExpiresAt()).isNull();
                 });
     }
 
