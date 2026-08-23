@@ -19,7 +19,9 @@ public class Page {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "space_id", nullable = false, updatable = false)
+    // updatable: 스페이스 간 이동(moveToSpace)이 이 컬럼을 갱신한다 — 예전 updatable=false는
+    // 이동 시 dirty checking이 spaceId 변경을 조용히 버리는 함정이었다.
+    @Column(name = "space_id", nullable = false)
     private Long spaceId;
 
     @Column(name = "parent_id")
@@ -96,6 +98,13 @@ public class Page {
      */
     public void rewriteContentForCopy(String content) {
         this.content = content;
+    }
+
+    /** 스페이스 간 이동 — 이동도 편집이 아니므로 version을 올리지 않는다(rankTo와 같은 원칙). */
+    public void moveToSpace(Long newSpaceId, Long newParentId, long sortOrder) {
+        this.spaceId = newSpaceId;
+        this.parentId = newParentId;
+        this.sortOrder = sortOrder;
     }
 
     public void moveTo(Long newParentId) {

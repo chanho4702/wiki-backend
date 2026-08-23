@@ -145,6 +145,57 @@ class PageMoveTest {
     }
 
     @Test
+    void 다른_스페이스로_서브트리_동반_이동한다() throws Exception {
+        Long otherSpace = spaces.save(Space.of("tg" + (System.nanoTime() % 100000), "대상", null, EDITOR)).getId();
+        perms.allow(EDITOR, otherSpace, WikiAction.EDIT);
+        perms.allow(EDITOR, otherSpace, WikiAction.VIEW);
+        Page child = savePage(a.getId(), "A하위", 1);
+
+        mvc.perform(post("/api/wiki/pages/{id}/move", a.getId()).with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + otherSpace + ",\"parentId\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.spaceId").value(otherSpace))
+                .andExpect(jsonPath("$.version").value(1));
+
+        // 하위도 함께 옮겨졌고 구조(부모 관계)는 유지된다
+        Page movedChild = pages.findById(child.getId()).orElseThrow();
+        assertThat(movedChild.getSpaceId()).isEqualTo(otherSpace);
+        assertThat(movedChild.getParentId()).isEqualTo(a.getId());
+        // 떠난 스페이스 루트는 조밀하게 남는다
+        assertThat(pages.findSiblings(spaceId, null).stream().map(Page::getTitle))
+                .containsExactly("B", "C");
+    }
+
+    @Test
+    void promote로_이동하면_하위는_원래_자리에_남는다() throws Exception {
+        Long otherSpace = spaces.save(Space.of("pm" + (System.nanoTime() % 100000), "대상", null, EDITOR)).getId();
+        perms.allow(EDITOR, otherSpace, WikiAction.EDIT);
+        Page child = savePage(a.getId(), "A하위", 1);
+
+        mvc.perform(post("/api/wiki/pages/{id}/move", a.getId()).with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + otherSpace + ",\"parentId\":null,\"children\":\"promote\"}"))
+                .andExpect(status().isOk());
+
+        Page stayed = pages.findById(child.getId()).orElseThrow();
+        assertThat(stayed.getSpaceId()).isEqualTo(spaceId);
+        assertThat(stayed.getParentId()).isNull(); // A의 부모(루트)로 승격
+        assertThat(pages.findById(a.getId()).orElseThrow().getSpaceId()).isEqualTo(otherSpace);
+    }
+
+    @Test
+    void 대상_스페이스_EDIT가_없으면_스페이스_간_이동이_거부된다() throws Exception {
+        Long otherSpace = spaces.save(Space.of("nx" + (System.nanoTime() % 100000), "대상", null, EDITOR)).getId();
+        // otherSpace에는 권한을 주지 않는다
+        mvc.perform(post("/api/wiki/pages/{id}/move", a.getId()).with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + otherSpace + ",\"parentId\":null}"))
+                .andExpect(status().isForbidden());
+        assertThat(pages.findById(a.getId()).orElseThrow().getSpaceId()).isEqualTo(spaceId);
+    }
+
+    @Test
     void EDIT_권한이_없으면_이동할_수_없다() throws Exception {
         mvc.perform(post("/api/wiki/pages/{id}/move", a.getId()).with(asUser(VIEWER, "Bob"))
                         .contentType(MediaType.APPLICATION_JSON)

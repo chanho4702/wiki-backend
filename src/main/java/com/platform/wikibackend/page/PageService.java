@@ -139,6 +139,9 @@ public class PageService {
     public PageResponse move(long userId, long pageId, PageMoveRequest req) {
         Page page = getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        if (req.spaceId() != null && !Objects.equals(req.spaceId(), page.getSpaceId())) {
+            return moveToSpace(userId, pageId, req);
+        }
         spaces.lockForReorder(page.getSpaceId());
         Page locked = pages.findByIdForUpdate(pageId)
                 .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
@@ -167,6 +170,78 @@ public class PageService {
             events.afterCommit(WikiEvents.pageUpdated(userId, locked));
         }
         return PageResponse.from(locked);
+    }
+
+    /**
+     * 스페이스 간 이동 — 양쪽 스페이스 EDIT가 필요하고, 하위 처리는 요청이 정한다
+     * (children=with: 서브트리 동반 / promote: 하위는 원래 부모 밑에 남김).
+     * 첨부·댓글·리비전은 pageId에 묶여 있어 행 이동이 필요 없고, 검색 색인은 스페이스가
+     * 권한 필터라서 이동한 모든 페이지에 pageUpdated를 다시 발행한다.
+     */
+    private PageResponse moveToSpace(long userId, long pageId, PageMoveRequest req) {
+        Long targetSpaceId = req.spaceId();
+        spaces.require(userId, targetSpaceId, WikiAction.EDIT);
+        // 두 스페이스를 id 순서로 잠근다 — 반대 방향 이동과의 교착 방지
+        Page snapshot = getOwned(pageId);
+        Long sourceSpaceId = snapshot.getSpaceId();
+        long first = Math.min(sourceSpaceId, targetSpaceId);
+        long second = Math.max(sourceSpaceId, targetSpaceId);
+        spaces.lockForReorder(first);
+        spaces.lockForReorder(second);
+        Page locked = pages.findByIdForUpdate(pageId)
+                .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
+
+        // 대상 부모는 대상 스페이스 소속이어야 한다
+        if (req.parentId() != null) {
+            Page targetParent = pages.findById(req.parentId())
+                    .orElseThrow(() -> new NotFoundException("부모 페이지 없음: " + req.parentId()));
+            if (!Objects.equals(targetParent.getSpaceId(), targetSpaceId)) {
+                throw new IllegalArgumentException("부모 페이지가 대상 스페이스에 없습니다");
+            }
+        }
+
+        List<Page> subtree = collectSubtree(pageId);
+        if (req.parentId() != null && !req.promoteChildren()
+                && subtree.stream().anyMatch(p -> p.getId().equals(req.parentId()))) {
+            throw new IllegalArgumentException("페이지를 자신의 하위로 이동할 수 없습니다");
+        }
+
+        Long previousParentId = locked.getParentId();
+        if (req.promoteChildren()) {
+            // 직계 하위를 원래 부모 밑으로 올린다(삭제 PROMOTE와 같은 의미론)
+            long nextOrder = pages.findMaxSortOrder(sourceSpaceId, previousParentId);
+            for (Page child : pages.findByParentId(pageId)) {
+                child.rankTo(previousParentId, ++nextOrder);
+                events.afterCommit(WikiEvents.pageUpdated(userId, child));
+            }
+        } else {
+            // 서브트리 동반 — 구조(부모 관계·형제 순서)는 유지하고 spaceId만 바꾼다
+            for (Page descendant : subtree) {
+                if (descendant.getId().equals(pageId)) continue;
+                descendant.moveToSpace(targetSpaceId, descendant.getParentId(), descendant.getSortOrder());
+                events.afterCommit(WikiEvents.pageUpdated(userId, descendant));
+            }
+        }
+
+        long order = pages.findMaxSortOrder(targetSpaceId, req.parentId()) + 1;
+        locked.moveToSpace(targetSpaceId, req.parentId(), order);
+        resequenceSiblings(sourceSpaceId, previousParentId, pageId);
+        events.afterCommit(WikiEvents.pageUpdated(userId, locked));
+        return PageResponse.from(locked);
+    }
+
+    /** 자기 자신 포함 서브트리 전체. visited로 손상 데이터의 순환에도 무한 루프하지 않는다. */
+    private List<Page> collectSubtree(long rootId) {
+        List<Page> out = new ArrayList<>();
+        Set<Long> visited = new HashSet<>();
+        java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>(List.of(rootId));
+        while (!queue.isEmpty()) {
+            long id = queue.poll();
+            if (!visited.add(id)) continue;
+            pages.findById(id).ifPresent(out::add);
+            for (Page child : pages.findByParentId(id)) queue.add(child.getId());
+        }
+        return out;
     }
 
     /** 떠난 그룹을 1..n으로 조밀화 — 빈 번호를 남기지 않아야 이후 삽입 계산이 단순하다. */
