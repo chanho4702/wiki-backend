@@ -10,6 +10,7 @@ import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.PageMoveRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
 import com.platform.wikibackend.page.dto.PageResponse;
@@ -33,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -58,6 +60,7 @@ public class PageService {
         validateParent(req.spaceId(), req.parentId(), null);
         Page saved = pages.save(Page.of(req.spaceId(), req.parentId(), req.title(), req.content(), userId,
                 req.type(), req.status()));
+        saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
         revisions.save(PageRevision.snapshotOf(saved)); // 버전1도 리비전에 — "모든 버전이 리비전에 있다"
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
         return PageResponse.from(saved);
@@ -82,6 +85,7 @@ public class PageService {
                 : source.getTitle();
         Page saved = pages.save(Page.of(source.getSpaceId(), source.getParentId(),
                 baseTitle + suffix, source.getContent(), userId, source.getType(), source.getStatus()));
+        saved.resequence(pages.findMaxSortOrder(source.getSpaceId(), source.getParentId()) + 1);
 
         String content = source.getContent();
         for (Attachment original : attachments.findByPageId(pageId)) {
@@ -127,6 +131,52 @@ public class PageService {
     }
 
     /** 수정 = 새 버전. expectedVersion 불일치 409. parentId 변경은 이동(순환 검증). */
+    /**
+     * 트리 이동/재정렬(P1-001) — 부모 변경과 형제 순서를 한 트랜잭션에서 처리한다.
+     * 내용 편집이 아니므로 version을 올리지 않고 리비전도 쌓지 않는다(스토어 계약).
+     * 스페이스 행을 잠가 같은 스페이스의 동시 재정렬과 직렬화한다.
+     */
+    public PageResponse move(long userId, long pageId, PageMoveRequest req) {
+        Page page = getOwned(pageId);
+        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        spaces.lockForReorder(page.getSpaceId());
+        Page locked = pages.findByIdForUpdate(pageId)
+                .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
+        if (!Objects.equals(locked.getParentId(), req.parentId())) {
+            validateParent(locked.getSpaceId(), req.parentId(), pageId);
+        }
+        Long previousParentId = locked.getParentId();
+        boolean regrouped = !Objects.equals(previousParentId, req.parentId());
+
+        List<Page> group = new ArrayList<>(pages.findSiblings(locked.getSpaceId(), req.parentId()));
+        group.removeIf(sibling -> sibling.getId().equals(pageId));
+        int insertAt = -1;
+        if (req.beforeId() != null) {
+            for (int i = 0; i < group.size(); i++) {
+                if (group.get(i).getId().equals(req.beforeId())) { insertAt = i; break; }
+            }
+        }
+        // beforeId가 그룹에 없으면(드래그 중 stale 참조) 조용히 맨 뒤 — 화면은 이동 후 재조회한다
+        if (insertAt < 0) insertAt = group.size();
+        locked.rankTo(req.parentId(), locked.getSortOrder());
+        group.add(insertAt, locked);
+        for (int i = 0; i < group.size(); i++) group.get(i).resequence(i + 1L);
+        if (regrouped) {
+            resequenceSiblings(locked.getSpaceId(), previousParentId, pageId);
+            // 부모가 바뀐 사실이 나가지 않으면 색인·활동피드가 스테일해진다(순수 재정렬은 색인 무관)
+            events.afterCommit(WikiEvents.pageUpdated(userId, locked));
+        }
+        return PageResponse.from(locked);
+    }
+
+    /** 떠난 그룹을 1..n으로 조밀화 — 빈 번호를 남기지 않아야 이후 삽입 계산이 단순하다. */
+    private void resequenceSiblings(Long spaceId, Long parentId, long excludedPageId) {
+        List<Page> siblings = pages.findSiblings(spaceId, parentId).stream()
+                .filter(p -> p.getId() != excludedPageId)
+                .toList();
+        for (int i = 0; i < siblings.size(); i++) siblings.get(i).resequence(i + 1L);
+    }
+
     public PageResponse update(long userId, long pageId, PageUpdateRequest req) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
@@ -135,7 +185,12 @@ public class PageService {
         }
         if (!Objects.equals(p.getParentId(), req.parentId())) {
             validateParent(p.getSpaceId(), req.parentId(), pageId);
+            Long previousParentId = p.getParentId();
             p.moveTo(req.parentId());
+            // 그룹이 바뀌면 새 그룹 맨 뒤로, 떠난 그룹은 조밀하게(V9) — 정밀 배치는 move가 한다
+            spaces.lockForReorder(p.getSpaceId());
+            p.resequence(pages.findMaxSortOrder(p.getSpaceId(), req.parentId()) + 1);
+            resequenceSiblings(p.getSpaceId(), previousParentId, pageId);
         }
         p.edit(req.title(), req.content(), userId);
         revisions.save(PageRevision.snapshotOf(p));
@@ -187,8 +242,9 @@ public class PageService {
             }
             if (policy == ChildrenPolicy.PROMOTE) {
                 // 대상의 부모로 올린다. 부모는 자식의 조상이므로 순환이 생길 수 없다(검증 불필요).
+                long nextOrder = pages.findMaxSortOrder(p.getSpaceId(), p.getParentId());
                 for (Page child : children) {
-                    child.moveTo(p.getParentId());
+                    child.rankTo(p.getParentId(), ++nextOrder);
                     // 부모가 바뀐 사실이 나가지 않으면 색인·활동피드가 스테일해진다
                     events.afterCommit(WikiEvents.pageUpdated(userId, child));
                 }

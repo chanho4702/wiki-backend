@@ -1,6 +1,7 @@
 package com.platform.wikibackend.page;
 
 import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.PageMoveRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
 import com.platform.wikibackend.page.dto.PageResponse;
@@ -51,6 +52,12 @@ public class PageController {
             @PathVariable Long id,
             @Valid @RequestBody CollaborationDraftCommitRequest req) {
         return pages.commitCollaborationDraft(userId(jwt), id, req);
+    }
+
+    @PostMapping("/api/wiki/pages/{id}/move")
+    public PageResponse move(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                             @Valid @RequestBody PageMoveRequest req) {
+        return pages.move(userId(jwt), id, req);
     }
 
     @PostMapping("/api/wiki/pages/{id}/copy")

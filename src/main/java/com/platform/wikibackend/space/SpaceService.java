@@ -102,6 +102,12 @@ public class SpaceService {
     }
 
     /** 다른 서비스(페이지·첨부)도 쓰는 공용 가드. */
+    /** 트리 이동/재정렬 직렬화용 스페이스 행 잠금 — 순번 발급이 겹치지 않게 한다(V9). */
+    public void lockForReorder(long spaceId) {
+        spaces.findByIdForUpdate(spaceId)
+                .orElseThrow(() -> new NotFoundException("스페이스 없음: " + spaceId));
+    }
+
     public void require(long userId, long spaceId, WikiAction action) {
         if (!permissions.isAllowed(userId, spaceId, action)) {
             throw new ForbiddenException(action + " 권한이 필요합니다 (space " + spaceId + ")");

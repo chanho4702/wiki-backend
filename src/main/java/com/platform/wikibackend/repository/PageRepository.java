@@ -13,6 +13,22 @@ import java.util.Optional;
 
 public interface PageRepository extends JpaRepository<Page, Long> {
     List<Page> findBySpaceIdOrderById(Long spaceId);
+
+    /** 형제 그룹 — 루트는 parentId가 null이라 파생 쿼리로 못 쓰고 명시 비교한다(ALM findRankGroup과 동형). */
+    @Query("""
+            select p from Page p
+             where p.spaceId = :spaceId
+               and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
+             order by p.sortOrder asc, p.id asc
+            """)
+    List<Page> findSiblings(@Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
+
+    @Query("""
+            select coalesce(max(p.sortOrder), 0) from Page p
+             where p.spaceId = :spaceId
+               and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
+            """)
+    long findMaxSortOrder(@Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
     List<Page> findByParentId(Long parentId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
