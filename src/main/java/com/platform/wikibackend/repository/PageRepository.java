@@ -41,6 +41,26 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     long findMaxSortOrder(@Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
     List<Page> findByParentId(Long parentId);
 
+    /** 트리 응답 전용 프로젝션 — content(본문 text)를 로드하지 않는다. 스페이스가 커지면
+     * 사이드바 트리 한 번에 전 문서 본문이 실려 오는 것이 최대 전송 낭비였다(규모 검토 2026-08-23). */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.PageTreeItem(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+              from Page p
+             where p.spaceId = :spaceId
+             order by p.id
+            """)
+    List<com.platform.wikibackend.page.dto.PageTreeItem> findTreeBySpaceId(@Param("spaceId") Long spaceId);
+
+    /** 서브트리 BFS용 (id, parentId) 경량 프로젝션 — 노드당 findByParentId N+1을 없앤다. */
+    @Query("select p.id as id, p.parentId as parentId from Page p where p.spaceId = :spaceId")
+    List<IdParent> findIdParentBySpaceId(@Param("spaceId") Long spaceId);
+
+    interface IdParent {
+        Long getId();
+        Long getParentId();
+    }
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select page from Page page where page.id = :id")
     Optional<Page> findByIdForUpdate(@Param("id") Long id);

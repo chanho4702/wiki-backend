@@ -36,7 +36,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -127,7 +129,9 @@ public class PageService {
     @Transactional(readOnly = true)
     public List<PageTreeItem> tree(long userId, long spaceId) {
         spaces.getForView(userId, spaceId);
-        return pages.findBySpaceIdOrderById(spaceId).stream().map(PageTreeItem::from).toList();
+        // 프로젝션 쿼리 — 트리는 본문이 필요 없다. 전체 엔티티 로드는 스페이스 크기에 비례해
+        // 본문 text 전송·역직렬화 비용을 낸다(규모 검토 2026-08-23).
+        return pages.findTreeBySpaceId(spaceId);
     }
 
     /** 수정 = 새 버전. expectedVersion 불일치 409. parentId 변경은 이동(순환 검증). */
@@ -232,6 +236,14 @@ public class PageService {
 
     /** 자기 자신 포함 서브트리 전체. visited로 손상 데이터의 순환에도 무한 루프하지 않는다. */
     private List<Page> collectSubtree(long rootId) {
+        // 스페이스 전체의 (id, parentId)를 한 번에 읽고 메모리에서 BFS — 이전에는 노드당
+        // findByParentId를 날려 서브트리 크기만큼 왕복(N+1)했다(규모 검토 2026-08-23).
+        // 서브트리는 항상 한 스페이스 안에 있다(이동도 서브트리 단위로 스페이스를 옮긴다).
+        Page root = getOwned(rootId);
+        Map<Long, List<Long>> childrenOf = new HashMap<>();
+        for (PageRepository.IdParent row : pages.findIdParentBySpaceId(root.getSpaceId())) {
+            childrenOf.computeIfAbsent(row.getParentId(), k -> new ArrayList<>()).add(row.getId());
+        }
         List<Page> out = new ArrayList<>();
         Set<Long> visited = new HashSet<>();
         java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>(List.of(rootId));
@@ -239,7 +251,7 @@ public class PageService {
             long id = queue.poll();
             if (!visited.add(id)) continue;
             pages.findById(id).ifPresent(out::add);
-            for (Page child : pages.findByParentId(id)) queue.add(child.getId());
+            for (Long child : childrenOf.getOrDefault(id, List.of())) queue.add(child);
         }
         return out;
     }
