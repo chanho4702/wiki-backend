@@ -11,6 +11,7 @@ import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AttachmentRepository;
+import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
@@ -34,6 +35,7 @@ public class SpaceService {
     private final PermissionClient permissions;
     private final EventRelay events;
     private final PageRepository pages;
+    private final PageCommentRepository comments;
     private final PageRevisionRepository revisions;
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
@@ -85,6 +87,7 @@ public class SpaceService {
             });
             attachments.deleteByPageId(p.getId());
             revisions.deleteByPageId(p.getId());
+            comments.deleteByPageId(p.getId());
         }
         // 개별 DELETE(deleteAll)는 운영 PG에서 부모 페이지 삭제가 자식을 cascade로 먼저 지운 뒤
         // 이어지는 자식 개별 DELETE가 0행 → Hibernate StaleStateException(500)을 낸다.

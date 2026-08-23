@@ -20,6 +20,7 @@ import com.platform.wikibackend.page.dto.RevisionResponse;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AttachmentRepository;
 import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
+import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
@@ -40,6 +41,7 @@ import java.util.Set;
 public class PageService {
 
     private final PageRepository pages;
+    private final PageCommentRepository comments;
     private final PageRevisionRepository revisions;
     private final SpaceService spaces;
     private final EventRelay events;
@@ -168,8 +170,9 @@ public class PageService {
         });
         attachments.deleteByPageId(pageId);
 
-        // 리비전 명시 삭제 — H2 테스트 스키마는 FK 없음(Long 컬럼만) → 고아 방지
+        // 리비전·댓글 명시 삭제 — H2 테스트 스키마는 FK 없음(Long 컬럼만) → 고아 방지
         revisions.deleteByPageId(pageId);
+        comments.deleteByPageId(pageId);
         pages.delete(p);
         events.afterCommit(WikiEvents.pageDeleted(userId, pageId, spaceId));
     }

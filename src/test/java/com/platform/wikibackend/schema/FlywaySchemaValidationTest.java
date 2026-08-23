@@ -1,6 +1,7 @@
 package com.platform.wikibackend.schema;
 
 import com.platform.wikibackend.domain.Page;
+import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.PageStatus;
 import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.domain.Space;
@@ -14,6 +15,7 @@ import com.platform.wikibackend.migration.model.MigrationProvider;
 import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
 import com.platform.wikibackend.migration.repository.MigrationItemRepository;
 import com.platform.wikibackend.migration.repository.MigrationJobRepository;
+import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.Test;
@@ -59,6 +61,7 @@ class FlywaySchemaValidationTest {
 
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
+    @Autowired PageCommentRepository comments;
     @Autowired MigrationJobRepository migrationJobs;
     @Autowired MigrationItemRepository migrationItems;
     @Autowired MigrationIssueRepository migrationIssues;
@@ -115,6 +118,20 @@ class FlywaySchemaValidationTest {
                 .extracting(MigrationItem::getId)
                 .isEqualTo(item.getId());
         assertThat(migrationIssues.findByJobIdOrderByIdAsc(job.getId())).hasSize(1);
+    }
+
+    /** V8 댓글 — page cascade와 답글 cascade는 실제 Postgres FK에서만 확인된다. */
+    @Test
+    void V8_댓글은_페이지와_최상위_댓글_삭제를_cascade로_따라간다() {
+        Space space = spaces.save(Space.of("cmt", "댓글", null, 1L));
+        Page page = pages.save(Page.of(space.getId(), null, "본문", "", 1L));
+        PageComment parent = comments.saveAndFlush(PageComment.of(page.getId(), null, 1L, "Alice", "최상위"));
+        comments.saveAndFlush(PageComment.of(page.getId(), parent.getId(), 2L, "Bob", "답글"));
+
+        pages.deleteById(page.getId());
+        pages.flush();
+
+        assertThat(comments.count()).isZero();
     }
 
     /**

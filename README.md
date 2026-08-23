@@ -69,6 +69,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 첨부 확정 | `POST /api/wiki/pages/{pageId}/attachments/confirm` | EDIT |
 | 첨부 | `GET /api/wiki/attachments/{id}[/inline]`, `DELETE /api/wiki/attachments/{id}` | VIEW / EDIT |
 | 공동 편집 ticket | `POST /api/wiki/pages/{pageId}/collaboration-ticket` | EDIT |
+| 댓글 | `GET/POST /api/wiki/pages/{pageId}/comments` | VIEW |
+| 댓글 | `PUT/DELETE /api/wiki/comments/{id}` | 작성자 (삭제는 스페이스 ADMIN도) |
 | 마이그레이션 job | `POST /api/wiki/migrations`, `GET /api/wiki/migrations/{id}` | 대상 스페이스 ADMIN |
 | 마이그레이션 원본 등록 | `POST /api/wiki/migrations/{id}/items` | 대상 스페이스 ADMIN |
 | 마이그레이션 시작·취소 | `POST /api/wiki/migrations/{id}/start`, `.../cancel` | 대상 스페이스 ADMIN |
@@ -82,6 +84,12 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 `collaboration_document` metadata를 같은 PostgreSQL transaction에서 row lock한 뒤 page revision과
 generation을 함께 한 단계 전진시키므로, 동시 저장 중 하나만 성공하고 이전 세션의 늦은 요청은
 `409 Conflict`로 끝난다. Yjs binary state 자체는 계속 collaboration-service만 읽고 쓴다.
+
+댓글은 1단 답글까지 허용한다(답글의 답글은 400). 읽기·쓰기 모두 스페이스 VIEW 기준이며 —
+org-service에 COMMENT action이 생기기 전까지의 기준선 — 수정은 작성자만, 삭제는 작성자 또는
+스페이스 ADMIN(moderation)이 한다. 최상위 댓글을 지우면 답글도 함께 사라진다. `authorName`은
+작성 시점 표시 이름 스냅샷이고, `updatedAt`은 본문이 실제로 수정된 시각이라 수정 전에는 null이다
+(무변경 재저장은 "(수정됨)"을 남기지 않는다). `anchor_type`은 후속 인라인 댓글 확장 자리다.
 
 ## 서비스 경계
 
