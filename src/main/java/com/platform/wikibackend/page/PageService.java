@@ -52,6 +52,7 @@ public class PageService {
     private final PageCommentRepository comments;
     private final PageRevisionRepository revisions;
     private final SpaceService spaces;
+    private final com.platform.wikibackend.notification.NotificationService notificationService;
     private final EventRelay events;
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
@@ -279,9 +280,11 @@ public class PageService {
             p.resequence(pages.findMaxSortOrder(p.getSpaceId(), req.parentId()) + 1);
             resequenceSiblings(p.getSpaceId(), previousParentId, pageId);
         }
+        String oldBody = p.getContent();
         p.edit(req.title(), req.content(), userId);
         revisions.save(PageRevision.snapshotOf(p));
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
+        notificationService.onPageUpdated(userId, p, oldBody, req.content());
         return PageResponse.from(p);
     }
 
@@ -307,10 +310,12 @@ public class PageService {
             throw new ConflictException("공동 초안 버전이 변경되었습니다. 동기화 후 다시 저장하세요");
         }
 
+        String oldBody = page.getContent();
         page.edit(req.title(), req.content(), userId);
         draft.advanceTo(page.getVersion());
         revisions.save(PageRevision.snapshotOf(page));
         events.afterCommit(WikiEvents.pageUpdated(userId, page));
+        notificationService.onPageUpdated(userId, page, oldBody, req.content());
         return new CollaborationDraftCommitResponse(PageResponse.from(page), draft.getGeneration());
     }
 

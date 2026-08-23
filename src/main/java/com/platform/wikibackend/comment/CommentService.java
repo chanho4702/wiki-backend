@@ -33,6 +33,7 @@ public class CommentService {
     private final PageRepository pages;
     private final SpaceService spaces;
     private final PermissionClient permissions;
+    private final com.platform.wikibackend.notification.NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public List<CommentResponse> list(long userId, long pageId) {
@@ -58,6 +59,7 @@ public class CommentService {
         }
         PageComment saved = comments.save(PageComment.of(
                 pageId, req.parentId(), userId, normalizeAuthorName(userName, userId), req.body().trim()));
+        notificationService.onCommentAdded(userId, page, saved.getBody());
         return CommentResponse.from(saved);
     }
 
