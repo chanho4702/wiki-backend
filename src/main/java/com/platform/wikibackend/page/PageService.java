@@ -373,6 +373,23 @@ public class PageService {
         return PageResponse.from(p);
     }
 
+    /** 이모지 아이콘 설정/해제(null) — 메타데이터 변경이라 version·리비전을 올리지 않는다(move와 같은 취급). */
+    public PageResponse setIcon(long userId, long pageId, String icon) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        p.changeIcon(icon);
+        // 트리 응답에 icon이 실리므로 검색 인덱스 재색인은 불필요(본문·제목 불변) — 이벤트 미발행.
+        return PageResponse.from(p);
+    }
+
+    /** 조회 1회 기록 — 원자 UPDATE(동시 조회 lost update 방지) 후 누적치 반환. */
+    public long recordView(long userId, long pageId) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        pages.incrementViewCount(pageId);
+        return pages.findViewCount(pageId);
+    }
+
     /** 존재 검증만 — 권한은 호출부가. 첨부(Task 11)·리비전(Task 10)이 재사용. */
     @Transactional(readOnly = true)
     public Page getOwned(long pageId) {

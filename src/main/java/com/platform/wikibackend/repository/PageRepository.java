@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -22,6 +23,15 @@ public interface PageRepository extends JpaRepository<Page, Long> {
              order by p.sortOrder asc, p.id asc
             """)
     List<Page> findSiblings(@Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
+
+    /** 조회수 원자 증가(V10) — 엔티티 dirty-check 증가는 동시 조회에서 lost update가 나므로 금지.
+     * clearAutomatically: 같은 트랜잭션에서 이미 로드한 엔티티의 stale viewCount가 남지 않게. */
+    @Modifying(clearAutomatically = true)
+    @Query("update Page p set p.viewCount = p.viewCount + 1 where p.id = :id")
+    int incrementViewCount(@Param("id") Long id);
+
+    @Query("select p.viewCount from Page p where p.id = :id")
+    Long findViewCount(@Param("id") Long id);
 
     @Query("""
             select coalesce(max(p.sortOrder), 0) from Page p

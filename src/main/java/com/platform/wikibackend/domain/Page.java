@@ -45,6 +45,14 @@ public class Page {
     @Column(name = "sort_order", nullable = false)
     private Long sortOrder;
 
+    /** 이모지 아이콘(V10) — NULL = 기본 문서 아이콘. 트리·제목 옆 표시용 메타데이터. */
+    @Column(length = 16)
+    private String icon;
+
+    /** 누적 조회수(V10) — 증가는 리포지토리의 원자 UPDATE로만 한다(동시 조회 lost update 방지). */
+    @Column(name = "view_count", nullable = false)
+    private Long viewCount;
+
     @Column(nullable = false)
     private Integer version; // 낙관적 잠금 겸 현재 버전 번호 — 수동 관리(@Version 아님)
 
@@ -79,6 +87,7 @@ public class Page {
         p.content = content;
         p.version = 1;
         p.sortOrder = 0L; // 실제 순번은 서비스가 그룹 잠금 아래에서 발급한다
+        p.viewCount = 0L;
         p.createdBy = authorId;
         p.updatedBy = authorId;
         return p;
@@ -98,6 +107,11 @@ public class Page {
      */
     public void rewriteContentForCopy(String content) {
         this.content = content;
+    }
+
+    /** 이모지 아이콘 변경(null = 해제) — 메타데이터라 version·리비전을 올리지 않는다(rankTo와 같은 원칙). */
+    public void changeIcon(String icon) {
+        this.icon = icon;
     }
 
     /** 스페이스 간 이동 — 이동도 편집이 아니므로 version을 올리지 않는다(rankTo와 같은 원칙). */

@@ -1,6 +1,7 @@
 package com.platform.wikibackend.page;
 
 import com.platform.wikibackend.page.dto.PageCreateRequest;
+import com.platform.wikibackend.page.dto.PageIconRequest;
 import com.platform.wikibackend.page.dto.PageMoveRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
@@ -64,6 +65,17 @@ public class PageController {
     @ResponseStatus(HttpStatus.CREATED)
     public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return pages.copy(userId(jwt), id);
+    }
+
+    @PutMapping("/api/wiki/pages/{id}/icon")
+    public PageResponse setIcon(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                                @Valid @RequestBody PageIconRequest req) {
+        return pages.setIcon(userId(jwt), id, req.icon());
+    }
+
+    @PostMapping("/api/wiki/pages/{id}/views")
+    public java.util.Map<String, Long> recordView(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return java.util.Map.of("views", pages.recordView(userId(jwt), id));
     }
 
     @PostMapping("/api/wiki/pages/{id}/publish")
