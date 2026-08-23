@@ -53,6 +53,12 @@ public class PageController {
         return pages.commitCollaborationDraft(userId(jwt), id, req);
     }
 
+    @PostMapping("/api/wiki/pages/{id}/copy")
+    @ResponseStatus(HttpStatus.CREATED)
+    public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return pages.copy(userId(jwt), id);
+    }
+
     @PostMapping("/api/wiki/pages/{id}/publish")
     public PageResponse publish(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return pages.publish(userId(jwt), id);

@@ -85,6 +85,14 @@ public class Page {
         this.updatedBy = editorId;
     }
 
+    /**
+     * 복제 직후 첨부 참조(inline URL)를 사본 첨부로 바꿔치기한다 — 생성 초기화의 일부라
+     * version을 올리지 않는다(edit와 구분). 일반 수정 경로에서 부르지 않는다.
+     */
+    public void rewriteContentForCopy(String content) {
+        this.content = content;
+    }
+
     public void moveTo(Long newParentId) {
         this.parentId = newParentId;
     }
