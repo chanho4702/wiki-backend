@@ -111,11 +111,16 @@ public class NotificationService {
     @Transactional(readOnly = true)
     public NotificationListResponse list(long userId) {
         List<Notification> rows = notifications.findByUserIdOrderByIdDesc(userId, PageRequest.of(0, PAGE_SIZE));
-        // 페이지 제목은 표시용 — 삭제된 페이지의 알림은 FK cascade로 함께 사라지므로 대부분 존재한다
-        Map<Long, String> titles = pages.findAllById(rows.stream().map(Notification::getPageId).distinct().toList())
-                .stream().collect(Collectors.toMap(Page::getId, Page::getTitle, (a, b) -> a));
+        // 페이지 제목·스페이스는 표시/라우팅용 — 삭제된 페이지의 알림은 FK cascade로 함께 사라진다
+        Map<Long, Page> byId = pages.findAllById(rows.stream().map(Notification::getPageId).distinct().toList())
+                .stream().collect(Collectors.toMap(Page::getId, p -> p, (a, b) -> a));
         List<NotificationResponse> items = rows.stream()
-                .map(n -> NotificationResponse.from(n, titles.getOrDefault(n.getPageId(), "")))
+                .map(n -> {
+                    Page page = byId.get(n.getPageId());
+                    return NotificationResponse.from(n,
+                            page == null ? null : page.getSpaceId(),
+                            page == null ? "" : page.getTitle());
+                })
                 .toList();
         return new NotificationListResponse(notifications.countByUserIdAndReadAtIsNull(userId), items);
     }
