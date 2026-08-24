@@ -73,7 +73,7 @@ public class EffectivePermissionService {
     }
 
     private Principals principalsOf(long userId) {
-        return new Principals(userId, Set.copyOf(teams.teamsOf(userId)));
+        return new Principals(userId, teams);
     }
 
     private SpaceIndex index(long spaceId) {
@@ -90,11 +90,23 @@ public class EffectivePermissionService {
         return new SpaceIndex(parentOf, view, edit);
     }
 
-    private record Principals(long userId, Set<Long> teamIds) {
+    /** 팀 멤버십은 TEAM 제한을 실제로 판정할 때 1회만 조회(memo) — 제한 없는 요청은 org 왕복이 없다. */
+    private static final class Principals {
+        private final long userId;
+        private final TeamDirectory teams;
+        private Set<Long> teamIds;
+
+        Principals(long userId, TeamDirectory teams) {
+            this.userId = userId;
+            this.teams = teams;
+        }
+
         boolean matches(PageRestriction r) {
-            return r.getPrincipalType() == PageRestriction.PrincipalType.USER
-                    ? r.getPrincipalId() == userId
-                    : teamIds.contains(r.getPrincipalId());
+            if (r.getPrincipalType() == PageRestriction.PrincipalType.USER) {
+                return r.getPrincipalId() == userId;
+            }
+            if (teamIds == null) teamIds = Set.copyOf(teams.teamsOf(userId));
+            return teamIds.contains(r.getPrincipalId());
         }
     }
 

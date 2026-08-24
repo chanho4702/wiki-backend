@@ -2,6 +2,8 @@ package com.platform.wikibackend.config;
 
 import com.platform.proto.org.v1.PermissionServiceGrpc;
 import com.platform.wikibackend.permission.GrpcPermissionClient;
+import com.platform.wikibackend.permission.GrpcTeamDirectory;
+import com.platform.wikibackend.permission.TeamDirectory;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.security.AudienceValidator;
 import io.grpc.ManagedChannelBuilder;
@@ -56,13 +58,26 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /** org gRPC 채널 — 권한 판정과 팀 멤버십(W18)이 공유한다. */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnMissingBean(name = "orgChannel")
+    io.grpc.ManagedChannel orgChannel(
+            @Value("${platform.org-grpc.host}") String host,
+            @Value("${platform.org-grpc.port}") int port) {
+        return ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+    }
+
     /** 테스트는 FakePermissionClient 빈이 이 빈을 대체한다(@ConditionalOnMissingBean). */
     @Bean
     @ConditionalOnMissingBean(PermissionClient.class)
-    PermissionClient permissionClient(
-            @Value("${platform.org-grpc.host}") String host,
-            @Value("${platform.org-grpc.port}") int port) {
-        var channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
-        return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(channel));
+    PermissionClient permissionClient(io.grpc.ManagedChannel orgChannel) {
+        return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    }
+
+    /** W18 TEAM 주체 판정 — 테스트는 FakeTeamDirectory(@Primary)가 대체한다. */
+    @Bean
+    @ConditionalOnMissingBean(TeamDirectory.class)
+    TeamDirectory teamDirectory(io.grpc.ManagedChannel orgChannel) {
+        return new GrpcTeamDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
     }
 }

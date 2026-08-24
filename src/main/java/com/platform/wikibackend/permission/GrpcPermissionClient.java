@@ -105,7 +105,7 @@ public class GrpcPermissionClient implements PermissionClient {
     }
 
     /** gRPC 전송/가용성 장애(org-service 다운·타임아웃)만 판별 — 이 경우에만 503으로 전파한다. */
-    private static boolean isUnavailable(Throwable e) {
+    static boolean isUnavailable(Throwable e) {
         if (e instanceof StatusRuntimeException sre) {
             Status.Code code = sre.getStatus().getCode();
             return code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED;
