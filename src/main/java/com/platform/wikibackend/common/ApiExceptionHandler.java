@@ -18,6 +18,14 @@ public class ApiExceptionHandler {
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public Map<String, String> forbidden(ForbiddenException e) { return Map.of("error", e.getMessage()); }
 
+    @ExceptionHandler(com.platform.wikibackend.permission.MoveImpactException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, Object> moveImpact(com.platform.wikibackend.permission.MoveImpactException e) {
+        // 유일하게 error 외 필드를 싣는 응답 — 프론트가 impact 유무로 확인 다이얼로그를 분기한다
+        return Map.of("error", e.getMessage(), "impact",
+                Map.of("newlyRestrictedBy", e.getNewlyRestrictedBy()));
+    }
+
     @ExceptionHandler(ConflictException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
     public Map<String, String> conflict(ConflictException e) { return Map.of("error", e.getMessage()); }

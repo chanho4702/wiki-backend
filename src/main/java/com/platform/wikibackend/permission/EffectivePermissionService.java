@@ -72,6 +72,41 @@ public class EffectivePermissionService {
         return visible;
     }
 
+    /**
+     * 이동 영향(설계 §5) — 새 조상 체인에서 이 페이지에 "새로" 적용될 VIEW 제한 노드들.
+     * 페이지 자신·서브트리의 제한은 함께 이동하므로 비교 대상이 아니다. 비어 있지 않으면
+     * 이동 확정 전에 사용자 확인이 필요하다(MoveImpactException 경로).
+     */
+    public java.util.List<com.platform.wikibackend.permission.dto.InheritedRestriction> newViewRestrictionsAfterMove(
+            Page page, long targetSpaceId, Long targetParentId) {
+        SpaceIndex source = index(page.getSpaceId());
+        SpaceIndex target = targetSpaceId == page.getSpaceId() ? source : index(targetSpaceId);
+
+        Set<Long> currentRestricted = new HashSet<>();
+        walkViewRestricted(source, source.parentOf().get(page.getId()), currentRestricted::add);
+
+        java.util.List<com.platform.wikibackend.permission.dto.InheritedRestriction> out = new ArrayList<>();
+        walkViewRestricted(target, targetParentId, nodeId -> {
+            if (currentRestricted.contains(nodeId)) return;
+            String title = pages.findById(nodeId).map(Page::getTitle).orElse("");
+            out.add(new com.platform.wikibackend.permission.dto.InheritedRestriction(nodeId, title,
+                    target.view().get(nodeId).stream()
+                            .map(r -> new com.platform.wikibackend.permission.dto.RestrictionPrincipal(
+                                    r.getPrincipalType().name(), r.getPrincipalId()))
+                            .toList()));
+        });
+        return out;
+    }
+
+    /** cursor부터 루트까지 올라가며 VIEW 제한이 걸린 노드 id를 방문한다(순환 방어). */
+    private static void walkViewRestricted(SpaceIndex idx, Long cursor, java.util.function.Consumer<Long> visit) {
+        Set<Long> visited = new HashSet<>();
+        while (cursor != null && visited.add(cursor)) {
+            if (idx.view().containsKey(cursor)) visit.accept(cursor);
+            cursor = idx.parentOf().get(cursor);
+        }
+    }
+
     private Principals principalsOf(long userId) {
         return new Principals(userId, teams);
     }

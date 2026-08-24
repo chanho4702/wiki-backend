@@ -152,6 +152,17 @@ public class PageService {
         Page page = getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        // W18 이동 영향(설계 §5) — 부모/스페이스가 실제로 바뀔 때, 새 조상의 VIEW 제한이 새로
+        // 적용되면 확인 없이는 409. 순수 재정렬(같은 부모)은 영향이 없다.
+        long targetSpaceId = req.spaceId() != null ? req.spaceId() : page.getSpaceId();
+        boolean relocated = targetSpaceId != page.getSpaceId()
+                || !Objects.equals(page.getParentId(), req.parentId());
+        if (relocated && !req.impactConfirmed()) {
+            var impact = effective.newViewRestrictionsAfterMove(page, targetSpaceId, req.parentId());
+            if (!impact.isEmpty()) {
+                throw new com.platform.wikibackend.permission.MoveImpactException(impact);
+            }
+        }
         if (req.spaceId() != null && !Objects.equals(req.spaceId(), page.getSpaceId())) {
             return moveToSpace(userId, pageId, req);
         }

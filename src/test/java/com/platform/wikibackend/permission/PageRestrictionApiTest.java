@@ -143,4 +143,34 @@ class PageRestrictionApiTest {
                         .content("{\"view\":[{\"type\":\"GROUP\",\"id\":1}],\"edit\":[]}"))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void 제한된_부모_아래로_이동은_확인_없이는_409_impact_확인하면_실행() throws Exception {
+        long restricted = createPage(null, "제한 폴더");
+        long moving = createPage(null, "옮길 문서");
+        restrictions.save(PageRestriction.of(restricted, PageRestriction.Type.VIEW,
+                PageRestriction.PrincipalType.USER, ALICE, ALICE));
+
+        // 1차: 영향 발견 → 409 + impact(새로 적용될 제한 노드)
+        mvc.perform(post("/api/wiki/pages/" + moving + "/move").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + restricted + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.impact.newlyRestrictedBy[0].pageId").value(restricted))
+                .andExpect(jsonPath("$.impact.newlyRestrictedBy[0].pageTitle").value("제한 폴더"))
+                .andExpect(jsonPath("$.impact.newlyRestrictedBy[0].principals[0].id").value(1));
+
+        // 2차: confirmImpact → 실행
+        mvc.perform(post("/api/wiki/pages/" + moving + "/move").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + restricted + ",\"confirmImpact\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentId").value(restricted));
+
+        // 이미 그 제한 아래인 페이지의 재이동(형제 재정렬·같은 체인)은 영향 없음
+        mvc.perform(post("/api/wiki/pages/" + moving + "/move").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":null,\"confirmImpact\":false}"))
+                .andExpect(status().isOk()); // 제한 밖으로 나가는 건 접근 "상실"이 아니다
+    }
 }

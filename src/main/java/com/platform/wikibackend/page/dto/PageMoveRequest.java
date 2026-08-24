@@ -19,9 +19,15 @@ public record PageMoveRequest(
         Long parentId,
         @Positive(message = "beforeId는 양수여야 합니다")
         Long beforeId,
-        String children
+        String children,
+        /** 이동 영향(새로 적용되는 보기 제한) 확인을 마쳤다는 표시 — 없으면 영향 발견 시 409. */
+        Boolean confirmImpact
 ) {
     public boolean promoteChildren() {
         return "promote".equals(children);
+    }
+
+    public boolean impactConfirmed() {
+        return Boolean.TRUE.equals(confirmImpact);
     }
 }
