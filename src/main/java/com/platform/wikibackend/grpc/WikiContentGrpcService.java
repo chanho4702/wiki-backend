@@ -6,6 +6,8 @@ import com.platform.proto.wiki.v1.GetPageContentRequest;
 import com.platform.proto.wiki.v1.ListAttachmentsRequest;
 import com.platform.proto.wiki.v1.ListPageContentsRequest;
 import com.platform.proto.wiki.v1.PageContent;
+import com.platform.proto.wiki.v1.FilterVisiblePagesRequest;
+import com.platform.proto.wiki.v1.FilterVisiblePagesResponse;
 import com.platform.proto.wiki.v1.WikiContentServiceGrpc;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
@@ -43,6 +45,8 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
     private final PageRepository pageRepository;
     private final SpaceRepository spaceRepository;
     private final AttachmentRepository attachmentRepository;
+    private final com.platform.wikibackend.permission.EffectivePermissionService effective;
+    private final com.platform.wikibackend.permission.PermissionClient permissions;
 
     @Override
     @Transactional(readOnly = true)
@@ -166,5 +170,37 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                 .setAuthorId(p.getUpdatedBy())
                 .setUpdatedAt(p.getUpdatedAt().toEpochMilli())
                 .build();
+    }
+
+    /**
+     * 검색 결과 권한 후필터(W18) — 이 rpc만은 사용자 기준 판정이다(user_id를 받는다).
+     * space VIEW(org) + 페이지 제한(effective)을 모두 통과한 페이지만 남긴다.
+     * 스페이스 단위로 묶어 제한 인덱스 로드를 공유한다(스페이스당 2쿼리).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public void filterVisiblePages(FilterVisiblePagesRequest req, StreamObserver<FilterVisiblePagesResponse> out) {
+        try {
+            long userId = req.getUserId();
+            List<Page> found = pageRepository.findAllById(req.getPageIdsList());
+            Map<Long, List<Page>> bySpace = new HashMap<>();
+            for (Page p : found) bySpace.computeIfAbsent(p.getSpaceId(), k -> new java.util.ArrayList<>()).add(p);
+
+            FilterVisiblePagesResponse.Builder res = FilterVisiblePagesResponse.newBuilder();
+            for (Map.Entry<Long, List<Page>> e : bySpace.entrySet()) {
+                if (!permissions.isAllowed(userId, e.getKey(), com.platform.wikibackend.permission.WikiAction.VIEW)) {
+                    continue; // 스페이스 자체가 안 보이면 전부 제외(fail-closed)
+                }
+                java.util.Set<Long> visible = effective.visiblePageIds(userId, e.getKey());
+                for (Page p : e.getValue()) {
+                    if (visible == null || visible.contains(p.getId())) res.addVisiblePageIds(p.getId());
+                }
+            }
+            out.onNext(res.build());
+            out.onCompleted();
+        } catch (Exception e) {
+            log.error("visible 필터 실패 — 검색 누출 방지를 위해 오류로 닫는다: user={}", req.getUserId(), e);
+            out.onError(Status.INTERNAL.withDescription("visible 필터 실패").asRuntimeException());
+        }
     }
 }

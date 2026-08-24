@@ -47,6 +47,10 @@ class WikiContentGrpcServiceTest {
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
     @Autowired AttachmentRepository attachments;
+    @Autowired com.platform.wikibackend.repository.PageRestrictionRepository restrictions;
+    // @DataJpaTest 슬라이스라 서비스 빈이 없다 — 실 리포지토리 위에 직접 조립한다(팀 디렉터리는 빈 목록)
+    com.platform.wikibackend.permission.EffectivePermissionService effective;
+    com.platform.wikibackend.permission.FakePermissionClient perms;
 
     Server server;
     ManagedChannel channel;
@@ -58,13 +62,18 @@ class WikiContentGrpcServiceTest {
         // (컨텍스트는 달라도 DB는 같다) — space.key unique 충돌을 피하려면 먼저 비운다.
         // deleteAll()이 아니라 deleteAllInBatch()인 이유: Hibernate는 플러시 때 INSERT를 DELETE보다
         // 먼저 실행한다. 지연된 삭제로는 뒤이은 save()가 아직 살아 있는 행과 충돌한다.
+        restrictions.deleteAllInBatch();
         attachments.deleteAllInBatch();
         pages.deleteAllInBatch();
         spaces.deleteAllInBatch();
 
+        perms = new com.platform.wikibackend.permission.FakePermissionClient();
+        effective = new com.platform.wikibackend.permission.EffectivePermissionService(
+                pages, restrictions, userId -> java.util.List.of());
+
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name).directExecutor()
-                .addService(new WikiContentGrpcService(pages, spaces, attachments))
+                .addService(new WikiContentGrpcService(pages, spaces, attachments, effective, perms))
                 .build().start();
         channel = InProcessChannelBuilder.forName(name).directExecutor().build();
         stub = WikiContentServiceGrpc.newBlockingStub(channel);
@@ -238,5 +247,35 @@ class WikiContentGrpcServiceTest {
         List<T> out = new ArrayList<>();
         it.forEachRemaining(out::add);
         return out;
+    }
+
+    @org.junit.jupiter.api.Test
+    void filterVisiblePages는_스페이스_권한과_페이지_제한을_모두_통과한_id만_남긴다() {
+        perms.reset();
+        Space sp = spaces.save(Space.of("perm", "권한", null, 1L));
+        Page open = pages.save(Page.of(sp.getId(), null, "공개", "본문", 1L));
+        Page restricted = pages.save(Page.of(sp.getId(), null, "제한", "본문", 1L));
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(
+                restricted.getId(), com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER, 1L, 1L));
+
+        // 스페이스 권한이 없는 사용자(9) — 전부 제외(fail-closed)
+        var none = stub.filterVisiblePages(com.platform.proto.wiki.v1.FilterVisiblePagesRequest.newBuilder()
+                .setUserId(9L).addPageIds(open.getId()).addPageIds(restricted.getId()).build());
+        org.assertj.core.api.Assertions.assertThat(none.getVisiblePageIdsList()).isEmpty();
+
+        // 스페이스 VIEW는 있지만 제한 밖(2) — 공개만
+        perms.allow(2L, sp.getId(), com.platform.wikibackend.permission.WikiAction.VIEW);
+        var partial = stub.filterVisiblePages(com.platform.proto.wiki.v1.FilterVisiblePagesRequest.newBuilder()
+                .setUserId(2L).addPageIds(open.getId()).addPageIds(restricted.getId()).build());
+        org.assertj.core.api.Assertions.assertThat(partial.getVisiblePageIdsList())
+                .containsExactly(open.getId());
+
+        // 제한 목록의 사용자(1) — 둘 다
+        perms.allow(1L, sp.getId(), com.platform.wikibackend.permission.WikiAction.VIEW);
+        var all = stub.filterVisiblePages(com.platform.proto.wiki.v1.FilterVisiblePagesRequest.newBuilder()
+                .setUserId(1L).addPageIds(open.getId()).addPageIds(restricted.getId()).build());
+        org.assertj.core.api.Assertions.assertThat(all.getVisiblePageIdsList())
+                .containsExactlyInAnyOrder(open.getId(), restricted.getId());
     }
 }
