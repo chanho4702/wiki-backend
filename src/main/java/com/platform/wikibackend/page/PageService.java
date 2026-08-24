@@ -53,6 +53,7 @@ public class PageService {
     private final PageRevisionRepository revisions;
     private final SpaceService spaces;
     private final com.platform.wikibackend.notification.NotificationService notificationService;
+    private final com.platform.wikibackend.permission.EffectivePermissionService effective;
     private final EventRelay events;
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
@@ -82,6 +83,7 @@ public class PageService {
     public PageResponse copy(long userId, long pageId) {
         Page source = getOwned(pageId);
         spaces.require(userId, source.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, source);
         String suffix = " (사본)";
         String baseTitle = source.getTitle().length() + suffix.length() > 255
                 ? source.getTitle().substring(0, 255 - suffix.length())
@@ -124,6 +126,7 @@ public class PageService {
     public PageResponse get(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, p);
         return PageResponse.from(p);
     }
 
@@ -132,7 +135,11 @@ public class PageService {
         spaces.getForView(userId, spaceId);
         // 프로젝션 쿼리 — 트리는 본문이 필요 없다. 전체 엔티티 로드는 스페이스 크기에 비례해
         // 본문 text 전송·역직렬화 비용을 낸다(규모 검토 2026-08-23).
-        return pages.findTreeBySpaceId(spaceId);
+        List<PageTreeItem> items = pages.findTreeBySpaceId(spaceId);
+        // W18 페이지 제한 — 비인가 노드는 자손 포함 제외(VIEW 상속). null = 제한 전무(필터 생략).
+        java.util.Set<Long> visible = effective.visiblePageIds(userId, spaceId);
+        if (visible == null) return items;
+        return items.stream().filter(it -> visible.contains(it.id())).toList();
     }
 
     /** 수정 = 새 버전. expectedVersion 불일치 409. parentId 변경은 이동(순환 검증). */
@@ -144,6 +151,7 @@ public class PageService {
     public PageResponse move(long userId, long pageId, PageMoveRequest req) {
         Page page = getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
         if (req.spaceId() != null && !Objects.equals(req.spaceId(), page.getSpaceId())) {
             return moveToSpace(userId, pageId, req);
         }
@@ -268,6 +276,7 @@ public class PageService {
     public PageResponse update(long userId, long pageId, PageUpdateRequest req) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
         if (!Objects.equals(p.getVersion(), req.expectedVersion())) {
             throw new ConflictException("버전 충돌 — 현재 " + p.getVersion() + ", 요청 " + req.expectedVersion());
         }
@@ -300,6 +309,7 @@ public class PageService {
         Page page = pages.findByIdForUpdate(pageId)
                 .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
         CollaborationDraftMetadata draft = collaborationDrafts
                 .findByRoomForUpdate(CollaborationDraftMetadata.room(pageId))
                 .orElseThrow(() -> new ConflictException("공동 초안이 준비되지 않았습니다"));
@@ -326,6 +336,7 @@ public class PageService {
     public void delete(long userId, long pageId, ChildrenPolicy policy) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
 
         List<Page> children = pages.findByParentId(pageId);
         if (!children.isEmpty()) {
@@ -383,6 +394,7 @@ public class PageService {
     public PageResponse publish(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
         if (p.getStatus() != PageStatus.PUBLISHED) {
             p.publish();
             events.afterCommit(WikiEvents.pageUpdated(userId, p));
@@ -394,6 +406,7 @@ public class PageService {
     public PageResponse setIcon(long userId, long pageId, String icon) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
         p.changeIcon(icon);
         // 트리 응답에 icon이 실리므로 검색 인덱스 재색인은 불필요(본문·제목 불변) — 이벤트 미발행.
         return PageResponse.from(p);
@@ -403,8 +416,18 @@ public class PageService {
     public long recordView(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, p);
         pages.incrementViewCount(pageId);
         return pages.findViewCount(pageId);
+    }
+
+    /** 협업 티켓 등 외부 서비스용 — space EDIT + 페이지 제한(effective)을 한 번에 통과시킨다. */
+    @Transactional(readOnly = true)
+    public Page getEditable(long userId, long pageId) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
+        return p;
     }
 
     /** 존재 검증만 — 권한은 호출부가. 첨부(Task 11)·리비전(Task 10)이 재사용. */
@@ -435,6 +458,7 @@ public class PageService {
     public List<RevisionMeta> listRevisions(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, p);
         return revisions.findByPageIdOrderByVersionDesc(pageId).stream().map(RevisionMeta::from).toList();
     }
 
@@ -442,6 +466,7 @@ public class PageService {
     public RevisionResponse getRevision(long userId, long pageId, int version) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, p);
         return revisions.findByPageIdAndVersion(pageId, version)
                 .map(RevisionResponse::from)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
@@ -451,6 +476,7 @@ public class PageService {
     public PageResponse restore(long userId, long pageId, int version) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
         PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);

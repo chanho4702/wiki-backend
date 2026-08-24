@@ -61,11 +61,12 @@ class CollaborationTicketServiceTest {
     @Test
     void EDIT_권한을_확인하고_원문이_아닌_SHA256_key에_60초_payload를_저장한다() throws Exception {
         stubTicketStorage();
-        when(pages.getOwned(7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        // W18: 권한(스페이스 EDIT + 페이지 제한)은 PageService.getEditable이 한 번에 판정한다
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
 
         CollaborationTicketResponse response = service.issue(42L, " Alice\nKim ", 7L);
 
-        verify(spaces).require(42L, 3L, WikiAction.EDIT);
+        verify(pages).getEditable(42L, 7L);
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
@@ -92,9 +93,9 @@ class CollaborationTicketServiceTest {
 
     @Test
     void EDIT_권한이_없으면_ticket을_저장하지_않는다() {
-        when(pages.getOwned(7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        // 스페이스 EDIT 부재든 페이지 제한이든 getEditable이 Forbidden을 던진다(W18 단일 판정)
         doThrow(new ForbiddenException("EDIT 권한 필요"))
-                .when(spaces).require(9L, 3L, WikiAction.EDIT);
+                .when(pages).getEditable(9L, 7L);
 
         assertThatThrownBy(() -> service.issue(9L, "Viewer", 7L))
                 .isInstanceOf(ForbiddenException.class);
@@ -105,7 +106,7 @@ class CollaborationTicketServiceTest {
     @Test
     void Redis_불능이면_사용할_수_없는_ticket을_발급하지_않고_503으로_실패한다() {
         stubTicketStorage();
-        when(pages.getOwned(7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
         doThrow(new RedisConnectionFailureException("down"))
                 .when(values).set(anyString(), anyString(), any(Duration.class));
 

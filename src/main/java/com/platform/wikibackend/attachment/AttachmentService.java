@@ -36,6 +36,7 @@ public class AttachmentService {
     private final AttachmentRepository attachments;
     private final PageService pages;
     private final SpaceService spaces;
+    private final com.platform.wikibackend.permission.EffectivePermissionService effective;
     private final AttachmentStorageRouter storage;
     private final EventRelay events;
 
@@ -46,6 +47,7 @@ public class AttachmentService {
     public AttachmentResponse upload(long userId, long pageId, MultipartFile file, boolean pending) {
         Page page = pages.getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
         try {
             String contentType;
             try (InputStream probe = file.getInputStream()) {
@@ -82,6 +84,7 @@ public class AttachmentService {
     public List<AttachmentResponse> list(long userId, long pageId) {
         Page page = pages.getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         return attachments.findByPageId(pageId).stream().map(AttachmentResponse::from).toList();
     }
 
@@ -92,6 +95,7 @@ public class AttachmentService {
                 .orElseThrow(() -> new NotFoundException("첨부 없음: " + attachmentId));
         Page page = pages.getOwned(a.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         return new DownloadItem(a, storage.open(a.getStorageBackend(), a.getStorageBucket(),
                 a.getStorageKey(), a.getStorageVersion()));
     }
@@ -103,6 +107,7 @@ public class AttachmentService {
     public void confirm(long userId, long pageId, List<Long> attachmentIds) {
         Page page = pages.getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
         if (attachmentIds == null || attachmentIds.isEmpty()) return;
 
         Set<Long> uniqueIds = new LinkedHashSet<>(attachmentIds);
@@ -144,6 +149,7 @@ public class AttachmentService {
                 .orElseThrow(() -> new NotFoundException("첨부 없음: " + attachmentId));
         Page page = pages.getOwned(a.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
         attachments.delete(a);
         storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
                 a.getStorageKey(), a.getStorageVersion());

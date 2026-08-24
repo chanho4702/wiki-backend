@@ -34,11 +34,13 @@ public class CommentService {
     private final SpaceService spaces;
     private final PermissionClient permissions;
     private final com.platform.wikibackend.notification.NotificationService notificationService;
+    private final com.platform.wikibackend.permission.EffectivePermissionService effective;
 
     @Transactional(readOnly = true)
     public List<CommentResponse> list(long userId, long pageId) {
         Page page = requirePage(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         return comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId).stream()
                 .map(CommentResponse::from)
                 .toList();
@@ -47,6 +49,7 @@ public class CommentService {
     public CommentResponse create(long userId, String userName, long pageId, CommentCreateRequest req) {
         Page page = requirePage(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         if (req.parentId() != null) {
             PageComment parent = comments.findById(req.parentId())
                     .orElseThrow(() -> new NotFoundException("부모 코멘트를 찾을 수 없습니다: " + req.parentId()));
@@ -67,6 +70,7 @@ public class CommentService {
         PageComment comment = requireComment(commentId);
         Page page = requirePage(comment.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         if (!comment.getAuthorId().equals(userId)) {
             throw new ForbiddenException("본인의 코멘트만 수정할 수 있습니다");
         }
@@ -82,6 +86,7 @@ public class CommentService {
         PageComment comment = requireComment(commentId);
         Page page = requirePage(comment.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
         boolean isAuthor = comment.getAuthorId().equals(userId);
         if (!isAuthor && !permissions.isAllowed(userId, page.getSpaceId(), WikiAction.ADMIN)) {
             throw new ForbiddenException("본인의 코멘트만 삭제할 수 있습니다");

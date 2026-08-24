@@ -78,8 +78,8 @@ public class CollaborationTicketService {
     }
 
     public CollaborationTicketResponse issue(long userId, String displayName, long pageId) {
-        Page page = pages.getOwned(pageId);
-        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        // W18: space EDIT + 페이지 제한까지 — 티켓은 협업 편집의 입장권이라 우회되면 제한이 무력하다
+        Page page = pages.getEditable(userId, pageId);
 
         Instant issuedAt = clock.instant();
         Instant expiresAt = issuedAt.plus(ttl);
