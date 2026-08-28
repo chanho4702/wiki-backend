@@ -36,6 +36,12 @@ public class TreeController {
         return tree.lookupByTitles(userId(jwt), spaceId, title);
     }
 
+    @GetMapping("/api/wiki/spaces/{spaceId}/pages/by-ids")
+    public List<PageNode> byIds(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+                                @RequestParam List<Long> id) {
+        return tree.byIds(userId(jwt), spaceId, id);
+    }
+
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/search")
     public List<PageNode> search(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
                                  @RequestParam String q) {

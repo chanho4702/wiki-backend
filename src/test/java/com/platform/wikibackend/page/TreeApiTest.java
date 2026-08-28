@@ -157,6 +157,34 @@ class TreeApiTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** 별표 목록처럼 "아는 id들의 현재 제목"이 필요한 곳 — 다른 스페이스 id는 섞여도 안 나온다. */
+    @Test
+    void id_묶음_조회는_같은_스페이스의_볼_수_있는_문서만_준다() throws Exception {
+        Space other = spaces.save(Space.of("ops", "운영", null, EDITOR));
+        perms.allow(EDITOR, other.getId(), WikiAction.VIEW);
+        perms.allow(EDITOR, other.getId(), WikiAction.EDIT);
+        String body = mvc.perform(post("/api/wiki/pages").with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + other.getId()
+                                + ",\"parentId\":null,\"title\":\"남의 문서\",\"content\":\"본문\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long foreign = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
+
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/by-ids")
+                        .param("id", String.valueOf(root))
+                        .param("id", String.valueOf(foreign))
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].title").value("배포 가이드"));
+
+        restrictions.save(PageRestriction.of(root, PageRestriction.Type.VIEW,
+                PageRestriction.PrincipalType.USER, EDITOR, EDITOR));
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/by-ids")
+                        .param("id", String.valueOf(root)).with(asUser(OUTSIDER, "Bob")))
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
     @Test
     void 휴지통에_들어간_문서는_지연_트리에_나오지_않는다() throws Exception {
         mvc.perform(delete("/api/wiki/pages/" + sibling).with(asUser(EDITOR, "Alice")))

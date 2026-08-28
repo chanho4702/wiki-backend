@@ -106,6 +106,25 @@ public class TreeService {
         return withChildCounts(visible(userId, pages.findByTitles(spaceId, normalized)));
     }
 
+    /**
+     * id 묶음 조회 — 별표 목록처럼 "내가 이미 아는 id들의 현재 제목"이 필요한 곳이 쓴다.
+     * 전량을 들고 있지 않으면 개명된 제목을 따라갈 방법이 없어 스냅샷이 조용히 낡는다.
+     */
+    public List<PageNode> byIds(long userId, long spaceId, Collection<Long> ids) {
+        spaces.getForView(userId, spaceId);
+        List<Long> wanted = ids.stream().filter(Objects::nonNull).distinct().limit(LOOKUP_LIMIT).toList();
+        if (wanted.isEmpty()) return List.of();
+        // 다른 스페이스의 id를 섞어 보내 남의 문서 제목을 캐내지 못하게 한 번에 걸러낸다
+        // (id마다 findById를 도는 N+1을 만들지 않는다).
+        Set<Long> inSpace = pages.findAllById(wanted).stream()
+                .filter(p -> Objects.equals(p.getSpaceId(), spaceId))
+                .map(Page::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        if (inSpace.isEmpty()) return List.of();
+        List<PageTreeItem> items = pages.findTreeItemsByIds(inSpace);
+        return withChildCounts(visible(userId, items));
+    }
+
     /** 제목 부분 일치 — 사이드바 필터와 `[[` 자동완성. */
     public List<PageNode> searchByTitle(long userId, long spaceId, String query) {
         spaces.getForView(userId, spaceId);

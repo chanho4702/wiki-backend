@@ -10,10 +10,11 @@ import com.platform.wikibackend.domain.PageType;
  * 없으면 "펼쳤더니 비어 있는" 노드가 생기거나, 화살표를 그리려고 전부 미리 불러오게 된다.
  */
 public record PageNode(Long id, Long parentId, String title, PageType type, PageStatus status,
-                       Long position, String icon, long childCount) {
+                       Long position, String icon, Long updatedBy, java.time.Instant updatedAt,
+                       long childCount) {
 
     public static PageNode of(PageTreeItem item, long childCount) {
         return new PageNode(item.id(), item.parentId(), item.title(), item.type(), item.status(),
-                item.position(), item.icon(), childCount);
+                item.position(), item.icon(), item.updatedBy(), item.updatedAt(), childCount);
     }
 }

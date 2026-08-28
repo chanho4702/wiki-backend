@@ -47,7 +47,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
      * 사이드바 트리 한 번에 전 문서 본문이 실려 오는 것이 최대 전송 낭비였다(규모 검토 2026-08-23). */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.spaceId = :spaceId
              order by p.id
@@ -62,7 +62,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     /** 직계 자식만. parentId가 null이면 루트 목록(파생 쿼리로는 null 비교가 안 돼 명시 비교). */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.spaceId = :spaceId
                and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
@@ -74,7 +74,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     /** id 묶음으로 트리 항목 조회 — 조상 체인·후손 폐포가 id를 먼저 얻고 본문 없이 채운다. */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.id in (:ids)
             """)
@@ -93,7 +93,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     /** 제목 정확 일치(대소문자 무시) — `[[제목]]` 링크 해석용. 렌더러와 같은 기준이다. */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.spaceId = :spaceId and lower(trim(p.title)) in (:titles)
              order by p.id asc
@@ -104,7 +104,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     /** 제목 부분 일치 — 사이드바 필터와 `[[` 자동완성이 쓴다(클라이언트 전량 필터 대체). */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon)
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.spaceId = :spaceId and lower(p.title) like lower(concat('%', :q, '%'))
              order by p.title asc, p.id asc
