@@ -7,5 +7,5 @@ import jakarta.validation.constraints.Size;
 public record PageUpdateRequest(
         @NotBlank @Size(max = 255) String title,
         @NotNull String content,
-        Long parentId,                 // null이면 루트로 이동, 값이 있으면 그 아래로 이동
+        Long parentId,                 // 현재 부모 ID. 부모 변경은 전용 move API를 사용한다.
         @NotNull Integer expectedVersion) {}

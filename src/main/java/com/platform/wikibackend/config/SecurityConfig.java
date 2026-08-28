@@ -3,6 +3,8 @@ package com.platform.wikibackend.config;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
 import com.platform.wikibackend.permission.GrpcPermissionClient;
 import com.platform.wikibackend.permission.GrpcTeamDirectory;
+import com.platform.wikibackend.permission.GrpcPrincipalDirectory;
+import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.security.AudienceValidator;
@@ -79,5 +81,12 @@ public class SecurityConfig {
     @ConditionalOnMissingBean(TeamDirectory.class)
     TeamDirectory teamDirectory(io.grpc.ManagedChannel orgChannel) {
         return new GrpcTeamDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    }
+
+    /** W18 제한 저장 전 USER/TEAM 실재 검증 — org 원장 불능 시 저장을 fail-closed한다. */
+    @Bean
+    @ConditionalOnMissingBean(PrincipalDirectory.class)
+    PrincipalDirectory principalDirectory(io.grpc.ManagedChannel orgChannel) {
+        return new GrpcPrincipalDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
     }
 }

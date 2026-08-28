@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,9 +42,27 @@ public class EffectivePermissionService {
     private final TeamDirectory teams;
 
     public void requireView(long userId, Page page) {
-        if (!index(page.getSpaceId()).canView(principalsOf(userId), page.getId())) {
+        if (!canView(userId, page)) {
             throw new ForbiddenException("이 페이지를 볼 권한이 없습니다");
         }
+    }
+
+    /** 알림 등 사용자별 노출 필터가 예외 대신 판정값을 필요로 할 때 쓴다(space 권한은 호출부 책임). */
+    public boolean canView(long userId, Page page) {
+        return index(page.getSpaceId()).canView(principalsOf(userId), page.getId());
+    }
+
+    /** 여러 스페이스의 알림 목록처럼 페이지 묶음을 판정할 때 스페이스별 인덱스를 한 번만 만든다. */
+    public Set<Long> viewablePageIds(long userId, Collection<Page> targets) {
+        if (targets.isEmpty()) return Set.of();
+        Principals me = principalsOf(userId);
+        Map<Long, SpaceIndex> bySpace = new HashMap<>();
+        Set<Long> visible = new HashSet<>();
+        for (Page page : targets) {
+            SpaceIndex idx = bySpace.computeIfAbsent(page.getSpaceId(), this::index);
+            if (idx.canView(me, page.getId())) visible.add(page.getId());
+        }
+        return visible;
     }
 
     public void requireEdit(long userId, Page page) {
@@ -54,6 +73,24 @@ public class EffectivePermissionService {
         }
         if (!idx.canEdit(me, page.getId())) {
             throw new ForbiddenException("이 페이지를 수정할 권한이 없습니다");
+        }
+    }
+
+    /**
+     * 서브트리 구조 변경 전 전수 판정. 인덱스는 스페이스별 1회, 팀 목록은 사용자별 1회만
+     * 조회해 페이지 수만큼 전체 스페이스 쿼리를 반복하지 않는다.
+     */
+    public void requireEditAll(long userId, Collection<Page> targets) {
+        Principals me = principalsOf(userId);
+        Map<Long, SpaceIndex> bySpace = new HashMap<>();
+        for (Page page : targets) {
+            SpaceIndex idx = bySpace.computeIfAbsent(page.getSpaceId(), this::index);
+            if (!idx.canView(me, page.getId())) {
+                throw new ForbiddenException("이 페이지를 볼 권한이 없습니다");
+            }
+            if (!idx.canEdit(me, page.getId())) {
+                throw new ForbiddenException("이 페이지를 수정할 권한이 없습니다");
+            }
         }
     }
 
@@ -75,7 +112,8 @@ public class EffectivePermissionService {
     /**
      * 이동 영향(설계 §5) — 새 조상 체인에서 이 페이지에 "새로" 적용될 VIEW 제한 노드들.
      * 페이지 자신·서브트리의 제한은 함께 이동하므로 비교 대상이 아니다. 비어 있지 않으면
-     * 이동 확정 전에 사용자 확인이 필요하다(MoveImpactException 경로).
+     * 이동 확정 전에 사용자 확인이 필요하다(MoveImpactException 경로). 팀 중첩과 space grant를
+     * 모두 펼치지 않고 보수적으로 경고하므로 이 목록을 정확한 접근 상실자 목록으로 부르지 않는다.
      */
     public java.util.List<com.platform.wikibackend.permission.dto.InheritedRestriction> newViewRestrictionsAfterMove(
             Page page, long targetSpaceId, Long targetParentId) {

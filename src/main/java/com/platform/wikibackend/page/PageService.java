@@ -62,6 +62,7 @@ public class PageService {
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
         validateParent(req.spaceId(), req.parentId(), null);
+        requireEditableTargetParent(userId, req.spaceId(), req.parentId());
         Page saved = pages.save(Page.of(req.spaceId(), req.parentId(), req.title(), req.content(), userId,
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
@@ -157,6 +158,14 @@ public class PageService {
         long targetSpaceId = req.spaceId() != null ? req.spaceId() : page.getSpaceId();
         boolean relocated = targetSpaceId != page.getSpaceId()
                 || !Objects.equals(page.getParentId(), req.parentId());
+        // 대상 스페이스·부모를 먼저 인가해야 409 impact가 숨겨진 부모 제목/주체를 누출하지 않는다.
+        spaces.require(userId, targetSpaceId, WikiAction.EDIT);
+        requireEditableTargetParent(userId, targetSpaceId, req.parentId());
+        if (relocated) {
+            // 부모 변경은 서브트리 전체의 effective VIEW를 바꾼다. 숨겨진 자손을 대신 옮기지 못하게
+            // 실제 변경 대상 전부를 mutation 전에 판정한다.
+            effective.requireEditAll(userId, collectSubtree(pageId));
+        }
         if (relocated && !req.impactConfirmed()) {
             var impact = effective.newViewRestrictionsAfterMove(page, targetSpaceId, req.parentId());
             if (!impact.isEmpty()) {
@@ -292,13 +301,9 @@ public class PageService {
             throw new ConflictException("버전 충돌 — 현재 " + p.getVersion() + ", 요청 " + req.expectedVersion());
         }
         if (!Objects.equals(p.getParentId(), req.parentId())) {
-            validateParent(p.getSpaceId(), req.parentId(), pageId);
-            Long previousParentId = p.getParentId();
-            p.moveTo(req.parentId());
-            // 그룹이 바뀌면 새 그룹 맨 뒤로, 떠난 그룹은 조밀하게(V9) — 정밀 배치는 move가 한다
-            spaces.lockForReorder(p.getSpaceId());
-            p.resequence(pages.findMaxSortOrder(p.getSpaceId(), req.parentId()) + 1);
-            resequenceSiblings(p.getSpaceId(), previousParentId, pageId);
+            // 부모 변경은 영향 확인·대상 부모 인가가 있는 전용 API만 허용한다. PUT으로 허용하면
+            // confirmImpact 없이 제한 조상 아래로 이동할 수 있다.
+            throw new IllegalArgumentException("부모 변경은 페이지 이동 API를 사용해야 합니다");
         }
         String oldBody = p.getContent();
         p.edit(req.title(), req.content(), userId);
@@ -354,6 +359,9 @@ public class PageService {
             if (policy == null) {
                 throw new ConflictException("하위 페이지가 있어 삭제할 수 없습니다");
             }
+            // CASCADE는 자손을 삭제하고 PROMOTE도 자손의 제한 상속 체인을 바꾼다. 루트만 검사하면
+            // 사용자가 볼 수 없는 제한 자손을 삭제·재배치할 수 있으므로 전체를 먼저 판정한다.
+            effective.requireEditAll(userId, collectSubtree(pageId));
             if (policy == ChildrenPolicy.PROMOTE) {
                 // 대상의 부모로 올린다. 부모는 자식의 조상이므로 순환이 생길 수 없다(검증 불필요).
                 long nextOrder = pages.findMaxSortOrder(p.getSpaceId(), p.getParentId());
@@ -463,6 +471,17 @@ public class PageService {
                 cursor = pages.findById(cursor).map(Page::getParentId).orElse(null);
             }
         }
+    }
+
+    /** 새 자식 생성·이동 대상은 같은 스페이스이며 요청자가 직접 수정할 수 있는 페이지여야 한다. */
+    private void requireEditableTargetParent(long userId, Long spaceId, Long parentId) {
+        if (parentId == null) return;
+        Page parent = pages.findById(parentId)
+                .orElseThrow(() -> new IllegalArgumentException("부모 페이지 없음: " + parentId));
+        if (!Objects.equals(parent.getSpaceId(), spaceId)) {
+            throw new IllegalArgumentException("부모는 같은 스페이스여야 합니다");
+        }
+        effective.requireEdit(userId, parent);
     }
 
     @Transactional(readOnly = true)

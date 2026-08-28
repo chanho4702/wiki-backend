@@ -2,6 +2,7 @@ package com.platform.wikibackend.permission;
 
 import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.domain.Space;
+import com.platform.wikibackend.permission.dto.RestrictionPrincipal;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRestrictionRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
@@ -32,6 +33,7 @@ class PageRestrictionApiTest {
     @Autowired PageRepository pages;
     @Autowired PageRevisionRepository revisions;
     @Autowired PageRestrictionRepository restrictions;
+    @Autowired FakePrincipalDirectory principalDirectory;
     @Autowired FakePermissionClient perms;
     @Autowired FakeTeamDirectory teams;
     MockMvc mvc;
@@ -45,6 +47,7 @@ class PageRestrictionApiTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         restrictions.deleteAll();
+        principalDirectory.reset();
         revisions.deleteAll();
         pages.deleteAll();
         spaces.deleteAll();
@@ -128,7 +131,8 @@ class PageRestrictionApiTest {
                         .content("{\"view\":[{\"type\":\"USER\",\"id\":2}],\"edit\":[]}"))
                 .andExpect(status().isBadRequest());
 
-        // TEAM 지정은 org 왕복 없이 소속을 단정할 수 없어 가드에서 제외(통과)
+        // 소속 TEAM은 자신을 포함한 구성으로 인정한다.
+        teams.join(ALICE, 77L);
         mvc.perform(put("/api/wiki/pages/" + id + "/restrictions").with(asUser(ALICE, "앨리스"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"view\":[{\"type\":\"TEAM\",\"id\":77}],\"edit\":[]}"))
@@ -142,6 +146,22 @@ class PageRestrictionApiTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"view\":[{\"type\":\"GROUP\",\"id\":1}],\"edit\":[]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 존재하지_않는_주체와_양수가_아닌_ID는_저장하지_않는다() throws Exception {
+        long id = createPage(null, "문서");
+        principalDirectory.markMissing(new RestrictionPrincipal("USER", 999L));
+
+        mvc.perform(put("/api/wiki/pages/" + id + "/restrictions").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"view\":[{\"type\":\"USER\",\"id\":999}],\"edit\":[]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/wiki/pages/" + id + "/restrictions").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"view\":[{\"type\":\"USER\",\"id\":0}],\"edit\":[]}"))
+                .andExpect(status().isBadRequest());
+        assertThat(restrictions.findByPageId(id)).isEmpty();
     }
 
     @Test

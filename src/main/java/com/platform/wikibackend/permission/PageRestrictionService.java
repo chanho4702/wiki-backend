@@ -30,8 +30,8 @@ import java.util.Set;
  *   제한 목록 자체는 본문을 싣지 않으므로 ADR 규칙 6과 충돌하지 않는다).
  * - 교체: effective EDIT 통과자 또는 space ADMIN. 전체 교체(부분 패치 없음 — 다이얼로그가
  *   전체 상태를 안다).
- * - 셀프 락아웃 가드: ADMIN이 아닌 요청자가 자신이 빠진 VIEW 제한을 걸면 400 — 저장 직후
- *   자기 문서를 못 보게 되는 실수를 막는다(ADMIN은 의도적 구성일 수 있어 허용).
+ * - 셀프 락아웃 가드: ADMIN이 아닌 요청자가 본인 USER 또는 소속 TEAM이 빠진 VIEW 제한을
+ *   걸면 400 — 저장 직후 자기 문서를 못 보게 되는 실수를 막는다(ADMIN은 의도적 구성 허용).
  *
  * principal 이름 해석은 프론트가 org 디렉터리(REST)로 한다 — wiki는 id만 저장·반환
  * (작성자 표시와 같은 기존 패턴. 설계서의 "응답 시 이름 채움"은 wiki→org REST 신규 결합이라
@@ -47,6 +47,8 @@ public class PageRestrictionService {
     private final SpaceService spaces;
     private final EffectivePermissionService effective;
     private final PermissionClient permissions;
+    private final PrincipalDirectory principalDirectory;
+    private final TeamDirectory teams;
 
     @Transactional(readOnly = true)
     public PageRestrictionsResponse get(long userId, long pageId) {
@@ -76,6 +78,11 @@ public class PageRestrictionService {
                 throw new IllegalArgumentException("자신을 보기 제한 목록에서 뺄 수 없습니다");
             }
         }
+        List<RestrictionPrincipal> requested = new ArrayList<>();
+        requested.addAll(dedupe(view));
+        requested.addAll(dedupe(edit));
+        principalDirectory.requireExisting(requested);
+
         restrictions.deleteByPageId(pageId);
         List<PageRestriction> rows = new ArrayList<>();
         for (RestrictionPrincipal p : dedupe(view)) {
@@ -92,9 +99,8 @@ public class PageRestrictionService {
     }
 
     private boolean matchesSelf(long userId, RestrictionPrincipal p) {
-        // USER 본인만 즉시 판정 — TEAM은 org 왕복 없이 판단할 수 없어 가드에서 제외(보수적으로
-        // USER 항목 포함을 요구하면 팀 기반 구성이 막힌다 → TEAM 지정은 통과로 간주)
-        return p.toType() == PageRestriction.PrincipalType.TEAM || p.id() == userId;
+        if (p.toType() == PageRestriction.PrincipalType.USER) return p.id() == userId;
+        return teams.teamsOf(userId).contains(p.id());
     }
 
     private Set<RestrictionPrincipal> dedupe(List<RestrictionPrincipal> in) {

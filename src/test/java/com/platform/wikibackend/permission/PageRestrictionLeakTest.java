@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import static com.platform.wikibackend.TestAuth.asUser;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -168,5 +169,50 @@ class PageRestrictionLeakTest {
         // 리비전 목록도 본문과 같은 급의 콘텐츠다
         mvc.perform(get("/api/wiki/pages/" + id + "/revisions").with(asUser(BOB, "밥")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 제한된_자손이_있으면_부모_삭제와_서브트리_이동도_거부된다() throws Exception {
+        long parent = createPage(null, "공개 부모");
+        long child = createPage(parent, "제한 자손");
+        long target = createPage(null, "이동 대상");
+        restrict(child, PageRestriction.Type.VIEW, PageRestriction.PrincipalType.USER, ALICE);
+
+        mvc.perform(delete("/api/wiki/pages/" + parent).param("children", "cascade")
+                        .with(asUser(BOB, "밥")))
+                .andExpect(status().isForbidden());
+        assertThat(pages.existsById(parent)).isTrue();
+        assertThat(pages.existsById(child)).isTrue();
+
+        mvc.perform(post("/api/wiki/pages/" + parent + "/move").with(asUser(BOB, "밥"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + target + ",\"confirmImpact\":true}"))
+                .andExpect(status().isForbidden());
+        assertThat(pages.findById(parent).orElseThrow().getParentId()).isNull();
+    }
+
+    @Test
+    void 숨겨진_부모는_생성_이동_대상이_될_수_없고_PUT_부모변경도_막힌다() throws Exception {
+        long restrictedParent = createPage(null, "숨겨진 부모");
+        long moving = createPage(null, "옮길 문서");
+        restrict(restrictedParent, PageRestriction.Type.VIEW, PageRestriction.PrincipalType.USER, ALICE);
+
+        mvc.perform(post("/api/wiki/pages").with(asUser(BOB, "밥"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + space.getId() + ",\"parentId\":" + restrictedParent
+                                + ",\"title\":\"침범 문서\",\"content\":\"본문\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/wiki/pages/" + moving + "/move").with(asUser(BOB, "밥"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":" + restrictedParent + "}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.impact").doesNotExist());
+
+        mvc.perform(put("/api/wiki/pages/" + moving).with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"옮길 문서\",\"content\":\"본문\",\"parentId\":"
+                                + restrictedParent + ",\"expectedVersion\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("부모 변경은 페이지 이동 API를 사용해야 합니다"));
     }
 }

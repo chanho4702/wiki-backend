@@ -1,11 +1,13 @@
 package com.platform.wikibackend.notification;
 
 import com.platform.wikibackend.domain.Space;
+import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.permission.FakePermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.NotificationRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
+import com.platform.wikibackend.repository.PageRestrictionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import static com.platform.wikibackend.TestAuth.asUser;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -32,6 +35,7 @@ class NotificationFlowTest {
     @Autowired PageRepository pages;
     @Autowired PageRevisionRepository revisions;
     @Autowired NotificationRepository notifications;
+    @Autowired PageRestrictionRepository restrictions;
     @Autowired FakePermissionClient perms;
     MockMvc mvc;
 
@@ -43,6 +47,7 @@ class NotificationFlowTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         notifications.deleteAll();
+        restrictions.deleteAll();
         revisions.deleteAll();
         pages.deleteAll();
         spaces.deleteAll();
@@ -142,5 +147,29 @@ class NotificationFlowTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.unreadCount").value(0))
                 .andExpect(jsonPath("$.items[0].read").value(true));
+    }
+
+    @Test
+    void 제한_강화_전에_쌓인_알림도_조회에서_제목과_경로를_숨긴다() throws Exception {
+        long id = createPage(ALICE, "본문");
+        update(BOB, id, 1, "밥의 수정"); // 앨리스에게 기존 알림 1건
+        restrictions.save(PageRestriction.of(id, PageRestriction.Type.VIEW,
+                PageRestriction.PrincipalType.USER, BOB, BOB));
+
+        mvc.perform(get("/api/wiki/notifications").with(asUser(ALICE, "앨리스")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unreadCount").value(0))
+                .andExpect(jsonPath("$.items.length()").value(0));
+    }
+
+    @Test
+    void 제한_밖_수신자에게는_새_업데이트_알림을_저장하지_않는다() throws Exception {
+        long id = createPage(ALICE, "본문");
+        restrictions.save(PageRestriction.of(id, PageRestriction.Type.VIEW,
+                PageRestriction.PrincipalType.USER, BOB, BOB));
+
+        update(BOB, id, 1, "제한 이후 수정");
+
+        assertThat(notifications.findByUserIdAndReadAtIsNull(ALICE)).isEmpty();
     }
 }

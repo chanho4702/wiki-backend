@@ -7,7 +7,12 @@ import com.platform.wikibackend.notification.dto.NotificationResponse;
 import com.platform.wikibackend.repository.NotificationRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
+import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.wikibackend.permission.EffectivePermissionService;
+import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.permission.WikiAction;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +38,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class NotificationService {
 
     /** 본문 멘션 링크 [@이름](user:123)의 id 추출 — 프론트 저장 문법(userMention)과 계약. */
@@ -42,6 +48,8 @@ public class NotificationService {
     private final NotificationRepository notifications;
     private final PageRevisionRepository revisions;
     private final PageRepository pages;
+    private final PermissionClient permissions;
+    private final EffectivePermissionService effective;
 
     static Set<Long> mentionIds(String body) {
         Set<Long> ids = new HashSet<>();
@@ -60,14 +68,14 @@ public class NotificationService {
         newlyMentioned.removeAll(before);
         newlyMentioned.remove(actorId);
         for (long userId : newlyMentioned) {
-            deliver(userId, Notification.Type.MENTIONED, page.getId(), actorId);
+            deliver(userId, Notification.Type.MENTIONED, page, actorId);
         }
 
         Set<Long> interested = interestedIn(page, now);
         interested.remove(actorId);
         interested.removeAll(newlyMentioned); // 멘션 알림과 업데이트 알림을 겹쳐 보내지 않는다
         for (long userId : interested) {
-            deliver(userId, Notification.Type.PAGE_UPDATED, page.getId(), actorId);
+            deliver(userId, Notification.Type.PAGE_UPDATED, page, actorId);
         }
     }
 
@@ -76,14 +84,14 @@ public class NotificationService {
         Set<Long> mentioned = mentionIds(commentBody);
         mentioned.remove(actorId);
         for (long userId : mentioned) {
-            deliver(userId, Notification.Type.MENTIONED, page.getId(), actorId);
+            deliver(userId, Notification.Type.MENTIONED, page, actorId);
         }
 
         Set<Long> interested = interestedIn(page, mentionIds(page.getContent()));
         interested.remove(actorId);
         interested.removeAll(mentioned);
         for (long userId : interested) {
-            deliver(userId, Notification.Type.COMMENT, page.getId(), actorId);
+            deliver(userId, Notification.Type.COMMENT, page, actorId);
         }
     }
 
@@ -95,7 +103,16 @@ public class NotificationService {
         return users;
     }
 
-    private void deliver(long userId, Notification.Type type, long pageId, long actorId) {
+    private void deliver(long userId, Notification.Type type, Page page, long actorId) {
+        // 제한 변경 직후의 알림도 제목·경로를 노출하므로 저장 전에 수신자별 space+page VIEW를 확인한다.
+        // org가 일시 불능이면 본문 업데이트까지 롤백하지 않고 그 알림만 fail-closed로 건너뛴다.
+        try {
+            if (!isVisible(userId, page)) return;
+        } catch (ServiceUnavailableException e) {
+            log.warn("알림 수신 권한 확인 불가 — 발송 생략: user={} page={}", userId, page.getId());
+            return;
+        }
+        long pageId = page.getId();
         if (type != Notification.Type.MENTIONED) {
             var unread = notifications.findFirstByUserIdAndPageIdAndTypeAndReadAtIsNull(userId, pageId, type);
             if (unread.isPresent()) {
@@ -111,10 +128,30 @@ public class NotificationService {
     @Transactional(readOnly = true)
     public NotificationListResponse list(long userId) {
         List<Notification> rows = notifications.findByUserIdOrderByIdDesc(userId, PageRequest.of(0, PAGE_SIZE));
+        List<Notification> unreadRows = notifications.findByUserIdAndReadAtIsNull(userId);
         // 페이지 제목·스페이스는 표시/라우팅용 — 삭제된 페이지의 알림은 FK cascade로 함께 사라진다
-        Map<Long, Page> byId = pages.findAllById(rows.stream().map(Notification::getPageId).distinct().toList())
+        Set<Long> pageIds = new HashSet<>();
+        rows.forEach(n -> pageIds.add(n.getPageId()));
+        unreadRows.forEach(n -> pageIds.add(n.getPageId()));
+        Map<Long, Page> byId = pages.findAllById(pageIds)
                 .stream().collect(Collectors.toMap(Page::getId, p -> p, (a, b) -> a));
+        // 제한 인덱스와 space 권한은 각각 스페이스당 한 번만 계산한다. 알림 수만큼 전체
+        // 페이지 제한 인덱스를 다시 만드는 N+1을 피하면서 제목·경로 노출은 동일하게 닫는다.
+        Set<Long> effectiveVisible = effective.viewablePageIds(userId, byId.values());
+        Map<Long, Boolean> visibleSpaces = byId.values().stream()
+                .map(Page::getSpaceId)
+                .distinct()
+                .collect(Collectors.toMap(
+                        spaceId -> spaceId,
+                        spaceId -> permissions.isAllowed(userId, spaceId, WikiAction.VIEW)));
+        java.util.function.Predicate<Notification> visible = n -> {
+            Page page = byId.get(n.getPageId());
+            return page != null
+                    && visibleSpaces.getOrDefault(page.getSpaceId(), false)
+                    && effectiveVisible.contains(page.getId());
+        };
         List<NotificationResponse> items = rows.stream()
+                .filter(visible)
                 .map(n -> {
                     Page page = byId.get(n.getPageId());
                     return NotificationResponse.from(n,
@@ -122,7 +159,15 @@ public class NotificationService {
                             page == null ? "" : page.getTitle());
                 })
                 .toList();
-        return new NotificationListResponse(notifications.countByUserIdAndReadAtIsNull(userId), items);
+        long unreadCount = unreadRows.stream()
+                .filter(visible)
+                .count();
+        return new NotificationListResponse(unreadCount, items);
+    }
+
+    private boolean isVisible(long userId, Page page) {
+        return permissions.isAllowed(userId, page.getSpaceId(), WikiAction.VIEW)
+                && effective.canView(userId, page);
     }
 
     /** ids가 비면 전체 읽음 — 본인 소유 행만 만진다. */
