@@ -49,7 +49,7 @@ class NotificationFlowTest {
         notifications.deleteAll();
         restrictions.deleteAll();
         revisions.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         space = spaces.save(Space.of("dev", "개발", null, ALICE));

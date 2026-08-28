@@ -56,7 +56,7 @@ class CollaborationDraftCommitTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         drafts.deleteAll();
         revisions.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         permissions.reset();
         events.reset();

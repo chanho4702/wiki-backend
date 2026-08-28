@@ -13,11 +13,18 @@ public record CommentResponse(
         String authorName,
         String body,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        /** "inline"이면 본문 구간 댓글(V15). 아니면 "page". */
+        String anchorType,
+        String anchorQuote,
+        Integer anchorOccurrence,
+        Instant resolvedAt
 ) {
     public static CommentResponse from(PageComment comment) {
         return new CommentResponse(comment.getId(), comment.getPageId(), comment.getParentId(),
                 comment.getAuthorId(), comment.getAuthorName(), comment.getBody(),
-                comment.getCreatedAt(), comment.getEditedAt());
+                comment.getCreatedAt(), comment.getEditedAt(),
+                comment.getAnchorType().toLowerCase(), comment.getAnchorQuote(),
+                comment.getAnchorOccurrence(), comment.getResolvedAt());
     }
 }

@@ -29,9 +29,13 @@ import java.util.Set;
  * 본문·트리·첨부·댓글·협업 티켓·알림이 전부 이 서비스 하나를 거쳐야 한다(설계 §3.2) —
  * 한 경로라도 우회하면 그 경로가 누출구가 된다.
  *
- * 로드는 스페이스 스코프 2쿼리((id,parent) + 제한 행)로 요청당 1회 — 규모 검토와 정합.
- * Caffeine 캐시는 제한 쓰기 API(증분 2)의 무효화 훅과 함께 붙인다(쓰기 경로 없이 캐시만
- * 넣으면 테스트·마이그레이션 직후 스테일만 남는다).
+ * 로드 비용(2026-08-28 규모 개선): 단건·묶음 판정은 **대상의 조상 폐포 2쿼리**만 읽는다
+ * (재귀 CTE + 그 id들의 제한 행). 예전에는 스페이스 전 페이지를 읽어 부모 맵을 만들었고,
+ * 그래서 페이지 한 장 여는 비용이 스페이스 크기에 비례했다.
+ * 스페이스 전량이 정말 필요한 곳은 트리 필터(visiblePageIds) 하나뿐이라 거기만 남겼다.
+ *
+ * 캐시를 쓰지 않는 것은 의도다 — 제한·트리 변경 직후의 스테일 인덱스는 그대로 누출이라,
+ * 무효화가 완벽해야만 안전한 캐시보다 질의를 싸게 만드는 쪽을 택했다.
  */
 @Service
 @RequiredArgsConstructor
@@ -49,24 +53,24 @@ public class EffectivePermissionService {
 
     /** 알림 등 사용자별 노출 필터가 예외 대신 판정값을 필요로 할 때 쓴다(space 권한은 호출부 책임). */
     public boolean canView(long userId, Page page) {
-        return index(page.getSpaceId()).canView(principalsOf(userId), page.getId());
+        return chainIndex(List.of(page.getId())).canView(principalsOf(userId), page.getId());
     }
 
     /** 여러 스페이스의 알림 목록처럼 페이지 묶음을 판정할 때 스페이스별 인덱스를 한 번만 만든다. */
     public Set<Long> viewablePageIds(long userId, Collection<Page> targets) {
         if (targets.isEmpty()) return Set.of();
         Principals me = principalsOf(userId);
-        Map<Long, SpaceIndex> bySpace = new HashMap<>();
+        // 스페이스가 섞여 있어도 폐포 한 번이면 된다 — 체인은 스페이스를 넘지 않는다.
+        SpaceIndex idx = chainIndex(targets.stream().map(Page::getId).toList());
         Set<Long> visible = new HashSet<>();
         for (Page page : targets) {
-            SpaceIndex idx = bySpace.computeIfAbsent(page.getSpaceId(), this::index);
             if (idx.canView(me, page.getId())) visible.add(page.getId());
         }
         return visible;
     }
 
     public void requireEdit(long userId, Page page) {
-        SpaceIndex idx = index(page.getSpaceId());
+        SpaceIndex idx = chainIndex(List.of(page.getId()));
         Principals me = principalsOf(userId);
         if (!idx.canView(me, page.getId())) {
             throw new ForbiddenException("이 페이지를 볼 권한이 없습니다");
@@ -81,10 +85,10 @@ public class EffectivePermissionService {
      * 조회해 페이지 수만큼 전체 스페이스 쿼리를 반복하지 않는다.
      */
     public void requireEditAll(long userId, Collection<Page> targets) {
+        if (targets.isEmpty()) return;
         Principals me = principalsOf(userId);
-        Map<Long, SpaceIndex> bySpace = new HashMap<>();
+        SpaceIndex idx = chainIndex(targets.stream().map(Page::getId).toList());
         for (Page page : targets) {
-            SpaceIndex idx = bySpace.computeIfAbsent(page.getSpaceId(), this::index);
             if (!idx.canView(me, page.getId())) {
                 throw new ForbiddenException("이 페이지를 볼 권한이 없습니다");
             }
@@ -116,19 +120,20 @@ public class EffectivePermissionService {
      * 모두 펼치지 않고 보수적으로 경고하므로 이 목록을 정확한 접근 상실자 목록으로 부르지 않는다.
      */
     public java.util.List<com.platform.wikibackend.permission.dto.InheritedRestriction> newViewRestrictionsAfterMove(
-            Page page, long targetSpaceId, Long targetParentId) {
-        SpaceIndex source = index(page.getSpaceId());
-        SpaceIndex target = targetSpaceId == page.getSpaceId() ? source : index(targetSpaceId);
+            Page page, Long targetParentId) {
+        // 현재 체인과 옮겨갈 자리의 체인 둘만 있으면 된다 — 두 스페이스 전량을 읽지 않는다.
+        // 폐포 질의는 id 기반이라 스페이스를 넘는 이동도 같은 한 번으로 덮인다.
+        SpaceIndex chains = chainIndex(java.util.Arrays.asList(page.getId(), targetParentId));
 
         Set<Long> currentRestricted = new HashSet<>();
-        walkViewRestricted(source, source.parentOf().get(page.getId()), currentRestricted::add);
+        walkViewRestricted(chains, chains.parentOf().get(page.getId()), currentRestricted::add);
 
         java.util.List<com.platform.wikibackend.permission.dto.InheritedRestriction> out = new ArrayList<>();
-        walkViewRestricted(target, targetParentId, nodeId -> {
+        walkViewRestricted(chains, targetParentId, nodeId -> {
             if (currentRestricted.contains(nodeId)) return;
             String title = pages.findById(nodeId).map(Page::getTitle).orElse("");
             out.add(new com.platform.wikibackend.permission.dto.InheritedRestriction(nodeId, title,
-                    target.view().get(nodeId).stream()
+                    chains.view().get(nodeId).stream()
                             .map(r -> new com.platform.wikibackend.permission.dto.RestrictionPrincipal(
                                     r.getPrincipalType().name(), r.getPrincipalId()))
                             .toList()));
@@ -149,9 +154,37 @@ public class EffectivePermissionService {
         return new Principals(userId, teams);
     }
 
+    /**
+     * 대상 페이지들의 조상 폐포만 담은 인덱스. 판정에 필요한 것은 조상 체인과 그 위의 제한뿐이라
+     * 스페이스 전량을 읽지 않는다.
+     */
+    private SpaceIndex chainIndex(Collection<Long> pageIds) {
+        List<Long> seeds = pageIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (seeds.isEmpty()) return new SpaceIndex(Map.of(), Map.of(), Map.of());
+        Map<Long, Long> parentOf = new HashMap<>();
+        for (Object[] row : pages.findAncestorClosure(seeds)) {
+            parentOf.put(((Number) row[0]).longValue(),
+                    row[1] == null ? null : ((Number) row[1]).longValue());
+        }
+        return new SpaceIndex(parentOf, byPage(restrictions.findByPageIdIn(parentOf.keySet()),
+                PageRestriction.Type.VIEW), byPage(restrictions.findByPageIdIn(parentOf.keySet()),
+                PageRestriction.Type.EDIT));
+    }
+
+    private static Map<Long, List<PageRestriction>> byPage(List<PageRestriction> rows,
+                                                          PageRestriction.Type type) {
+        Map<Long, List<PageRestriction>> out = new HashMap<>();
+        for (PageRestriction r : rows) {
+            if (r.getType() != type) continue;
+            out.computeIfAbsent(r.getPageId(), k -> new ArrayList<>()).add(r);
+        }
+        return out;
+    }
+
+    /** 스페이스 전량 인덱스 — 트리 필터(visiblePageIds)처럼 정말 전부가 필요한 곳만 쓴다. */
     private SpaceIndex index(long spaceId) {
         Map<Long, Long> parentOf = new HashMap<>();
-        for (PageRepository.IdParent row : pages.findIdParentBySpaceId(spaceId)) {
+        for (PageRepository.IdParent row : pages.findIdParentAnyBySpaceId(spaceId)) {
             parentOf.put(row.getId(), row.getParentId());
         }
         Map<Long, List<PageRestriction>> view = new HashMap<>();

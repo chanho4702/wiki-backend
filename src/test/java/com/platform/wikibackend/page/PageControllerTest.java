@@ -44,7 +44,7 @@ class PageControllerTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         revisions.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         events.reset();
@@ -111,8 +111,12 @@ class PageControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    /**
+     * W21-1 소프트 삭제 — 하위는 조회에서 사라지지만 리비전은 남는다(복원 재료).
+     * 색인은 즉시 내려야 하므로 pageDeleted 이벤트는 그대로 발행한다.
+     */
     @Test
-    void children_cascade면_하위와_리비전이_함께_사라지고_이벤트가_발행된다() throws Exception {
+    void children_cascade면_하위가_함께_휴지통으로_가고_리비전은_남는다() throws Exception {
         long root = createPage(null, "루트");
         long child = createPage(root, "자식");
 
@@ -120,8 +124,10 @@ class PageControllerTest {
                 .andExpect(status().isNoContent());
 
         assertThat(pages.findById(child)).isEmpty();
-        assertThat(revisions.findByPageIdOrderByVersionDesc(root)).isEmpty();
-        assertThat(revisions.findByPageIdOrderByVersionDesc(child)).isEmpty();
+        assertThat(pages.findById(root)).isEmpty();
+        assertThat(pages.findAnyById(child)).isPresent();
+        assertThat(revisions.findByPageIdOrderByVersionDesc(root)).isNotEmpty();
+        assertThat(revisions.findByPageIdOrderByVersionDesc(child)).isNotEmpty();
         assertThat(events.events).anyMatch(e -> e.hasPageDeleted());
     }
 
@@ -166,7 +172,9 @@ class PageControllerTest {
         assertThat(pages.findById(leaf).orElseThrow().getParentId()).isEqualTo(root);
         // 승격된 자식의 이력은 남는다 — 옮겨졌을 뿐 지워진 게 아니다
         assertThat(revisions.findByPageIdOrderByVersionDesc(leaf)).isNotEmpty();
-        assertThat(revisions.findByPageIdOrderByVersionDesc(mid)).isEmpty();
+        // 버린 페이지의 이력도 남는다(W21-1 소프트 삭제) — 복원하면 그대로 돌아와야 한다
+        assertThat(revisions.findByPageIdOrderByVersionDesc(mid)).isNotEmpty();
+        assertThat(pages.findAnyById(mid)).isPresent();
     }
 
     @Test

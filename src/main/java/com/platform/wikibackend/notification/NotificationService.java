@@ -50,6 +50,7 @@ public class NotificationService {
     private final PageRepository pages;
     private final PermissionClient permissions;
     private final EffectivePermissionService effective;
+    private final com.platform.wikibackend.watch.WatchService watches;
 
     static Set<Long> mentionIds(String body) {
         Set<Long> ids = new HashSet<>();
@@ -95,11 +96,16 @@ public class NotificationService {
         }
     }
 
-    /** 관심 사용자 = 페이지 작성자 + 리비전을 남긴 편집자들 + 본문에 멘션된 사용자들. */
+    /**
+     * 알림 대상 = 구독자(V15 page_watch) + 본문에 멘션된 사용자.
+     *
+     * W21-4 이전에는 "작성자 + 리비전을 남긴 편집자"를 코드로 계산했다. 그 방식은 끌 수가 없어
+     * (한 번 고친 문서의 알림을 영영 받는다) 구독 표로 옮겼다. 기존 사용자는 V15 백필로 승계된다.
+     * 멘션은 구독과 무관하게 항상 받는다 — 나를 부른 것은 문서 구독 여부와 다른 사건이다.
+     */
     private Set<Long> interestedIn(Page page, Set<Long> currentMentions) {
         Set<Long> users = new HashSet<>(currentMentions);
-        users.add(page.getCreatedBy());
-        users.addAll(revisions.findDistinctEditors(page.getId()));
+        users.addAll(watches.watcherIds(page.getId()));
         return users;
     }
 
@@ -129,7 +135,8 @@ public class NotificationService {
     public NotificationListResponse list(long userId) {
         List<Notification> rows = notifications.findByUserIdOrderByIdDesc(userId, PageRequest.of(0, PAGE_SIZE));
         List<Notification> unreadRows = notifications.findByUserIdAndReadAtIsNull(userId);
-        // 페이지 제목·스페이스는 표시/라우팅용 — 삭제된 페이지의 알림은 FK cascade로 함께 사라진다
+        // 페이지 제목·스페이스는 표시/라우팅용 — 휴지통에 있는 페이지는 findAllById가 걸러(@SQLRestriction)
+        // page == null이 되고 아래 visible 필터에서 빠진다. 영구 삭제 시엔 FK cascade로 행 자체가 사라진다.
         Set<Long> pageIds = new HashSet<>();
         rows.forEach(n -> pageIds.add(n.getPageId()));
         unreadRows.forEach(n -> pageIds.add(n.getPageId()));

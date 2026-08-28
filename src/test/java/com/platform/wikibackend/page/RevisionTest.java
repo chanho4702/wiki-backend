@@ -36,7 +36,7 @@ class RevisionTest {
     @BeforeEach
     void setup() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         Space s = spaces.save(Space.of("dev", "개발", null, EDITOR));

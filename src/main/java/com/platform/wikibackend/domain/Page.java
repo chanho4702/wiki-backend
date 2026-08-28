@@ -5,12 +5,20 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
 
 @Entity
 @Table(name = "page")
+/*
+ * 휴지통(V13) — 버려진 페이지는 모든 JPQL·파생 쿼리에서 자동으로 빠진다.
+ * 조회 경로마다 `deleted_at is null`을 손으로 붙이는 방식은 한 군데만 빠뜨려도 버린 문서가
+ * 트리·검색·첨부 어딘가에서 되살아나므로 쓰지 않는다. 휴지통 자신을 읽어야 하는 경로는
+ * PageRepository의 네이티브 쿼리(findAnyById / findTrashedRows)로만 우회한다.
+ */
+@SQLRestriction("deleted_at is null")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Page {
@@ -70,6 +78,17 @@ public class Page {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    /** 휴지통(V13) — NULL이면 살아 있는 페이지. 값이 있으면 @SQLRestriction이 조회에서 뺀다. */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    /** 사용자가 직접 버린 페이지만 true — cascade로 딸려간 자손은 false(복원 묶음의 경계). */
+    @Column(name = "deleted_root", nullable = false)
+    private boolean deletedRoot;
+
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
         return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
     }
@@ -90,6 +109,7 @@ public class Page {
         p.viewCount = 0L;
         p.createdBy = authorId;
         p.updatedBy = authorId;
+        p.deletedRoot = false;
         return p;
     }
 
@@ -136,6 +156,28 @@ public class Page {
 
     /** 같은 그룹의 다른 페이지들을 1..n으로 다시 매길 때 쓴다. */
     public void resequence(long sortOrder) {
+        this.sortOrder = sortOrder;
+    }
+
+    /**
+     * 휴지통으로 보낸다(V13). 삭제는 편집이 아니므로 version·리비전을 건드리지 않는다 —
+     * 복원하면 버린 시점의 버전 그대로 돌아와야 한다.
+     */
+    public void moveToTrash(Long deleterId, boolean root) {
+        this.deletedAt = Instant.now();
+        this.deletedBy = deleterId;
+        this.deletedRoot = root;
+    }
+
+    /**
+     * 휴지통에서 되살린다. 원래 부모가 사라졌으면 호출부가 루트(null)를 넘긴다 —
+     * 없는 부모를 그대로 두면 트리에서 영영 보이지 않는 고아가 된다.
+     */
+    public void restoreFromTrash(Long parentId, long sortOrder) {
+        this.deletedAt = null;
+        this.deletedBy = null;
+        this.deletedRoot = false;
+        this.parentId = parentId;
         this.sortOrder = sortOrder;
     }
 

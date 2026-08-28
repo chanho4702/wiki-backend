@@ -79,7 +79,9 @@ public class SpaceService {
         require(userId, spaceId, WikiAction.ADMIN);
 
         // 스페이스 전체 정리 — 디스크 파일은 DB cascade가 못 지우므로 코드로. (H2 테스트 환경엔 FK도 없음)
-        List<Page> all = pages.findBySpaceIdOrderById(spaceId);
+        // findAnyBySpaceId: 휴지통(V13)에 있는 페이지까지 포함해야 한다. 살아 있는 행만 지우면
+        // 버려진 페이지의 첨부 객체와 DB 행이 스페이스와 함께 사라지지 않고 고아로 남는다.
+        List<Page> all = pages.findAnyBySpaceId(spaceId);
         for (Page p : all) {
             attachments.findByPageId(p.getId()).forEach(a -> {
                 storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),

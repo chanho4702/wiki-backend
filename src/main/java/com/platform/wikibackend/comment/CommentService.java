@@ -35,6 +35,7 @@ public class CommentService {
     private final PermissionClient permissions;
     private final com.platform.wikibackend.notification.NotificationService notificationService;
     private final com.platform.wikibackend.permission.EffectivePermissionService effective;
+    private final com.platform.wikibackend.watch.WatchService watches;
 
     @Transactional(readOnly = true)
     public List<CommentResponse> list(long userId, long pageId) {
@@ -60,11 +61,46 @@ public class CommentService {
                 throw new IllegalArgumentException("답글에는 답글을 달 수 없습니다");
             }
         }
-        PageComment saved = comments.save(PageComment.of(
-                pageId, req.parentId(), userId, normalizeAuthorName(userName, userId), req.body().trim()));
+        String author = normalizeAuthorName(userName, userId);
+        String body = req.body().trim();
+        PageComment saved;
+        if (req.anchorQuote() != null && !req.anchorQuote().isBlank()) {
+            if (req.parentId() != null) {
+                throw new IllegalArgumentException("답글에는 본문 구간을 붙일 수 없습니다");
+            }
+            // 앵커는 **렌더된 본문** 기준이다(사용자가 화면에서 드래그한 텍스트).
+            // 마크다운 원문과 대조하지 않는 이유: 서식을 가로지르는 선택(`배포는 **금요일**에`)은
+            // 원문에 그대로 없어서 정당한 선택을 거부하게 된다. 서버는 앵커를 보관만 하고,
+            // 실제 위치 찾기는 렌더러가 한다 — 못 찾으면 "위치 없음"으로 남긴다.
+            int occurrence = req.anchorOccurrence() == null ? 0 : req.anchorOccurrence();
+            if (occurrence < 0) {
+                throw new IllegalArgumentException("본문 구간 위치가 올바르지 않습니다");
+            }
+            saved = comments.save(PageComment.inlineOf(
+                    pageId, userId, author, body, req.anchorQuote(), occurrence));
+        } else {
+            saved = comments.save(PageComment.of(pageId, req.parentId(), userId, author, body));
+        }
+        // 댓글을 달면 그 문서의 대화에 참여한 것이다 — 컨플루언스와 같이 자동 구독한다.
+        watches.autoWatch(pageId, userId);
         notificationService.onCommentAdded(userId, page, saved.getBody());
         return CommentResponse.from(saved);
     }
+
+    /** 해결/재개 — 인라인 스레드만 대상이고, VIEW 권한이 있으면 누구나 닫을 수 있다(컨플루언스 규칙). */
+    public CommentResponse setResolved(long userId, long commentId, boolean resolved) {
+        PageComment comment = requireComment(commentId);
+        Page page = requirePage(comment.getPageId());
+        spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
+        if (!comment.isInline()) {
+            throw new IllegalArgumentException("인라인 댓글만 해결할 수 있습니다");
+        }
+        if (resolved) comment.resolve(userId, Instant.now());
+        else comment.reopen();
+        return CommentResponse.from(comment);
+    }
+
 
     public CommentResponse update(long userId, long commentId, CommentUpdateRequest req) {
         PageComment comment = requireComment(commentId);

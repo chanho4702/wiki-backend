@@ -34,6 +34,8 @@ platform:
     enabled: false   # 실 포트 바인딩 금지 — gRPC 테스트는 in-process 서버로 띄운다
   wiki:
     files-dir: ${java.io.tmpdir}/wiki-test-files
+    trash:
+      enabled: false   # 스케줄러 자동 tick 금지 — 보존 테스트가 시각을 직접 넣는다
     attachment-reconciliation:
       enabled: false
     migration-worker:

@@ -58,6 +58,8 @@ public class PageService {
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
     private final CollaborationDraftMetadataRepository collaborationDrafts;
+    private final com.platform.wikibackend.label.LabelService labelService;
+    private final com.platform.wikibackend.watch.WatchService watches;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -67,6 +69,8 @@ public class PageService {
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
         revisions.save(PageRevision.snapshotOf(saved)); // 버전1도 리비전에 — "모든 버전이 리비전에 있다"
+        labelService.reindexLinks(saved); // 백링크 그래프(V14)는 본문의 파생물 — 저장과 같은 트랜잭션에서 갱신
+        watches.autoWatch(saved.getId(), userId); // 만든 문서는 자동 구독(W21-4)
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
         return PageResponse.from(saved);
     }
@@ -105,6 +109,7 @@ public class PageService {
             saved.rewriteContentForCopy(content);
         }
         revisions.save(PageRevision.snapshotOf(saved));
+        labelService.reindexLinks(saved);
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
         return PageResponse.from(saved);
     }
@@ -167,7 +172,7 @@ public class PageService {
             effective.requireEditAll(userId, collectSubtree(pageId));
         }
         if (relocated && !req.impactConfirmed()) {
-            var impact = effective.newViewRestrictionsAfterMove(page, targetSpaceId, req.parentId());
+            var impact = effective.newViewRestrictionsAfterMove(page, req.parentId());
             if (!impact.isEmpty()) {
                 throw new com.platform.wikibackend.permission.MoveImpactException(impact);
             }
@@ -308,6 +313,8 @@ public class PageService {
         String oldBody = p.getContent();
         p.edit(req.title(), req.content(), userId);
         revisions.save(PageRevision.snapshotOf(p));
+        labelService.reindexLinks(p);
+        watches.autoWatch(pageId, userId); // 고친 문서는 자동 구독(W21-4)
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
         notificationService.onPageUpdated(userId, p, oldBody, req.content());
         return PageResponse.from(p);
@@ -340,6 +347,8 @@ public class PageService {
         page.edit(req.title(), req.content(), userId);
         draft.advanceTo(page.getVersion());
         revisions.save(PageRevision.snapshotOf(page));
+        labelService.reindexLinks(page);
+        watches.autoWatch(page.getId(), userId);
         events.afterCommit(WikiEvents.pageUpdated(userId, page));
         notificationService.onPageUpdated(userId, page, oldBody, req.content());
         return new CollaborationDraftCommitResponse(PageResponse.from(page), draft.getGeneration());
@@ -348,6 +357,9 @@ public class PageService {
     /**
      * 자식 처리는 호출측이 고른다(기획 P2). policy가 null인데 자식이 있으면 거부한다 —
      * 옵션 없는 삭제가 하위를 통째로 날리면 호출 실수 한 번이 문서 트리를 지운다.
+     *
+     * W21-1부터 **소프트 삭제**다. 본문·리비전·댓글·첨부 객체는 그대로 두고 deleted_at만 찍는다.
+     * 되돌릴 수 없는 삭제는 TrashService.purge(스페이스 ADMIN)만 할 수 있다.
      */
     public void delete(long userId, long pageId, ChildrenPolicy policy) {
         Page p = getOwned(pageId);
@@ -372,41 +384,32 @@ public class PageService {
                 }
                 pages.saveAll(children);
             } else {
-                deleteSubtree(userId, children, new HashSet<>(Set.of(pageId)));
+                trashSubtree(userId, children, new HashSet<>(Set.of(pageId)));
             }
         }
-        deleteOne(userId, p);
+        trashOne(userId, p, true);
     }
 
     /**
-     * 후손 전부 삭제. visited는 손상 데이터(parent_id 순환)에서 무한 재귀에 빠지지 않게 한다 —
-     * 정상 경로로는 validateParent가 순환을 막지만, 데이터가 깨지면 여기가 스레드를 잡아먹는다.
+     * 후손 전부를 휴지통으로. visited는 손상 데이터(parent_id 순환)에서 무한 재귀에 빠지지 않게
+     * 한다 — 정상 경로로는 validateParent가 순환을 막지만, 데이터가 깨지면 여기가 스레드를 잡아먹는다.
      */
-    private void deleteSubtree(long userId, List<Page> level, Set<Long> visited) {
+    private void trashSubtree(long userId, List<Page> level, Set<Long> visited) {
         for (Page child : level) {
-            if (!visited.add(child.getId())) continue; // 이미 지운 노드 — 순환
-            deleteSubtree(userId, pages.findByParentId(child.getId()), visited);
-            deleteOne(userId, child);
+            if (!visited.add(child.getId())) continue; // 이미 처리한 노드 — 순환
+            trashSubtree(userId, pages.findByParentId(child.getId()), visited);
+            trashOne(userId, child, false);
         }
     }
 
-    /** 페이지 하나와 그에 딸린 첨부·리비전을 지운다. */
-    private void deleteOne(long userId, Page p) {
-        long pageId = p.getId();
-        long spaceId = p.getSpaceId();
-
-        // 첨부 파일 정리 — 디스크 파일과 DB 행 모두
-        attachments.findByPageId(pageId).forEach(a -> {
-            storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
-                    a.getStorageKey(), a.getStorageVersion());
-        });
-        attachments.deleteByPageId(pageId);
-
-        // 리비전·댓글 명시 삭제 — H2 테스트 스키마는 FK 없음(Long 컬럼만) → 고아 방지
-        revisions.deleteByPageId(pageId);
-        comments.deleteByPageId(pageId);
-        pages.delete(p);
-        events.afterCommit(WikiEvents.pageDeleted(userId, pageId, spaceId));
+    /**
+     * 페이지 하나를 휴지통으로 보낸다(V13). 첨부 객체·리비전·댓글은 복원을 위해 남긴다.
+     * 검색 색인에서는 즉시 내려야 하므로 pageDeleted 이벤트는 그대로 발행한다 —
+     * 복원 시 TrashService가 pageUpdated로 다시 올린다.
+     */
+    private void trashOne(long userId, Page p, boolean root) {
+        p.moveToTrash(userId, root);
+        events.afterCommit(WikiEvents.pageDeleted(userId, p.getId(), p.getSpaceId()));
     }
 
     /** 초안 게시. 이미 게시됐으면 멱등 — 버전·리비전을 건드리지 않는다(내용 변경이 아니다). */
@@ -511,6 +514,7 @@ public class PageService {
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);
         revisions.save(PageRevision.snapshotOf(p));
+        labelService.reindexLinks(p);
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
         return PageResponse.from(p);
     }

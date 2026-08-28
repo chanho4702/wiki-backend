@@ -54,7 +54,7 @@ class PageRestrictionLeakTest {
         restrictions.deleteAll();
         notifications.deleteAll();
         revisions.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         teams.reset();

@@ -44,7 +44,7 @@ class PageIconViewsTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         revisions.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         events.reset();

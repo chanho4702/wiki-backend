@@ -44,9 +44,27 @@ public class PageComment {
     @Column(nullable = false, columnDefinition = "text")
     private String body;
 
-    /** 인라인 댓글 확장 자리 — 지금은 PAGE 고정. */
+    /** PAGE = 페이지 하단 댓글, INLINE = 본문 구간에 붙은 댓글(V15). */
     @Column(name = "anchor_type", nullable = false, length = 16, updatable = false)
     private String anchorType;
+
+    /**
+     * 인라인 댓글이 붙은 본문 텍스트(V15). 블록 id가 아니라 인용문인 이유: 저장 형식이 마크다운
+     * 문자열이라 안정적인 블록 식별자가 없다. 본문이 바뀌어 못 찾으면 스레드를 "위치 없음"으로 남긴다.
+     */
+    @Column(name = "anchor_quote", columnDefinition = "text", updatable = false)
+    private String anchorQuote;
+
+    /** 같은 인용문이 본문에 여러 번 나올 때 몇 번째인지(0부터). */
+    @Column(name = "anchor_occurrence", updatable = false)
+    private Integer anchorOccurrence;
+
+    /** 해결된 스레드는 본문 하이라이트에서 내려간다. 재개하면 null로 돌아간다. */
+    @Column(name = "resolved_at")
+    private Instant resolvedAt;
+
+    @Column(name = "resolved_by")
+    private Long resolvedBy;
 
     /** 수정된 적 없으면 null — 프론트 "(수정됨)" 표시 근거. updatedAt(감사용)과 구분한다. */
     @Column(name = "edited_at")
@@ -69,6 +87,31 @@ public class PageComment {
         comment.body = body;
         comment.anchorType = "PAGE";
         return comment;
+    }
+
+    /** 인라인 댓글 — 앵커는 만들 때 정해지고 이후 바뀌지 않는다(본문이 바뀌면 못 찾을 뿐). */
+    public static PageComment inlineOf(Long pageId, Long authorId, String authorName, String body,
+                                       String anchorQuote, int anchorOccurrence) {
+        PageComment comment = of(pageId, null, authorId, authorName, body);
+        comment.anchorType = "INLINE";
+        comment.anchorQuote = anchorQuote;
+        comment.anchorOccurrence = anchorOccurrence;
+        return comment;
+    }
+
+    public boolean isInline() {
+        return "INLINE".equals(anchorType);
+    }
+
+    /** 해결/재개는 본문 수정이 아니므로 editedAt을 건드리지 않는다. */
+    public void resolve(long userId, Instant now) {
+        this.resolvedAt = now;
+        this.resolvedBy = userId;
+    }
+
+    public void reopen() {
+        this.resolvedAt = null;
+        this.resolvedBy = null;
     }
 
     public void edit(String body, Instant now) {

@@ -47,6 +47,16 @@ public class CommentController {
         return comments.update(userId(jwt), commentId, req);
     }
 
+    /** 해결/재개 — 인라인 스레드 전용. 본문은 안 바뀌므로 PUT /comments/{id}(본문 수정)와 분리한다. */
+    @PutMapping("/api/wiki/comments/{commentId}/resolved")
+    public CommentResponse setResolved(@PathVariable long commentId,
+                                       @AuthenticationPrincipal Jwt jwt,
+                                       @RequestBody ResolvedRequest req) {
+        return comments.setResolved(userId(jwt), commentId, req.resolved());
+    }
+
+    public record ResolvedRequest(boolean resolved) {}
+
     @DeleteMapping("/api/wiki/comments/{commentId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long commentId, @AuthenticationPrincipal Jwt jwt) {

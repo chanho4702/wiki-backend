@@ -48,7 +48,7 @@ class AttachmentTest {
     void setup() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         attachments.deleteAll();
-        pages.deleteAll();
+        pages.deleteAllIncludingTrashed();
         spaces.deleteAll();
         perms.reset();
         events.reset();
@@ -250,15 +250,36 @@ class AttachmentTest {
         assertThat(stored.exists()).isFalse();
     }
 
+    /**
+     * W21-1: 페이지 삭제는 휴지통 이동이라 첨부가 남는다 — 복원하면 이미지가 그대로 보여야 한다.
+     * 첨부 객체가 실제로 사라지는 시점은 영구 삭제(ADMIN)다.
+     */
     @Test
-    void 페이지를_삭제하면_첨부_행도_함께_정리된다() throws Exception {
+    void 페이지를_삭제해도_첨부는_남고_영구삭제에서_정리된다() throws Exception {
         mvc.perform(multipart("/api/wiki/pages/" + pageId + "/attachments").file(png())
                 .with(asUser(EDITOR, "Alice"))).andExpect(status().isCreated());
+        long spaceId = pages.findAnyById(pageId).orElseThrow().getSpaceId();
 
         mvc.perform(delete("/api/wiki/pages/" + pageId).with(asUser(EDITOR, "Alice")))
                 .andExpect(status().isNoContent());
+        assertThat(attachments.findByPageId(pageId)).isNotEmpty();
+
+        perms.allow(EDITOR, spaceId, WikiAction.ADMIN);
+        mvc.perform(delete("/api/wiki/pages/" + pageId + "/purge").with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isNoContent());
 
         assertThat(attachments.findByPageId(pageId)).isEmpty();
+    }
+
+    /** 영구 삭제 권한(ADMIN)이 없으면 휴지통에서 지울 수 없다 — 삭제 권한과 분리하는 것이 요점. */
+    @Test
+    void EDIT만_있으면_영구삭제는_403이다() throws Exception {
+        mvc.perform(delete("/api/wiki/pages/" + pageId).with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(delete("/api/wiki/pages/" + pageId + "/purge").with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isForbidden());
+        assertThat(pages.findAnyById(pageId)).isPresent();
     }
 
     /** 첨부가 사라졌는데 색인에 남으면 검색 결과가 404로 이어진다(proto v0.3.0). */
