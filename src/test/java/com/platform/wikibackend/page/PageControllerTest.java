@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -33,6 +35,7 @@ class PageControllerTest {
     @Autowired PageRepository pages;
     @Autowired PageRevisionRepository revisions;
     @Autowired FakePermissionClient perms;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired RecordingEventPublisher events;
     MockMvc mvc;
 
@@ -44,7 +47,7 @@ class PageControllerTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
         events.reset();
@@ -91,11 +94,12 @@ class PageControllerTest {
         long root = createPage(null, "루트");
         createPage(root, "자식");
 
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(VIEWER, "Bob")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children")
+                        .param("parentId", String.valueOf(root)).with(asUser(VIEWER, "Bob")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$.length()").value(1))
                 // (int) 캐스팅: jsonPath는 작은 수를 Integer로 역직렬화 — Long 비교는 실패한다(알려진 함정)
-                .andExpect(jsonPath("$[1].parentId").value((int) root))
+                .andExpect(jsonPath("$[0].parentId").value((int) root))
                 .andExpect(jsonPath("$[0].content").doesNotExist());
     }
 
@@ -245,7 +249,7 @@ class PageControllerTest {
         long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
 
         // 트리가 폴더 아이콘·초안 배지를 그리려면 두 값이 목록에도 실려야 한다
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(VIEWER, "Bob")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(VIEWER, "Bob")))
                 .andExpect(jsonPath("$[0].id").value((int) id))
                 .andExpect(jsonPath("$[0].type").value("page"))
                 .andExpect(jsonPath("$[0].status").value("draft"));

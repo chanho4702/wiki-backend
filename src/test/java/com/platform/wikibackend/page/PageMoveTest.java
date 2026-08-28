@@ -110,7 +110,8 @@ class PageMoveTest {
                         .content("{\"parentId\":null,\"beforeId\":" + b.getId() + "}"))
                 .andExpect(status().isOk());
 
-        String body = mvc.perform(get("/api/wiki/spaces/{id}/pages", spaceId).with(asUser(VIEWER, "Bob")))
+        String body = mvc.perform(get("/api/wiki/spaces/{id}/pages/children", spaceId)
+                        .with(asUser(VIEWER, "Bob")))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         var items = JSON.readTree(body);

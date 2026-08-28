@@ -136,18 +136,6 @@ public class PageService {
         return PageResponse.from(p);
     }
 
-    @Transactional(readOnly = true)
-    public List<PageTreeItem> tree(long userId, long spaceId) {
-        spaces.getForView(userId, spaceId);
-        // 프로젝션 쿼리 — 트리는 본문이 필요 없다. 전체 엔티티 로드는 스페이스 크기에 비례해
-        // 본문 text 전송·역직렬화 비용을 낸다(규모 검토 2026-08-23).
-        List<PageTreeItem> items = pages.findTreeBySpaceId(spaceId);
-        // W18 페이지 제한 — 비인가 노드는 자손 포함 제외(VIEW 상속). null = 제한 전무(필터 생략).
-        java.util.Set<Long> visible = effective.visiblePageIds(userId, spaceId);
-        if (visible == null) return items;
-        return items.stream().filter(it -> visible.contains(it.id())).toList();
-    }
-
     /** 수정 = 새 버전. expectedVersion 불일치 409. parentId 변경은 이동(순환 검증). */
     /**
      * 트리 이동/재정렬(P1-001) — 부모 변경과 형제 순서를 한 트랜잭션에서 처리한다.

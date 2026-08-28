@@ -43,19 +43,8 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     long findMaxSortOrder(@Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
     List<Page> findByParentId(Long parentId);
 
-    /** 트리 응답 전용 프로젝션 — content(본문 text)를 로드하지 않는다. 스페이스가 커지면
-     * 사이드바 트리 한 번에 전 문서 본문이 실려 오는 것이 최대 전송 낭비였다(규모 검토 2026-08-23). */
-    @Query("""
-            select new com.platform.wikibackend.page.dto.PageTreeItem(
-                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
-              from Page p
-             where p.spaceId = :spaceId
-             order by p.id
-            """)
-    List<com.platform.wikibackend.page.dto.PageTreeItem> findTreeBySpaceId(@Param("spaceId") Long spaceId);
-
     /* ── 지연 트리(2026-08-28) ────────────────────────────────────────────────────
-     * 스페이스 전량을 내려주던 findTreeBySpaceId는 스페이스가 커지면 그 자체가 병목이다.
+     * 스페이스 전량을 내려주던 트리 엔드포인트는 스페이스가 커지면 그 자체가 병목이라 제거했다(2026-08-29).
      * 아래 쿼리들은 "지금 화면에 필요한 만큼"만 읽는다.
      */
 
@@ -89,6 +78,20 @@ public interface PageRepository extends JpaRepository<Page, Long> {
         Long getParentId();
         long getCount();
     }
+
+    /**
+     * 최근 수정 순 — 스페이스 개요의 "최근 업데이트". 전량을 읽어 정렬하던 것을 대체한다.
+     * 제한 필터로 몇 건 빠질 수 있어 화면이 필요한 수보다 넉넉히 받아 잘라 쓴다.
+     */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.PageTreeItem(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
+              from Page p
+             where p.spaceId = :spaceId
+             order by p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.PageTreeItem> findRecentlyUpdated(
+            @Param("spaceId") Long spaceId, org.springframework.data.domain.Limit limit);
 
     /** 제목 정확 일치(대소문자 무시) — `[[제목]]` 링크 해석용. 렌더러와 같은 기준이다. */
     @Query("""
@@ -208,14 +211,6 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             """, nativeQuery = true)
     List<Long> findExpiredTrashRootIds(@Param("before") Instant before);
 
-    /**
-     * 휴지통 행까지 포함한 전량 삭제. @SQLRestriction 때문에 deleteAll()은 버려진 행을 보지 못해
-     * 남긴다 — 테스트 격리(@BeforeEach 정리)가 그 잔여 행에 오염되지 않게 하는 용도다.
-     */
-    @Modifying(clearAutomatically = true)
-    @org.springframework.transaction.annotation.Transactional
-    @Query(value = "delete from page", nativeQuery = true)
-    void deleteAllIncludingTrashed();
 
     /**
      * 영구 삭제 — 네이티브인 이유는 JPQL 대량 삭제(deleteAllInBatch)가 @SQLRestriction을 함께 받아

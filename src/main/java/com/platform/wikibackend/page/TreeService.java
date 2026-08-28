@@ -133,6 +133,18 @@ public class TreeService {
         return withChildCounts(visible(userId, pages.searchByTitle(spaceId, q, Limit.of(SEARCH_LIMIT))));
     }
 
+    /**
+     * 최근 수정 문서 — 스페이스 개요가 쓴다.
+     * 제한으로 걸러진 만큼 결과가 줄어드니 넉넉히 읽고 요청한 수만큼 자른다.
+     */
+    public List<PageNode> recentlyUpdated(long userId, long spaceId, int limit) {
+        spaces.getForView(userId, spaceId);
+        int capped = Math.min(Math.max(limit, 1), SEARCH_LIMIT);
+        List<PageTreeItem> candidates =
+                pages.findRecentlyUpdated(spaceId, Limit.of(Math.min(capped * 4, SEARCH_LIMIT * 4)));
+        return withChildCounts(visible(userId, candidates)).stream().limit(capped).toList();
+    }
+
     /** 후손 전체 — 내보내기(하위 포함)와 삭제 영향 표시가 쓴다. */
     public List<PageNode> descendants(long userId, long pageId) {
         Page root = pages.findById(pageId)

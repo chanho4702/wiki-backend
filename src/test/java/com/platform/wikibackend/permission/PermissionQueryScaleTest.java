@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -40,6 +42,7 @@ class PermissionQueryScaleTest {
     @Autowired PageRepository pages;
     @Autowired PageRestrictionRepository restrictions;
     @Autowired FakePermissionClient perms;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired EntityManagerFactory entityManagerFactory;
     MockMvc mvc;
 
@@ -49,7 +52,7 @@ class PermissionQueryScaleTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         restrictions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
     }

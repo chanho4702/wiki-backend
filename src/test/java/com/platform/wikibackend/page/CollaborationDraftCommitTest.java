@@ -29,6 +29,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -41,6 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class CollaborationDraftCommitTest {
 
     @Autowired WebApplicationContext context;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
     @Autowired PageRevisionRepository revisions;
@@ -56,7 +59,7 @@ class CollaborationDraftCommitTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         drafts.deleteAll();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         permissions.reset();
         events.reset();

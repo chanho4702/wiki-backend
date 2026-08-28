@@ -17,6 +17,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -33,6 +35,7 @@ class PageIconViewsTest {
     @Autowired PageRepository pages;
     @Autowired PageRevisionRepository revisions;
     @Autowired FakePermissionClient perms;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired RecordingEventPublisher events;
     MockMvc mvc;
 
@@ -44,7 +47,7 @@ class PageIconViewsTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
         events.reset();
@@ -76,7 +79,7 @@ class PageIconViewsTest {
                 .andExpect(jsonPath("$.version").value(1)); // 메타데이터 — 버전 불변
 
         assertThat(revisions.findByPageIdAndVersion(id, 2)).isEmpty(); // 리비전도 없음
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(VIEWER, "Bob")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(VIEWER, "Bob")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].icon").value("🚀"));
 

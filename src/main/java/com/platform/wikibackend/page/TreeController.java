@@ -36,6 +36,12 @@ public class TreeController {
         return tree.lookupByTitles(userId(jwt), spaceId, title);
     }
 
+    @GetMapping("/api/wiki/spaces/{spaceId}/pages/recent")
+    public List<PageNode> recent(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+                                 @RequestParam(defaultValue = "8") int limit) {
+        return tree.recentlyUpdated(userId(jwt), spaceId, limit);
+    }
+
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/by-ids")
     public List<PageNode> byIds(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
                                 @RequestParam List<Long> id) {

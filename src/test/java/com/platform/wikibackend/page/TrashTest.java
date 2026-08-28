@@ -21,6 +21,8 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.time.Instant;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -51,7 +53,7 @@ class TrashTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         restrictions.deleteAll();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
         space = spaces.save(Space.of("dev", "개발", null, ADMIN));
@@ -88,7 +90,7 @@ class TrashTest {
 
         mvc.perform(get("/api/wiki/pages/" + page).with(asUser(EDITOR, "Bob")))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(EDITOR, "Bob")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(EDITOR, "Bob")))
                 .andExpect(jsonPath("$.length()").value(0));
         mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/trash").with(asUser(EDITOR, "Bob")))
                 .andExpect(status().isOk())

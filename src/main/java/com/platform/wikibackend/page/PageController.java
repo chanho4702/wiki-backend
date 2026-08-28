@@ -6,7 +6,6 @@ import com.platform.wikibackend.page.dto.PageMoveRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
 import com.platform.wikibackend.page.dto.PageResponse;
-import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.page.dto.PageUpdateRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,11 +33,6 @@ public class PageController {
     @GetMapping("/api/wiki/pages/{id}")
     public PageResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return pages.get(userId(jwt), id);
-    }
-
-    @GetMapping("/api/wiki/spaces/{spaceId}/pages")
-    public List<PageTreeItem> tree(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
-        return pages.tree(userId(jwt), spaceId);
     }
 
     @PutMapping("/api/wiki/pages/{id}")

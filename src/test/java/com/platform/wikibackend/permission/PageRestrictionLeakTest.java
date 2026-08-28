@@ -17,6 +17,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -39,6 +41,7 @@ class PageRestrictionLeakTest {
     @Autowired PageRestrictionRepository restrictions;
     @Autowired NotificationRepository notifications;
     @Autowired FakePermissionClient perms;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired FakeTeamDirectory teams;
     MockMvc mvc;
 
@@ -54,7 +57,7 @@ class PageRestrictionLeakTest {
         restrictions.deleteAll();
         notifications.deleteAll();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
         teams.reset();
@@ -106,13 +109,13 @@ class PageRestrictionLeakTest {
                 .andExpect(status().isOk());
 
         // 트리: 밥에게는 공개 문서만 보인다(제한 노드 + 자손 제외)
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(BOB, "밥")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(BOB, "밥")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value(open));
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages").with(asUser(ALICE, "앨리스")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(ALICE, "앨리스")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3));
+                .andExpect(jsonPath("$.length()").value(2));
     }
 
     @Test

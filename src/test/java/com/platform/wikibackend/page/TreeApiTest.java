@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.wikibackend.TestPages;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -34,6 +36,7 @@ class TreeApiTest {
     @Autowired PageRevisionRepository revisions;
     @Autowired PageRestrictionRepository restrictions;
     @Autowired FakePermissionClient perms;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     MockMvc mvc;
 
     Space space;
@@ -46,7 +49,7 @@ class TreeApiTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         restrictions.deleteAll();
         revisions.deleteAll();
-        pages.deleteAllIncludingTrashed();
+        TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         perms.reset();
         space = spaces.save(Space.of("dev", "개발", null, EDITOR));
@@ -183,6 +186,35 @@ class TreeApiTest {
         mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/by-ids")
                         .param("id", String.valueOf(root)).with(asUser(OUTSIDER, "Bob")))
                 .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    /** 개요 화면의 "최근 업데이트" — 전량을 읽어 정렬하던 것을 대체한다. */
+    @Test
+    void 최근_수정_목록은_최신순으로_요청한_개수만_준다() throws Exception {
+        mvc.perform(put("/api/wiki/pages/" + sibling).with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"온보딩\",\"content\":\"고침\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/recent")
+                        .param("limit", "2").with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].title").value("온보딩"));
+    }
+
+    @Test
+    void 제한된_문서는_최근_수정_목록에서도_빠진다() throws Exception {
+        restrictions.save(PageRestriction.of(child, PageRestriction.Type.VIEW,
+                PageRestriction.PrincipalType.USER, EDITOR, EDITOR));
+
+        String body = mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/recent")
+                        .param("limit", "10").with(asUser(OUTSIDER, "Bob")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("롤백 절차");
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("체크리스트");
     }
 
     @Test
