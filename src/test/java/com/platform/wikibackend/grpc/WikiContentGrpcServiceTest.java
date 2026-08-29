@@ -48,6 +48,7 @@ class WikiContentGrpcServiceTest {
     @Autowired PageRepository pages;
     @Autowired AttachmentRepository attachments;
     @Autowired com.platform.wikibackend.repository.PageRestrictionRepository restrictions;
+    @Autowired com.platform.wikibackend.repository.PageLabelRepository labels;
     // @DataJpaTest 슬라이스라 서비스 빈이 없다 — 실 리포지토리 위에 직접 조립한다(팀 디렉터리는 빈 목록)
     com.platform.wikibackend.permission.EffectivePermissionService effective;
     com.platform.wikibackend.permission.FakePermissionClient perms;
@@ -73,7 +74,7 @@ class WikiContentGrpcServiceTest {
 
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name).directExecutor()
-                .addService(new WikiContentGrpcService(pages, spaces, attachments, effective, perms))
+                .addService(new WikiContentGrpcService(pages, spaces, attachments, labels, effective, perms))
                 .build().start();
         channel = InProcessChannelBuilder.forName(name).directExecutor().build();
         stub = WikiContentServiceGrpc.newBlockingStub(channel);

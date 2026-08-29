@@ -4,6 +4,7 @@ import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageLabel;
 import com.platform.wikibackend.domain.PageLink;
 import com.platform.wikibackend.common.NotFoundException;
+import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.permission.EffectivePermissionService;
 import com.platform.wikibackend.permission.WikiAction;
@@ -47,6 +48,7 @@ public class LabelService {
     private final PageRepository pages;
     private final SpaceService spaces;
     private final EffectivePermissionService effective;
+    private final com.platform.wikibackend.event.EventRelay events;
 
     @Transactional(readOnly = true)
     public List<String> list(long userId, long pageId) {
@@ -73,6 +75,8 @@ public class LabelService {
                 .map(name -> PageLabel.of(pageId, name, userId))
                 .toList();
         labels.saveAll(saved);
+        // 라벨은 색인 문서의 일부다(검색 라벨 필터) — 바뀌면 그 페이지를 다시 색인해야 한다.
+        events.afterCommit(WikiEvents.pageUpdated(userId, page));
         return saved.stream().map(PageLabel::getName).toList();
     }
 

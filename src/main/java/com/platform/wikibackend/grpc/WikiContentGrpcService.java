@@ -13,6 +13,7 @@ import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.repository.AttachmentIndexRow;
 import com.platform.wikibackend.repository.AttachmentRepository;
+import com.platform.wikibackend.repository.PageLabelRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import io.grpc.Status;
@@ -45,6 +46,7 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
     private final PageRepository pageRepository;
     private final SpaceRepository spaceRepository;
     private final AttachmentRepository attachmentRepository;
+    private final PageLabelRepository labelRepository;
     private final com.platform.wikibackend.permission.EffectivePermissionService effective;
     private final com.platform.wikibackend.permission.PermissionClient permissions;
 
@@ -71,7 +73,7 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                     .asRuntimeException());
             return;
         }
-        observer.onNext(toProto(page.get(), space.get()));
+        observer.onNext(toProto(page.get(), space.get(), labelsOf(page.get().getId())));
         observer.onCompleted();
     }
 
@@ -86,6 +88,8 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                     ? pageRepository.findByIdGreaterThanOrderByIdAsc(cursor, Limit.of(BATCH))
                     : pageRepository.findBySpaceIdAndIdGreaterThanOrderByIdAsc(spaceFilter, cursor, Limit.of(BATCH));
             if (batch.isEmpty()) break;
+            // 배치 단위로 라벨을 한 번에 읽는다 — 페이지마다 되물으면 백필이 N+1이 된다.
+            Map<Long, List<String>> labelsByPage = labelsOf(batch.stream().map(Page::getId).toList());
             for (Page p : batch) {
                 Space s = spaces.computeIfAbsent(p.getSpaceId(),
                         id -> spaceRepository.findById(id).orElse(null));
@@ -94,7 +98,7 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                     log.warn("백필 중 고아 페이지 건너뜀: page={} space={}", p.getId(), p.getSpaceId());
                     continue;
                 }
-                observer.onNext(toProto(p, s));
+                observer.onNext(toProto(p, s, labelsByPage.getOrDefault(p.getId(), List.of())));
             }
             cursor = batch.getLast().getId();
         }
@@ -149,7 +153,24 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                 .build();
     }
 
-    private static PageContent toProto(Page p, Space s) {
+    /** 한 페이지의 라벨 — 단건 조달 경로용. */
+    private List<String> labelsOf(long pageId) {
+        return labelRepository.findByPageIdOrderByName(pageId).stream()
+                .map(com.platform.wikibackend.domain.PageLabel::getName)
+                .toList();
+    }
+
+    /** 여러 페이지의 라벨을 한 번에 — 백필의 N+1을 막는다. */
+    private Map<Long, List<String>> labelsOf(java.util.Collection<Long> pageIds) {
+        Map<Long, List<String>> byPage = new HashMap<>();
+        for (var label : labelRepository.findByPageIdIn(pageIds)) {
+            byPage.computeIfAbsent(label.getPageId(), k -> new java.util.ArrayList<>()).add(label.getName());
+        }
+        byPage.values().forEach(java.util.Collections::sort);
+        return byPage;
+    }
+
+    private static PageContent toProto(Page p, Space s, List<String> labels) {
         return PageContent.newBuilder()
                 .setPageId(p.getId())
                 .setSpaceId(p.getSpaceId())
@@ -169,6 +190,7 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                 .setVersion(p.getVersion())
                 .setAuthorId(p.getUpdatedBy())
                 .setUpdatedAt(p.getUpdatedAt().toEpochMilli())
+                .addAllLabels(labels)
                 .build();
     }
 
