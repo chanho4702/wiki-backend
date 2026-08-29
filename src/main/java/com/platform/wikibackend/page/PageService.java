@@ -300,7 +300,7 @@ public class PageService {
         }
         String oldBody = p.getContent();
         p.edit(req.title(), req.content(), userId);
-        revisions.save(PageRevision.snapshotOf(p));
+        revisions.save(PageRevision.snapshotOf(p, req.changeNote()));
         labelService.reindexLinks(p);
         watches.autoWatch(pageId, userId); // 고친 문서는 자동 구독(W21-4)
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
@@ -501,7 +501,8 @@ public class PageService {
         PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);
-        revisions.save(PageRevision.snapshotOf(p));
+        // 복원도 이력에 남는다 — 어느 버전에서 되돌렸는지가 다음 사람에게 가장 중요한 정보다.
+        revisions.save(PageRevision.snapshotOf(p, "v" + version + " 버전으로 복원"));
         labelService.reindexLinks(p);
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
         return PageResponse.from(p);

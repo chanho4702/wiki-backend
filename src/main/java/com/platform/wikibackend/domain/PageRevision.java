@@ -42,9 +42,23 @@ public class PageRevision {
     @Column(name = "edited_by", nullable = false, updatable = false)
     private Long editedBy;
 
+    /**
+     * 변경 요약(V17) — 선택 입력. 비어 있으면 null이다(빈 문자열로 저장하지 않는다).
+     * 강제하면 "수정"만 적힌 이력이 쌓여 오히려 신호가 죽는다.
+     */
+    @Column(name = "change_note", length = 500, updatable = false)
+    private String changeNote;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** 공백만 있는 요약은 없는 것과 같다 — 화면이 빈 칩을 그리지 않도록 null로 눕힌다. */
+    private static String normalizeNote(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
 
     /** 평문이든 압축본이든 본문 하나로 돌려준다 — 저장 형식은 호출부의 관심사가 아니다. */
     public String getContent() {
@@ -53,6 +67,11 @@ public class PageRevision {
 
     /** 페이지의 현재 상태를 스냅샷 — "모든 버전이 리비전에 있다" 불변식의 단일 진입점. */
     public static PageRevision snapshotOf(Page page) {
+        return snapshotOf(page, null);
+    }
+
+    /** 변경 요약과 함께 스냅샷 — 사용자가 저장 시 남긴 한 줄이 있을 때. */
+    public static PageRevision snapshotOf(Page page, String changeNote) {
         PageRevision r = new PageRevision();
         r.pageId = page.getId();
         r.version = page.getVersion();
@@ -64,6 +83,7 @@ public class PageRevision {
             r.contentText = content;
         }
         r.editedBy = page.getUpdatedBy();
+        r.changeNote = normalizeNote(changeNote);
         return r;
     }
 }
