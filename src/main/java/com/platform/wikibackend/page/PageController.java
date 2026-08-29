@@ -55,10 +55,13 @@ public class PageController {
         return pages.move(userId(jwt), id, req);
     }
 
+    /** 본문은 선택 — 없으면 단일 페이지 복사(기존 계약 그대로). */
     @PostMapping("/api/wiki/pages/{id}/copy")
     @ResponseStatus(HttpStatus.CREATED)
-    public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
-        return pages.copy(userId(jwt), id);
+    public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                             @RequestBody(required = false) com.platform.wikibackend.page.dto.CopyRequest req) {
+        return pages.copy(userId(jwt), id,
+                req == null ? new com.platform.wikibackend.page.dto.CopyRequest(null, null) : req);
     }
 
     @PutMapping("/api/wiki/pages/{id}/icon")

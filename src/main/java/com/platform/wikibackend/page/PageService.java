@@ -9,6 +9,8 @@ import com.platform.wikibackend.domain.PageStatus;
 import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
+import com.platform.wikibackend.domain.PageRestriction;
+import com.platform.wikibackend.page.dto.CopyRequest;
 import com.platform.wikibackend.page.dto.PageCreateRequest;
 import com.platform.wikibackend.page.dto.PageMoveRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
@@ -27,6 +29,7 @@ import com.platform.wikibackend.repository.AttachmentRepository;
 import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
 import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
+import com.platform.wikibackend.repository.PageRestrictionRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +37,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
@@ -51,6 +56,7 @@ public class PageService {
     private final PageRepository pages;
     private final PageCommentRepository comments;
     private final PageRevisionRepository revisions;
+    private final PageRestrictionRepository restrictions;
     private final SpaceService spaces;
     private final com.platform.wikibackend.notification.NotificationService notificationService;
     private final com.platform.wikibackend.permission.EffectivePermissionService effective;
@@ -85,33 +91,111 @@ public class PageService {
      * - PENDING 첨부(다른 편집 세션의 미확정 업로드)는 대상이 아니다.
      * - 제목은 "제목 (사본)", 부모·타입·초안/게시 상태는 원본 그대로.
      */
-    public PageResponse copy(long userId, long pageId) {
+    /**
+     * 한 번에 복사할 수 있는 페이지 수 상한.
+     *
+     * 서브트리 복사는 페이지마다 첨부를 저장소에서 읽어 다시 쓴다 — 한 트랜잭션에서 무한정
+     * 돌릴 일이 아니다. 넘으면 거절해서, 절반만 복사된 트리를 남기지 않는다.
+     */
+    public static final int MAX_COPY_PAGES = 200;
+
+    public PageResponse copy(long userId, long pageId, CopyRequest req) {
         Page source = getOwned(pageId);
         spaces.require(userId, source.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, source);
-        String suffix = " (사본)";
-        String baseTitle = source.getTitle().length() + suffix.length() > 255
-                ? source.getTitle().substring(0, 255 - suffix.length())
-                : source.getTitle();
-        Page saved = pages.save(Page.of(source.getSpaceId(), source.getParentId(),
-                baseTitle + suffix, source.getContent(), userId, source.getType(), source.getStatus()));
-        saved.resequence(pages.findMaxSortOrder(source.getSpaceId(), source.getParentId()) + 1);
 
-        String content = source.getContent();
-        for (Attachment original : attachments.findByPageId(pageId)) {
-            if (original.getLifecycleStatus() != AttachmentLifecycleStatus.CONFIRMED) continue;
-            Attachment copied = copyAttachment(userId, saved.getId(), original);
+        List<Page> sources = new ArrayList<>(List.of(source));
+        if (req.descendantsIncluded()) sources.addAll(copyableDescendants(userId, source));
+        if (sources.size() > MAX_COPY_PAGES) {
+            throw new IllegalArgumentException(
+                    "한 번에 복사할 수 있는 문서는 " + MAX_COPY_PAGES + "개까지입니다 (요청 "
+                            + sources.size() + "개)");
+        }
+
+        long rootSortOrder = pages.findMaxSortOrder(source.getSpaceId(), source.getParentId()) + 1;
+        Map<Long, Long> newIdOf = new HashMap<>();
+        Page copiedRoot = null;
+        for (Page original : sources) {
+            boolean isRoot = original.getId().equals(source.getId());
+            // 사본 표시는 뿌리에만 붙인다 — 하위까지 제목을 바꾸면 문서 안의 `[[제목]]`이 전부 어긋난다.
+            String title = isRoot ? copyTitle(original.getTitle()) : original.getTitle();
+            Long parentId = isRoot ? original.getParentId() : newIdOf.get(original.getParentId());
+            Page saved = pages.save(Page.of(original.getSpaceId(), parentId, title,
+                    original.getContent(), userId, original.getType(), original.getStatus()));
+            saved.resequence(isRoot ? rootSortOrder : original.getSortOrder());
+            newIdOf.put(original.getId(), saved.getId());
+            if (isRoot) copiedRoot = saved;
+
+            copyAttachmentsInto(userId, original, saved);
+            if (req.restrictionsIncluded()) copyRestrictionsInto(userId, original, saved);
+            revisions.save(PageRevision.snapshotOf(saved));
+            labelService.reindexLinks(saved);
+            events.afterCommit(WikiEvents.pageCreated(userId, saved));
+        }
+        return PageResponse.from(java.util.Objects.requireNonNull(copiedRoot));
+    }
+
+    /**
+     * 복사 대상 후손 — **부모가 먼저 오는 순서**로 준다(자식이 부모의 새 id를 필요로 한다).
+     *
+     * 볼 수 없는 문서는 넣지 않는다. VIEW 제한은 하위로 상속되므로 가려진 노드를 빼면 그 아래도
+     * 자연히 빠진다 — 사용자는 애초에 그 문서의 존재를 모르며, 몰래 복사해 열어 두는 쪽이 나쁘다.
+     */
+    private List<Page> copyableDescendants(long userId, Page root) {
+        List<Long> ids = pages.findDescendantIds(root.getId());
+        if (ids.isEmpty()) return List.of();
+        List<Page> found = pages.findAllById(ids);
+        Set<Long> visible = effective.viewablePageIds(userId, found);
+
+        Map<Long, List<Page>> childrenOf = new HashMap<>();
+        for (Page p : found) {
+            if (!visible.contains(p.getId())) continue;
+            childrenOf.computeIfAbsent(p.getParentId(), k -> new ArrayList<>()).add(p);
+        }
+        for (List<Page> siblings : childrenOf.values()) {
+            siblings.sort(java.util.Comparator.comparing(Page::getSortOrder).thenComparing(Page::getId));
+        }
+
+        List<Page> ordered = new ArrayList<>();
+        Deque<Long> queue = new ArrayDeque<>(List.of(root.getId()));
+        Set<Long> seen = new java.util.HashSet<>(List.of(root.getId()));
+        while (!queue.isEmpty()) {
+            for (Page child : childrenOf.getOrDefault(queue.poll(), List.of())) {
+                if (!seen.add(child.getId())) continue; // 순환 방어 — 폐포가 이미 막지만 두 겹으로 둔다
+                ordered.add(child);
+                queue.add(child.getId());
+            }
+        }
+        return ordered;
+    }
+
+    private static String copyTitle(String title) {
+        String suffix = " (사본)";
+        String base = title.length() + suffix.length() > 255
+                ? title.substring(0, 255 - suffix.length())
+                : title;
+        return base + suffix;
+    }
+
+    /** 첨부를 복제하고, 본문의 인라인 참조를 새 첨부 id로 바꾼다. */
+    private void copyAttachmentsInto(long userId, Page original, Page saved) {
+        String content = original.getContent();
+        for (Attachment source : attachments.findByPageId(original.getId())) {
+            if (source.getLifecycleStatus() != AttachmentLifecycleStatus.CONFIRMED) continue;
+            Attachment copied = copyAttachment(userId, saved.getId(), source);
             content = content.replace(
-                    AttachmentReferences.inlineUrl(original.getId()),
+                    AttachmentReferences.inlineUrl(source.getId()),
                     AttachmentReferences.inlineUrl(copied.getId()));
         }
-        if (!content.equals(source.getContent())) {
-            saved.rewriteContentForCopy(content);
+        if (!content.equals(original.getContent())) saved.rewriteContentForCopy(content);
+    }
+
+    /** 원본에 직접 걸린 제한만 옮긴다 — 상속분은 사본의 새 조상에서 다시 계산된다. */
+    private void copyRestrictionsInto(long userId, Page original, Page saved) {
+        for (PageRestriction source : restrictions.findByPageId(original.getId())) {
+            restrictions.save(PageRestriction.of(saved.getId(), source.getType(),
+                    source.getPrincipalType(), source.getPrincipalId(), userId));
         }
-        revisions.save(PageRevision.snapshotOf(saved));
-        labelService.reindexLinks(saved);
-        events.afterCommit(WikiEvents.pageCreated(userId, saved));
-        return PageResponse.from(saved);
     }
 
     private Attachment copyAttachment(long userId, long targetPageId, Attachment original) {

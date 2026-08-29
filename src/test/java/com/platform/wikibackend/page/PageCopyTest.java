@@ -50,12 +50,14 @@ class PageCopyTest {
     @Autowired AttachmentRepository attachments;
     @Autowired FakePermissionClient perms;
     @Autowired com.platform.wikibackend.attachment.AttachmentStorageRouter storage;
+    @Autowired com.platform.wikibackend.repository.PageRestrictionRepository restrictions;
 
     private Long spaceId;
 
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        restrictions.deleteAllInBatch();
         attachments.deleteAllInBatch();
         revisions.deleteAllInBatch();
         pages.deleteAllInBatch();
@@ -102,7 +104,7 @@ class PageCopyTest {
     }
 
     @Test
-    void PENDING_첨부와_하위_페이지는_복사되지_않는다() throws Exception {
+    void PENDING_첨부와_하위_페이지는_기본으로_복사되지_않는다() throws Exception {
         Page source = pages.save(Page.of(spaceId, null, "원본", "본문", EDITOR));
         pages.save(Page.of(spaceId, source.getId(), "하위", "", EDITOR));
         byte[] bytes = "tmp".getBytes(StandardCharsets.UTF_8);
@@ -135,5 +137,96 @@ class PageCopyTest {
         mvc.perform(post("/api/wiki/pages/{id}/copy", source.getId()).with(asUser(EDITOR, "Alice")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.title").value("가".repeat(250) + " (사본)"));
+    }
+
+    /**
+     * 하위 포함 복제(W23) — 계층을 그대로 옮긴다.
+     *
+     * 사본 표시는 뿌리에만 붙인다. 하위까지 제목을 바꾸면 문서 안의 `[[제목]]`이 전부 어긋난다.
+     */
+    @Test
+    void 하위_포함_복제는_계층을_보존하고_사본_표시는_뿌리에만_붙인다() throws Exception {
+        Page root = pages.save(Page.of(spaceId, null, "안내", "루트", EDITOR));
+        Page mid = pages.save(Page.of(spaceId, root.getId(), "배포", "중간", EDITOR));
+        pages.save(Page.of(spaceId, mid.getId(), "롤백", "잎", EDITOR));
+
+        long copyId = copy(root.getId(), "{\"includeDescendants\":true}");
+
+        Page copiedRoot = pages.findById(copyId).orElseThrow();
+        assertThat(copiedRoot.getTitle()).isEqualTo("안내 (사본)");
+        List<Page> copiedChildren = pages.findByParentId(copyId);
+        assertThat(copiedChildren).singleElement()
+                .satisfies(child -> assertThat(child.getTitle()).isEqualTo("배포"));
+        assertThat(pages.findByParentId(copiedChildren.get(0).getId())).singleElement()
+                .satisfies(leaf -> assertThat(leaf.getTitle()).isEqualTo("롤백"));
+        // 원본은 그대로다
+        assertThat(pages.findByParentId(root.getId())).singleElement()
+                .satisfies(child -> assertThat(child.getId()).isEqualTo(mid.getId()));
+    }
+
+    /**
+     * 볼 수 없는 문서는 사본에 넣지 않는다. 사용자는 애초에 그 문서의 존재를 모르며,
+     * 몰래 복사해 열어 두는 쪽이 훨씬 나쁘다.
+     */
+    @Test
+    void 볼_수_없는_하위는_복제되지_않는다() throws Exception {
+        Page root = pages.save(Page.of(spaceId, null, "안내", "루트", EDITOR));
+        pages.save(Page.of(spaceId, root.getId(), "공개", "", EDITOR));
+        Page closed = pages.save(Page.of(spaceId, root.getId(), "비밀", "", EDITOR));
+        // 제한은 "볼 수 있는 사람" 목록이다 — EDITOR만 넣으면 VIEWER에게서 가려진다.
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(
+                closed.getId(), com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER, EDITOR, EDITOR));
+        perms.allow(VIEWER, spaceId, WikiAction.EDIT);
+
+        long copyId = copyAs(VIEWER, "Bob", root.getId(), "{\"includeDescendants\":true}");
+
+        assertThat(pages.findByParentId(copyId))
+                .extracting(Page::getTitle)
+                .containsExactly("공개");
+    }
+
+    /**
+     * 제한은 기본으로 함께 복사한다 — 제한된 문서의 사본이 열려 있으면 복사 한 번으로
+     * 스페이스 전체에 내용이 열린다.
+     */
+    @Test
+    void 제한은_기본으로_함께_복사된다() throws Exception {
+        Page source = pages.save(Page.of(spaceId, null, "비밀", "본문", EDITOR));
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(
+                source.getId(), com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER, EDITOR, EDITOR));
+
+        long copyId = copy(source.getId(), "{}");
+
+        assertThat(restrictions.findByPageId(copyId))
+                .singleElement()
+                .satisfies(r -> assertThat(r.getPrincipalId()).isEqualTo(EDITOR));
+    }
+
+    @Test
+    void 제한_복사를_명시적으로_끄면_사본은_열린다() throws Exception {
+        Page source = pages.save(Page.of(spaceId, null, "비밀", "본문", EDITOR));
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(
+                source.getId(), com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER, EDITOR, EDITOR));
+
+        long copyId = copy(source.getId(), "{\"includeRestrictions\":false}");
+
+        assertThat(restrictions.findByPageId(copyId)).isEmpty();
+    }
+
+    private long copy(long pageId, String body) throws Exception {
+        return copyAs(EDITOR, "Alice", pageId, body);
+    }
+
+    private long copyAs(long userId, String name, long pageId, String body) throws Exception {
+        String res = mvc.perform(post("/api/wiki/pages/{id}/copy", pageId)
+                        .with(asUser(userId, name))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return JSON.readTree(res).get("id").asLong();
     }
 }
