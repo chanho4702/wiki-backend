@@ -54,6 +54,18 @@ public class TreeController {
         return tree.searchByTitle(userId(jwt), spaceId, q);
     }
 
+    /**
+     * 여러 페이지의 조상 경로 — 검색 결과가 "어디에 있는 문서인지"를 그린다.
+     *
+     * 스페이스를 가로지르므로 스페이스 경로 아래에 두지 않는다. 검색 결과 한 페이지(최대 100건)를
+     * 한 번에 물어보는 용도라 GET 쿼리 파라미터로 받는다.
+     */
+    @GetMapping("/api/wiki/pages/paths")
+    public List<com.platform.wikibackend.page.dto.PagePath> paths(
+            @AuthenticationPrincipal Jwt jwt, @RequestParam("id") List<Long> ids) {
+        return tree.paths(userId(jwt), ids);
+    }
+
     @GetMapping("/api/wiki/pages/{pageId}/ancestors")
     public List<PageNode> ancestors(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
         return tree.ancestors(userId(jwt), pageId);

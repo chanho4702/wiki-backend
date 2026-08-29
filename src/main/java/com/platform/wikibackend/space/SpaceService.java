@@ -115,4 +115,20 @@ public class SpaceService {
             throw new ForbiddenException(action + " 권한이 필요합니다 (space " + spaceId + ")");
         }
     }
+
+    /**
+     * 예외 대신 판정값 — 여러 스페이스에 걸친 목록을 거를 때 쓴다(검색 결과 경로 등).
+     * 하나가 막혔다고 요청 전체를 403으로 끝내면 볼 수 있는 나머지까지 잃는다.
+     */
+    public boolean canView(long userId, long spaceId) {
+        return permissions.isAllowed(userId, spaceId, WikiAction.VIEW);
+    }
+
+    /** 전역 권한(GLOBAL grant) 보유자에게 "전부"를 구체적인 id 집합으로 풀어 준다. */
+    @Transactional(readOnly = true)
+    public java.util.Set<Long> allIds() {
+        return spaces.findAll().stream()
+                .map(com.platform.wikibackend.domain.Space::getId)
+                .collect(java.util.stream.Collectors.toSet());
+    }
 }

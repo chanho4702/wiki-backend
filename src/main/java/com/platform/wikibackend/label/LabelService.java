@@ -49,6 +49,7 @@ public class LabelService {
     private final SpaceService spaces;
     private final EffectivePermissionService effective;
     private final com.platform.wikibackend.event.EventRelay events;
+    private final com.platform.wikibackend.permission.PermissionClient permissions;
 
     @Transactional(readOnly = true)
     public List<String> list(long userId, long pageId) {
@@ -84,6 +85,29 @@ public class LabelService {
     public List<LabelCountResponse> listInSpace(long userId, long spaceId) {
         spaces.getForView(userId, spaceId);
         return labels.countBySpaceId(spaceId).stream()
+                .map(row -> new LabelCountResponse(row.getName(), row.getCount()))
+                .toList();
+    }
+
+    /** 자동완성 후보 상한 — 고르라고 띄우는 목록이라 길면 오히려 못 고른다. */
+    public static final int SUGGEST_LIMIT = 20;
+
+    /**
+     * 접근 가능한 스페이스 전체에서 라벨 후보 — 검색 화면의 라벨 필터가 쓴다.
+     *
+     * 이게 없어서 검색의 라벨 입력이 자유 텍스트였고, 오타를 치면 0건이 나오는데 사용자는
+     * 이유를 알 수 없었다. 질의는 저장할 때와 같은 규칙으로 정규화한다.
+     */
+    @Transactional(readOnly = true)
+    public List<LabelCountResponse> suggest(long userId, String rawPrefix) {
+        com.platform.wikibackend.permission.AccessScope scope = permissions.accessibleSpaces(userId);
+        java.util.Set<Long> spaceIds = scope.all()
+                ? spaces.allIds()
+                : scope.spaceIds();
+        if (spaceIds.isEmpty()) return List.of();
+
+        String prefix = rawPrefix == null || rawPrefix.isBlank() ? "" : PageLabel.normalize(rawPrefix);
+        return labels.suggest(spaceIds, prefix, org.springframework.data.domain.Limit.of(SUGGEST_LIMIT)).stream()
                 .map(row -> new LabelCountResponse(row.getName(), row.getCount()))
                 .toList();
     }

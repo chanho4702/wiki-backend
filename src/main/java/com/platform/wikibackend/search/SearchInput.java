@@ -25,6 +25,8 @@ public record SearchInput(
         String updatedAfter,
         String updatedBefore,
         List<String> labels,
+        /** 정렬. null이면 관련도. */
+        SearchSort sort,
         Integer page,
         Integer size
 ) {
@@ -83,6 +85,10 @@ public record SearchInput(
                 .filter(value -> !value.isEmpty())
                 .distinct()
                 .toList();
+    }
+
+    public SearchSort normalizedSort() {
+        return sort == null ? SearchSort.RELEVANCE : sort;
     }
 
     public boolean draftsIncluded() {

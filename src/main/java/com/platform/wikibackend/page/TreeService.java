@@ -92,6 +92,62 @@ public class TreeService {
         return withChildCounts(visible(userId, ordered));
     }
 
+    /**
+     * 여러 페이지의 조상 경로를 한 번에 — 검색 결과가 "어디에 있는 문서인지" 보여줄 때 쓴다.
+     *
+     * 스페이스를 가로지른다(검색 결과가 그렇다). 폐포는 한 번이고, 볼 수 없는 문서는 아예 답에
+     * 넣지 않는다 — 경로만 흘려도 제한된 문서의 위치와 제목이 새기 때문이다.
+     *
+     * 조상 중 볼 수 없는 것이 섞이는 경우는 없다: VIEW 제한은 하위로 상속되므로 자신이 보이면
+     * 조상도 보인다.
+     */
+    public List<com.platform.wikibackend.page.dto.PagePath> paths(long userId, Collection<Long> ids) {
+        List<Long> wanted = ids.stream().filter(Objects::nonNull).distinct().limit(LOOKUP_LIMIT).toList();
+        if (wanted.isEmpty()) return List.of();
+
+        List<Page> targets = pages.findAllById(wanted);
+        // 스페이스 VIEW부터 — 페이지 단위 판정은 스페이스 권한을 전제한다.
+        Map<Long, Boolean> spaceAllowed = new HashMap<>();
+        List<Page> inAllowedSpaces = targets.stream()
+                .filter(p -> spaceAllowed.computeIfAbsent(
+                        p.getSpaceId(), sid -> spaces.canView(userId, sid)))
+                .toList();
+        Set<Long> visible = effective.viewablePageIds(userId, inAllowedSpaces);
+        List<Long> allowed = inAllowedSpaces.stream()
+                .map(Page::getId).filter(visible::contains).toList();
+        if (allowed.isEmpty()) return List.of();
+
+        Map<Long, Long> parentOf = new HashMap<>();
+        for (Object[] row : pages.findAncestorClosure(allowed)) {
+            parentOf.put(((Number) row[0]).longValue(),
+                    row[1] == null ? null : ((Number) row[1]).longValue());
+        }
+        Set<Long> chainIds = new LinkedHashSet<>();
+        Map<Long, List<Long>> chains = new HashMap<>();
+        for (Long id : allowed) {
+            List<Long> chain = new ArrayList<>();
+            Set<Long> seen = new LinkedHashSet<>(List.of(id));
+            Long cursor = parentOf.get(id);
+            while (cursor != null && seen.add(cursor)) {
+                chain.add(cursor);
+                cursor = parentOf.get(cursor);
+            }
+            java.util.Collections.reverse(chain); // 루트가 먼저
+            chains.put(id, chain);
+            chainIds.addAll(chain);
+        }
+
+        Map<Long, String> titleOf = new HashMap<>();
+        if (!chainIds.isEmpty()) {
+            for (PageTreeItem item : pages.findTreeItemsByIds(chainIds)) titleOf.put(item.id(), item.title());
+        }
+        return allowed.stream()
+                .map(id -> new com.platform.wikibackend.page.dto.PagePath(
+                        id,
+                        chains.get(id).stream().map(titleOf::get).filter(Objects::nonNull).toList()))
+                .toList();
+    }
+
     /** 제목 정확 일치 — `[[제목]]` 해석. 렌더러와 같은 기준(trim + 소문자, 같은 스페이스). */
     public List<PageNode> lookupByTitles(long userId, long spaceId, Collection<String> titles) {
         spaces.getForView(userId, spaceId);

@@ -62,10 +62,7 @@ public class LiteSearchService {
 
         List<SearchRow> visible = filterVisible(userId, candidates);
         // 두 질의를 합쳤으므로 여기서 한 번 더 정렬한다 — 각 질의의 순서만으로는 섞이지 않는다.
-        visible.sort(Comparator
-                .comparingInt(SearchRow::score).reversed()
-                .thenComparing(SearchRow::updatedAt, Comparator.reverseOrder())
-                .thenComparingLong(SearchRow::id));
+        visible.sort(comparator(input.normalizedSort()));
 
         int size = input.normalizedSize();
         int from = Math.min(input.normalizedPage() * size, visible.size());
@@ -76,6 +73,29 @@ public class LiteSearchService {
 
         int tookMs = (int) ((System.nanoTime() - startedAt) / 1_000_000);
         return new SearchResults(visible.size(), !windowFull, tookMs, hits);
+    }
+
+    /**
+     * 정렬 — search-service와 같은 값으로 같은 순서를 내야 한다. 배포에 따라 "최신순"이 다르면
+     * 사용자는 어느 쪽이 맞는지 알 수 없다.
+     *
+     * 마지막 기준은 항상 id다 — 같은 시각의 문서가 페이지를 넘길 때마다 순서를 바꾸면 2페이지에서
+     * 1페이지의 항목이 다시 보인다. 다만 **정렬 방향을 따라간다**: 최신순에서 같은 시각이면 나중에
+     * 만들어진 쪽(큰 id)이 위여야 "최신순"이라는 말과 어긋나지 않는다.
+     */
+    private static Comparator<SearchRow> comparator(SearchSort sort) {
+        return switch (sort) {
+            case UPDATED_DESC -> Comparator
+                    .comparing(SearchRow::updatedAt, Comparator.reverseOrder())
+                    .thenComparing(Comparator.comparingLong(SearchRow::id).reversed());
+            case UPDATED_ASC -> Comparator
+                    .comparing(SearchRow::updatedAt)
+                    .thenComparingLong(SearchRow::id);
+            case RELEVANCE -> Comparator
+                    .comparingInt(SearchRow::score).reversed()
+                    .thenComparing(SearchRow::updatedAt, Comparator.reverseOrder())
+                    .thenComparingLong(SearchRow::id);
+        };
     }
 
     /**

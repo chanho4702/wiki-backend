@@ -164,6 +164,30 @@ class LiteSearchTest {
                 .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(tagged.getId())));
     }
 
+    /**
+     * 정렬은 search-service와 **같은 값으로 같은 순서**를 내야 한다 — 배포에 따라 "최신순"이
+     * 다르게 나오면 사용자는 어느 쪽이 맞는지 알 수 없다.
+     */
+    @Test
+    void 수정일_순으로_정렬한다() throws Exception {
+        Page older = page("배포 절차", "본문");
+        Page newer = page("배포 회고", "본문");
+        // 저장 시각에 기대지 않는다 — 연달아 저장하면 같은 시각이 찍혀 순서가 tie-break에 달린다.
+        touch(older, "2026-08-01T00:00:00Z");
+        touch(newer, "2026-08-09T00:00:00Z");
+
+        Map<String, Object> desc = input("배포");
+        desc.put("sort", "UPDATED_DESC");
+        search(USER, desc)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(newer.getId())));
+
+        Map<String, Object> asc = input("배포");
+        asc.put("sort", "UPDATED_ASC");
+        search(USER, asc)
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(older.getId())));
+    }
+
     @Test
     void 잘못된_기간_형식은_거부한다() throws Exception {
         page("배포 절차", "본문");
@@ -195,6 +219,12 @@ class LiteSearchTest {
 
         search(USER, input("   "))
                 .andExpect(jsonPath("$.data.search.total").value(0));
+    }
+
+    /** updatedAt을 못 박는다 — 도메인에는 시각을 지정해 저장하는 길이 없다(있어서도 안 된다). */
+    private void touch(Page page, String instant) {
+        jdbc.update("update page set updated_at = ? where id = ?",
+                java.sql.Timestamp.from(java.time.Instant.parse(instant)), page.getId());
     }
 
     private Page page(String title, String content) {
