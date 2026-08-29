@@ -1,0 +1,68 @@
+# 라이트 검색 — OpenSearch 없이 도는 배포용.
+#
+# search-service의 `schema.graphqls`와 **같은 계약**이다. 프론트를 바꾸지 않고 게이트웨이의
+# `/api/search/**` 목적지만 갈아끼우기 위해서다(StripPrefix=2 → 여기 `/graphql`).
+#
+# 계약은 같지만 결과는 같지 않다: 형태소 분석이 없어 부분 문자열 일치로 찾고, 이 서비스가 가진
+# 위키 데이터만 검색한다. 규모가 커지면(수만 문서) OpenSearch 배포로 옮긴다.
+
+type Query {
+  search(input: SearchInput!): SearchResults!
+}
+
+input SearchInput {
+  query: String!
+  "접근 가능한 스페이스와 교집합을 취한다 — 여기로 권한을 넓힐 수는 없다"
+  spaceIds: [ID!]
+  docTypes: [DocType!]
+  "기본은 게시된 문서만"
+  includeDrafts: Boolean = false
+  "마지막 수정자 — 첨부에는 없는 필드라 페이지만 걸린다"
+  authorIds: [ID!]
+  "이 시각 이후 수정된 문서만(ISO-8601 시각 또는 날짜)"
+  updatedAfter: String
+  "이 시각 이전 수정된 문서만"
+  updatedBefore: String
+  "라벨(정규화된 소문자). 여럿이면 하나라도 붙은 문서를 찾는다"
+  labels: [String!]
+  page: Int = 0
+  "상한 100 — 넘기면 100으로 잘린다"
+  size: Int = 20
+}
+
+type SearchResults {
+  total: Int!
+  totalExact: Boolean!
+  tookMs: Int!
+  hits: [SearchHit!]!
+}
+
+type SearchHit {
+  id: ID!
+  docType: DocType!
+  spaceId: ID!
+  spaceKey: String!
+  spaceName: String!
+  "ATTACHMENT면 소속 페이지"
+  pageId: ID
+  "PAGE — 폴더와 문서를 결과 목록에서 다른 아이콘으로 그린다"
+  pageType: PageType
+  "PAGE"
+  title: String
+  "ATTACHMENT"
+  filename: String
+  "제목·본문에서 잘라낸 하이라이트 조각"
+  highlights: [String!]!
+  updatedAt: String
+  score: Float!
+}
+
+enum DocType {
+  PAGE
+  ATTACHMENT
+}
+
+enum PageType {
+  PAGE
+  FOLDER
+}

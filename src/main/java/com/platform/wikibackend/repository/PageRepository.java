@@ -229,4 +229,71 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     // OFFSET이 아니라 id 커서라, 스캔 중 앞쪽 행이 지워져도 건너뛰지 않는다.
     List<Page> findByIdGreaterThanOrderByIdAsc(Long afterId, Limit limit);
     List<Page> findBySpaceIdAndIdGreaterThanOrderByIdAsc(Long spaceId, Long afterId, Limit limit);
+
+    /**
+     * 라이트 검색 후보(OpenSearch 없는 배포) — 제목·본문 부분 일치.
+     *
+     * 형태소 분석이 없어 `like '%q%'`로 찾는다. 한국어는 교착어라 Postgres 기본 tsvector(simple)로는
+     * "설정을"이 "설정"에 걸리지 않는데, 부분 문자열은 걸린다 — 소규모 설치에서는 이쪽이 실제로 쓸모 있다.
+     * 인덱스는 V18의 pg_trgm GIN이 받는다(만들지 못한 DB에서는 순차 스캔으로 동작한다).
+     *
+     * 권한은 여기서 스페이스까지만 거른다 — 페이지 단위 제한(W18)은 후필터가 맡는다.
+     */
+    @Query("""
+            select new com.platform.wikibackend.search.SearchRow(
+                com.platform.wikibackend.search.DocType.PAGE,
+                p.id, p.id, p.spaceId, s.key, s.name,
+                cast(p.type as string), p.title, p.content, cast(null as string), p.updatedAt,
+                case when lower(p.title) like :q then 3 else 1 end)
+            from Page p join Space s on s.id = p.spaceId
+            where p.spaceId in :spaceIds
+              and (:includeDrafts = true or p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED)
+              and (lower(p.title) like :q or lower(p.content) like :q)
+              and (:anyAuthor = true or p.updatedBy in :authorIds)
+              and (:after is null or p.updatedAt >= :after)
+              and (:before is null or p.updatedAt <= :before)
+              and (:anyLabel = true
+                   or exists (select 1 from PageLabel l where l.pageId = p.id and l.name in :labels))
+            order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.search.SearchRow> searchPages(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("includeDrafts") boolean includeDrafts,
+            @Param("anyAuthor") boolean anyAuthor,
+            @Param("authorIds") Collection<Long> authorIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("anyLabel") boolean anyLabel,
+            @Param("labels") Collection<String> labels,
+            org.springframework.data.domain.Limit limit);
+
+    /**
+     * 라이트 검색 후보 — 첨부 파일명.
+     *
+     * 첨부에는 작성자·라벨이 없다. 그 필터가 걸린 질의는 첨부를 아예 찾지 않는다(호출부 판단) —
+     * 여기서 조용히 무시하면 "작성자로 걸렀는데 남의 첨부가 나온다"가 된다.
+     */
+    @Query("""
+            select new com.platform.wikibackend.search.SearchRow(
+                com.platform.wikibackend.search.DocType.ATTACHMENT,
+                a.id, a.pageId, p.spaceId, s.key, s.name,
+                cast(null as string), cast(null as string), cast(null as string), a.filename, a.createdAt,
+                3)
+            from Attachment a
+              join Page p on p.id = a.pageId
+              join Space s on s.id = p.spaceId
+            where p.spaceId in :spaceIds
+              and a.lifecycleStatus = com.platform.wikibackend.attachment.AttachmentLifecycleStatus.CONFIRMED
+              and lower(a.filename) like :q
+              and (:after is null or a.createdAt >= :after)
+              and (:before is null or a.createdAt <= :before)
+            order by a.createdAt desc, a.id desc
+            """)
+    List<com.platform.wikibackend.search.SearchRow> searchAttachments(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            org.springframework.data.domain.Limit limit);
 }
