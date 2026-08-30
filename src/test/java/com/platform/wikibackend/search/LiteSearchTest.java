@@ -124,6 +124,16 @@ class LiteSearchTest {
                 .andExpect(jsonPath("$.data.search.hits[0].pageType").value("FOLDER"));
     }
 
+    /** 블로그 글(W24)은 BLOG로 내려간다 — enum에 없으면 글 하나가 검색 전체를 오류로 만든다. */
+    @Test
+    void 블로그_글은_BLOG_타입으로_내려준다() throws Exception {
+        pages.save(Page.of(space.getId(), null, "주간 소식", "이번 주 배포 정리", USER,
+                PageType.BLOG, com.platform.wikibackend.domain.PageStatus.PUBLISHED));
+
+        search(USER, input("소식"))
+                .andExpect(jsonPath("$.data.search.hits[0].pageType").value("BLOG"));
+    }
+
     /** 접근할 수 없는 스페이스는 요청해도 결과가 되지 않는다 — 여기로 권한을 넓힐 수 없다. */
     @Test
     void 볼_수_없는_스페이스는_결과에_없다() throws Exception {

@@ -180,8 +180,7 @@ public class WikiContentGrpcService extends WikiContentServiceGrpc.WikiContentSe
                 .setType(switch (p.getType()) {
                     case PAGE -> com.platform.proto.wiki.v1.PageType.PAGE;
                     case FOLDER -> com.platform.proto.wiki.v1.PageType.FOLDER;
-                    // proto에는 BLOG가 없다(0.11.0). 색인기에는 페이지로 보인다 — 검색 결과의 타입 표시만 다르다.
-                    case BLOG -> com.platform.proto.wiki.v1.PageType.PAGE;
+                    case BLOG -> com.platform.proto.wiki.v1.PageType.BLOG;
                 })
                 .setStatus(switch (p.getStatus()) {
                     case DRAFT -> com.platform.proto.wiki.v1.PageStatus.DRAFT;
