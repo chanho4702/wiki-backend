@@ -7,7 +7,7 @@ import com.platform.wikibackend.notification.dto.NotificationResponse;
 import com.platform.wikibackend.repository.NotificationRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.permission.EffectivePermissionService;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.WikiAction;

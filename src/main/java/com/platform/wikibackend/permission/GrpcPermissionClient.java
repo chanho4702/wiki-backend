@@ -3,7 +3,7 @@ package com.platform.wikibackend.permission;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.platform.proto.org.v1.*;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import lombok.extern.slf4j.Slf4j;

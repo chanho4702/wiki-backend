@@ -4,7 +4,7 @@ import com.platform.proto.org.v1.PrincipalKind;
 import com.platform.proto.org.v1.PrincipalRef;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
 import com.platform.proto.org.v1.ValidatePrincipalsRequest;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.permission.dto.RestrictionPrincipal;
 import lombok.RequiredArgsConstructor;

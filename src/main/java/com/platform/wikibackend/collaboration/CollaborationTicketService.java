@@ -2,7 +2,7 @@ package com.platform.wikibackend.collaboration;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.page.PageService;
 import com.platform.wikibackend.permission.WikiAction;

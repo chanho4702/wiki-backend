@@ -1,6 +1,6 @@
 package com.platform.wikibackend.personal;
 
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageStar;
 import com.platform.wikibackend.domain.PageVisit;

@@ -4,7 +4,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.platform.proto.org.v1.ListUserTeamsRequest;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;

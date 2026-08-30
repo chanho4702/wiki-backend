@@ -1,7 +1,7 @@
 package com.platform.wikibackend.permission;
 
-import com.platform.wikibackend.common.ForbiddenException;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.ForbiddenException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.permission.dto.InheritedRestriction;

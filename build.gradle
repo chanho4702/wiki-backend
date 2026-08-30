@@ -36,7 +36,9 @@ def grpcVersion = '1.69.0'
 def awsSdkVersion = '2.49.6'
 
 dependencies {
-    implementation 'com.platform:common-proto:0.12.0'
+    implementation 'com.platform:common-proto:0.14.0'
+    // 리소스 서버 공통(JWT 검증·오류 계약·공용 예외) — 5개 서비스 복제분을 모은 스타터(S-02)
+    implementation 'com.platform:common-starter:0.14.0'
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'

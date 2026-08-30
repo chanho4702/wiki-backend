@@ -1,7 +1,7 @@
 package com.platform.wikibackend.task;
 
-import com.platform.wikibackend.common.ConflictException;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.ConflictException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRevision;
 import com.platform.wikibackend.domain.PageTask;
@@ -129,7 +129,7 @@ public class TaskService {
     public TaskView setDone(long userId, long pageId, int lineNo, boolean done) {
         Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
         if (!permissions.isAllowed(userId, page.getSpaceId(), WikiAction.EDIT)) {
-            throw new com.platform.wikibackend.common.ForbiddenException("EDIT 권한이 필요합니다 (space " + page.getSpaceId() + ")");
+            throw new com.platform.common.error.ForbiddenException("EDIT 권한이 필요합니다 (space " + page.getSpaceId() + ")");
         }
         effective.requireEdit(userId, page);
         if (page.isArchived()) throw new ConflictException("보관된 문서는 편집할 수 없습니다. 먼저 보관을 해제하세요");

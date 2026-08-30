@@ -3,7 +3,7 @@ package com.platform.wikibackend.audit;
 import com.platform.wikibackend.domain.AuditAction;
 import com.platform.wikibackend.domain.AuditLog;
 import com.platform.wikibackend.domain.Page;
-import com.platform.wikibackend.common.ForbiddenException;
+import com.platform.common.error.ForbiddenException;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AuditLogRepository;

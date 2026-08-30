@@ -3,7 +3,7 @@ package com.platform.wikibackend.label;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageLabel;
 import com.platform.wikibackend.domain.PageLink;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.permission.EffectivePermissionService;

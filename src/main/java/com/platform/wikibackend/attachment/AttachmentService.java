@@ -2,7 +2,7 @@ package com.platform.wikibackend.attachment;
 
 import com.platform.wikibackend.attachment.dto.AttachmentResponse;
 import com.platform.wikibackend.attachment.dto.AttachmentVersionResponse;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.common.UnsafeInlineMediaTypeException;
 import com.platform.wikibackend.domain.Attachment;
 import com.platform.wikibackend.domain.Page;

@@ -1,6 +1,6 @@
 package com.platform.wikibackend.page;
 
-import com.platform.wikibackend.common.ConflictException;
+import com.platform.common.error.ConflictException;
 import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRevision;

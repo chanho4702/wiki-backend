@@ -1,8 +1,8 @@
 package com.platform.wikibackend.space;
 
 import com.platform.wikibackend.attachment.AttachmentStorageRouter;
-import com.platform.wikibackend.common.ForbiddenException;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.ForbiddenException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.event.EventRelay;
@@ -73,7 +73,7 @@ public class SpaceService {
         Space saved = spaces.save(Space.personalOf(userId, name));
         if (!permissions.grantSpaceAdmin(userId, saved.getId())
                 && !permissions.isAllowed(userId, saved.getId(), WikiAction.ADMIN)) {
-            throw new com.platform.wikibackend.common.ServiceUnavailableException(
+            throw new com.platform.common.error.ServiceUnavailableException(
                     "권한 서비스에 연결할 수 없어 개인 스페이스를 만들지 못했습니다");
         }
         events.afterCommit(WikiEvents.spaceCreated(userId, saved));

@@ -1,7 +1,7 @@
 package com.platform.wikibackend.permission;
 
 import com.platform.proto.org.v1.*;
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;

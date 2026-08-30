@@ -1,8 +1,8 @@
 package com.platform.wikibackend.page;
 
 import com.platform.wikibackend.attachment.AttachmentStorageRouter;
-import com.platform.wikibackend.common.ConflictException;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.ConflictException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRevision;
 import com.platform.wikibackend.domain.PageStatus;

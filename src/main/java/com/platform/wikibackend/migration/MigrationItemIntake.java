@@ -1,7 +1,7 @@
 package com.platform.wikibackend.migration;
 
-import com.platform.wikibackend.common.ConflictException;
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.ConflictException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.migration.dto.MigrationItemEnqueueRequest;
 import com.platform.wikibackend.migration.model.MigrationItem;
 import com.platform.wikibackend.migration.model.MigrationJob;

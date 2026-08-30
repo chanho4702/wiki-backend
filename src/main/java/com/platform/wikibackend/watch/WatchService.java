@@ -1,6 +1,6 @@
 package com.platform.wikibackend.watch;
 
-import com.platform.wikibackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageWatch;
 import com.platform.wikibackend.permission.EffectivePermissionService;

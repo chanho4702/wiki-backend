@@ -1,6 +1,6 @@
 package com.platform.wikibackend.attachment;
 
-import com.platform.wikibackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import software.amazon.awssdk.core.ResponseInputStream;
