@@ -11,7 +11,13 @@ import com.fasterxml.jackson.annotation.JsonValue;
  * DB·enum 이름은 대문자, JSON 계약은 소문자("page"/"folder")다 — 프론트가 소문자를 쓴다.
  */
 public enum PageType {
-    PAGE, FOLDER;
+    PAGE, FOLDER,
+    /**
+     * 블로그 글(W24) — 트리 밖에 사는 문서. parent가 없고 날짜순으로 읽힌다(컨플루언스 블로그).
+     * 별도 엔티티가 아니라 타입인 이유: 본문·리비전·댓글·라벨·검색·권한이 페이지와 전부 같다.
+     * 다른 것은 "어디에 놓이는가"뿐이다.
+     */
+    BLOG;
 
     @JsonValue
     public String json() {

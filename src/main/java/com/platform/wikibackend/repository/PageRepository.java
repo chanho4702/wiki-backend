@@ -48,17 +48,28 @@ public interface PageRepository extends JpaRepository<Page, Long> {
      * 아래 쿼리들은 "지금 화면에 필요한 만큼"만 읽는다.
      */
 
-    /** 직계 자식만. parentId가 null이면 루트 목록(파생 쿼리로는 null 비교가 안 돼 명시 비교). */
+    /** 직계 자식만. parentId가 null이면 루트 목록(파생 쿼리로는 null 비교가 안 돼 명시 비교).
+     *  블로그 글(W24)은 parent가 없어도 트리가 아니다 — 루트 목록에서 뺀다. */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
              where p.spaceId = :spaceId and p.archivedAt is null
+               and p.type <> com.platform.wikibackend.domain.PageType.BLOG
                and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
              order by p.sortOrder asc, p.id asc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> findChildren(
             @Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
+
+    /** 블로그 글(W24) — 트리 밖, 최신 작성순. 권한 필터는 서비스가 한다. */
+    @Query("""
+            select p from Page p
+             where p.spaceId = :spaceId and p.archivedAt is null
+               and p.type = com.platform.wikibackend.domain.PageType.BLOG
+             order by p.createdAt desc, p.id desc
+            """)
+    List<Page> findBlogPosts(@Param("spaceId") Long spaceId);
 
     /** id 묶음으로 트리 항목 조회 — 조상 체인·후손 폐포가 id를 먼저 얻고 본문 없이 채운다. */
     @Query("""

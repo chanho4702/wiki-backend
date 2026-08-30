@@ -74,6 +74,9 @@ public class PageService {
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
         validateParent(req.spaceId(), req.parentId(), null);
+        if (req.type() == com.platform.wikibackend.domain.PageType.BLOG && req.parentId() != null) {
+            throw new IllegalArgumentException("블로그 글은 트리에 넣을 수 없습니다");
+        }
         requireEditableTargetParent(userId, req.spaceId(), req.parentId());
         if (req.parentId() != null && pages.findById(req.parentId()).map(Page::isArchived).orElse(false)) {
             throw new ConflictException("보관된 문서 아래에는 새 문서를 만들 수 없습니다");
@@ -239,6 +242,9 @@ public class PageService {
         Page page = getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        if (page.getType() == com.platform.wikibackend.domain.PageType.BLOG) {
+            throw new IllegalArgumentException("블로그 글은 트리에 속하지 않아 옮길 수 없습니다");
+        }
         // W18 이동 영향(설계 §5) — 부모/스페이스가 실제로 바뀔 때, 새 조상의 VIEW 제한이 새로
         // 적용되면 확인 없이는 409. 순수 재정렬(같은 부모)은 영향이 없다.
         long targetSpaceId = req.spaceId() != null ? req.spaceId() : page.getSpaceId();
@@ -562,6 +568,9 @@ public class PageService {
         Page parent = pages.findById(parentId).orElseThrow(() -> new IllegalArgumentException("부모 페이지 없음: " + parentId));
         if (!Objects.equals(parent.getSpaceId(), spaceId)) {
             throw new IllegalArgumentException("부모는 같은 스페이스여야 합니다");
+        }
+        if (parent.getType() == com.platform.wikibackend.domain.PageType.BLOG) {
+            throw new IllegalArgumentException("블로그 글 아래에는 문서를 둘 수 없습니다");
         }
         if (movingPageId != null) {
             // visited: 손상 데이터(parent_id 순환)에서 무한 루프하지 않는다 — 삭제 경로와 같은 방어
