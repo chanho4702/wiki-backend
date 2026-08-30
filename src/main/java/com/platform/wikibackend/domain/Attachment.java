@@ -63,6 +63,10 @@ public class Attachment {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 1부터. 같은 이름 재업로드마다 오른다 — 직전 내용은 attachment_version에 쌓인다(W23). */
+    @Column(nullable = false)
+    private Integer version;
+
     public static Attachment of(Long pageId, String filename, String contentType,
                                 Long sizeBytes, String storageKey, Long uploadedBy) {
         return of(pageId, filename, contentType, sizeBytes,
@@ -94,7 +98,32 @@ public class Attachment {
         a.uploadedBy = uploadedBy;
         a.lifecycleStatus = lifecycleStatus;
         a.confirmedAt = lifecycleStatus == AttachmentLifecycleStatus.CONFIRMED ? Instant.now() : null;
+        a.version = 1;
         return a;
+    }
+
+    /**
+     * 내용을 새 것으로 갈아끼운다 — **id도 파일명도 그대로다**.
+     *
+     * 그것이 이 기능의 요점이다: 본문의 인라인 참조는 id로 걸려 있으므로, 행을 갈아끼우면
+     * 문서 어디에 박혀 있든 새 파일이 보인다. 새 행을 만들면 옛 파일이 계속 보인다.
+     *
+     * 부르기 전에 {@code AttachmentVersion.snapshotOf(this)}로 지금 내용을 떠 둬야 한다.
+     */
+    public void replaceWith(String contentType, Long sizeBytes, StoredObject storedObject,
+                            String checksumSha256, Long uploaderId) {
+        this.contentType = contentType;
+        this.sizeBytes = sizeBytes;
+        this.storageKey = storedObject.key();
+        this.storageBackend = storedObject.backend();
+        this.storageBucket = storedObject.bucket();
+        this.storageVersion = storedObject.version();
+        this.checksumSha256 = checksumSha256;
+        this.uploadedBy = uploaderId;
+        this.version = this.version == null ? 2 : this.version + 1;
+        // 되살아난 첨부는 다시 확정 상태다 — PENDING으로 남으면 정리 스케줄러가 지운다.
+        this.lifecycleStatus = AttachmentLifecycleStatus.CONFIRMED;
+        this.confirmedAt = Instant.now();
     }
 
     /** 멱등 확정 — 재시도나 reconciliation이 같은 첨부를 다시 확인해도 시각을 덮어쓰지 않는다. */

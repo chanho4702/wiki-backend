@@ -9,8 +9,15 @@ import java.util.Set;
 final class AttachmentMediaTypes {
 
     static final String OCTET_STREAM = "application/octet-stream";
+    /*
+     * 인라인으로 내보내도 되는 타입.
+     *
+     * SVG·HTML은 브라우저가 문서로 실행하므로 절대 넣지 않는다(스크립트가 우리 오리진에서 돈다).
+     * PDF는 넣는다 — 브라우저 내장 뷰어가 자체 샌드박스에서 열고 DOM에 닿지 못하며, 첨부 미리보기가
+     * 필요한 문서의 대부분이 PDF다. 응답에는 nosniff와 same-origin CORP를 함께 건다(컨트롤러).
+     */
     private static final Set<String> SAFE_INLINE = Set.of(
-            "image/png", "image/jpeg", "image/gif", "image/webp");
+            "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf");
 
     private AttachmentMediaTypes() {
     }

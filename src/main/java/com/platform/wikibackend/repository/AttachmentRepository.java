@@ -18,6 +18,10 @@ public interface AttachmentRepository extends JpaRepository<Attachment, Long> {
     List<Attachment> findByPageId(Long pageId);
     void deleteByPageId(Long pageId);
 
+    /** 같은 페이지에 같은 이름으로 이미 확정된 첨부 — 재업로드를 새 행이 아니라 새 버전으로 만든다. */
+    java.util.Optional<Attachment> findByPageIdAndFilenameAndLifecycleStatus(
+            Long pageId, String filename, com.platform.wikibackend.attachment.AttachmentLifecycleStatus status);
+
     @Query("""
             select a from Attachment a
             where a.lifecycleStatus = :status and a.createdAt < :cutoff

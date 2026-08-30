@@ -54,12 +54,41 @@ public class AttachmentController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
                 .header("X-Content-Type-Options", "nosniff")
-                .contentType(MediaType.parseMediaType(item.meta().getContentType()))
-                .contentLength(item.meta().getSizeBytes())
+                .contentType(MediaType.parseMediaType(item.contentType()))
+                .contentLength(item.sizeBytes())
                 .body(item.resource());
     }
 
-    /** 권한 확인 후 안전한 래스터 이미지만 인라인으로 제공한다(SVG/HTML 실행 차단). */
+    /** 지난 버전 목록 — 최신이 먼저. 현재 내용은 목록에 없다(첨부 자체가 곧 현재다). */
+    @GetMapping("/api/wiki/attachments/{id}/versions")
+    public List<com.platform.wikibackend.attachment.dto.AttachmentVersionResponse> versions(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return service.versions(userId(jwt), id);
+    }
+
+    /** 지난 버전 내려받기 — 미리보기는 주지 않는다(옛 파일을 문서에 다시 심을 이유가 없다). */
+    @GetMapping("/api/wiki/attachments/{id}/versions/{version}")
+    public ResponseEntity<Resource> downloadVersion(@AuthenticationPrincipal Jwt jwt,
+                                                    @PathVariable Long id,
+                                                    @PathVariable int version) {
+        AttachmentService.DownloadItem item = service.downloadVersion(userId(jwt), id, version);
+        String encoded = URLEncoder.encode(item.meta().getFilename(), StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.parseMediaType(item.contentType()))
+                .contentLength(item.sizeBytes())
+                .body(item.resource());
+    }
+
+    /** 지난 버전을 현재로 되돌린다 — 되돌린 것도 새 버전으로 쌓인다. */
+    @PostMapping("/api/wiki/attachments/{id}/versions/{version}/restore")
+    public com.platform.wikibackend.attachment.dto.AttachmentResponse restoreVersion(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id, @PathVariable int version) {
+        return service.restoreVersion(userId(jwt), id, version);
+    }
+
+    /** 권한 확인 후 안전한 타입만 인라인으로 제공한다(SVG/HTML 실행 차단). */
     @GetMapping("/api/wiki/attachments/{id}/inline")
     public ResponseEntity<Resource> inline(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
@@ -69,8 +98,8 @@ public class AttachmentController {
                 .header(HttpHeaders.CACHE_CONTROL, "private, max-age=60, no-transform")
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Cross-Origin-Resource-Policy", "same-origin")
-                .contentType(MediaType.parseMediaType(item.meta().getContentType()))
-                .contentLength(item.meta().getSizeBytes())
+                .contentType(MediaType.parseMediaType(item.contentType()))
+                .contentLength(item.sizeBytes())
                 .body(item.resource());
     }
 
