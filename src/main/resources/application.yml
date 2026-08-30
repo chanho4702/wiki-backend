@@ -70,6 +70,13 @@ platform:
         path-style-access: ${WIKI_S3_PATH_STYLE_ACCESS:false}
         access-key: ${WIKI_S3_ACCESS_KEY:}
         secret-key: ${WIKI_S3_SECRET_KEY:}
+    revisions:
+      # 리비전 보관 정책(W25): 문서당 최근 keep-count개는 항상, 그보다 오래된 것은 retention이 지나면 정리.
+      # 현재 버전은 절대 지우지 않는다. 무기한 보관으로 되돌리려면 enabled=false.
+      enabled: ${WIKI_REVISION_PRUNE_ENABLED:true}
+      keep-count: ${WIKI_REVISION_KEEP_COUNT:100}
+      retention: ${WIKI_REVISION_RETENTION:P90D}
+      interval: ${WIKI_REVISION_PRUNE_INTERVAL:PT6H}
     trash:
       # 휴지통 보존 기간(W21-1). PT0S = 자동 영구 삭제 없음(기본).
       # 예: 30일 자동 정리는 WIKI_TRASH_RETENTION=P30D.

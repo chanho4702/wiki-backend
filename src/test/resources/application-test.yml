@@ -40,6 +40,10 @@ platform:
       enabled: false
     mail:
       digest-enabled: false   # 요약 시계 금지 — 테스트가 run()을 직접 부른다
+    revisions:
+      enabled: false          # 보관 정리 시계 금지 — 테스트가 prune()을 직접 부른다
+      keep-count: 5           # 테스트에서 100개를 만들지 않으려고 낮춘다
+      retention: P90D
     migration-worker:
       enabled: false   # 스케줄러 자동 tick 금지 — worker 테스트가 시각을 직접 넣는다
     collaboration:

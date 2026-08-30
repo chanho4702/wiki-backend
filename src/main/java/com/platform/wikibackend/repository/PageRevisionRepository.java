@@ -10,6 +10,10 @@ import java.util.Optional;
 
 public interface PageRevisionRepository extends JpaRepository<PageRevision, Long> {
     List<PageRevision> findByPageIdOrderByVersionDesc(Long pageId);
+
+    /** 보관 정리(W25) 후보 — 리비전이 keep보다 많은 페이지만. 대부분의 페이지는 여기 걸리지 않는다. */
+    @Query("select r.pageId from PageRevision r group by r.pageId having count(r) > :keep")
+    List<Long> findPageIdsWithMoreRevisionsThan(@Param("keep") long keep);
     Optional<PageRevision> findByPageIdAndVersion(Long pageId, Integer version);
     void deleteByPageId(Long pageId);
 
