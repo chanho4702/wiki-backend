@@ -60,6 +60,26 @@ public class SpaceService {
         return SpaceResponse.from(saved);
     }
 
+    /**
+     * 개인 스페이스(W23) — 없으면 만들고 있으면 그대로 준다(멱등).
+     *
+     * 만든 사람이 곧 주인이라 ADMIN을 부여한다. grant가 실패하면 스페이스는 생겼는데 주인이 못
+     * 들어가는 상태가 되므로 일반 생성과 달리 **되돌린다** — 개인 스페이스는 "내 것"이 전제다.
+     */
+    public SpaceResponse ensurePersonal(long userId, String userName) {
+        Space existing = spaces.findByOwnerId(userId).orElse(null);
+        if (existing != null) return SpaceResponse.from(existing);
+        String name = userName == null || userName.isBlank() ? "사용자 " + userId : userName.trim();
+        Space saved = spaces.save(Space.personalOf(userId, name));
+        if (!permissions.grantSpaceAdmin(userId, saved.getId())
+                && !permissions.isAllowed(userId, saved.getId(), WikiAction.ADMIN)) {
+            throw new com.platform.wikibackend.common.ServiceUnavailableException(
+                    "권한 서비스에 연결할 수 없어 개인 스페이스를 만들지 못했습니다");
+        }
+        events.afterCommit(WikiEvents.spaceCreated(userId, saved));
+        return SpaceResponse.from(saved);
+    }
+
     /** VIEW 가드 포함 단건 조회 — 페이지·첨부 서비스가 재사용. */
     @Transactional(readOnly = true)
     public Space getForView(long userId, long spaceId) {

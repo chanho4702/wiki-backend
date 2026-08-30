@@ -30,6 +30,12 @@ public class SpaceController {
         return spaces.create(userId(jwt), req);
     }
 
+    /** 내 개인 스페이스 — 없으면 만든다(멱등). 이름은 토큰의 표시명을 쓴다. */
+    @PostMapping("/personal")
+    public SpaceResponse personal(@AuthenticationPrincipal Jwt jwt) {
+        return spaces.ensurePersonal(userId(jwt), jwt.getClaimAsString("name"));
+    }
+
     @GetMapping("/{id}")
     public SpaceResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return SpaceResponse.from(spaces.getForView(userId(jwt), id));

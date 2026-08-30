@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface SpaceRepository extends JpaRepository<Space, Long> {
     boolean existsByKey(String key);
 
+    java.util.Optional<Space> findByOwnerId(Long ownerId);
+
     /**
      * 트리 이동/재정렬의 직렬화 앵커 — 같은 스페이스의 동시 move가 형제 순번을 겹치게 만들지
      * 않도록 스페이스 행을 잠근다(ALM의 프로젝트 행 잠금과 같은 역할).
