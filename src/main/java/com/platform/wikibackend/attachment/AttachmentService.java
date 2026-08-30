@@ -41,6 +41,7 @@ public class AttachmentService {
     private final AttachmentStorageRouter storage;
     private final EventRelay events;
     private final com.platform.wikibackend.repository.AttachmentVersionRepository versions;
+    private final com.platform.wikibackend.audit.AuditService audit;
 
     public AttachmentResponse upload(long userId, long pageId, MultipartFile file) {
         return upload(userId, pageId, file, false);
@@ -243,6 +244,10 @@ public class AttachmentService {
             storage.deleteAfterCommit(v.getStorageBackend(), v.getStorageBucket(),
                     v.getStorageKey(), v.getStorageVersion());
         }
+        // 지우기 전에 남긴다 — 지운 뒤에는 파일명을 읽을 수 없다.
+        audit.record(page.getSpaceId(), userId,
+                com.platform.wikibackend.domain.AuditAction.ATTACHMENT_DELETED,
+                "ATTACHMENT", a.getId(), a.getFilename(), "문서: " + page.getTitle());
         versions.deleteByAttachmentId(a.getId());
         attachments.delete(a);
         storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),

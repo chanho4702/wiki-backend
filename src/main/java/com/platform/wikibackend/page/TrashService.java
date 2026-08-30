@@ -64,6 +64,7 @@ public class TrashService {
     private final PageWatchRepository watches;
     private final AttachmentStorageRouter storage;
     private final SpaceService spaces;
+    private final com.platform.wikibackend.audit.AuditService audit;
     private final EffectivePermissionService effective;
     private final EventRelay events;
 
@@ -116,6 +117,8 @@ public class TrashService {
         pages.saveAll(batch);
         // 색인은 삭제 시 pageDeleted로 비워졌다 — 복원한 전부를 다시 올린다.
         batch.forEach(p -> events.afterCommit(WikiEvents.pageUpdated(userId, p)));
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_RESTORED, root,
+                batch.size() > 1 ? "하위 " + (batch.size() - 1) + "개 함께" : null);
         return new PageRestoreResponse(PageResponse.from(root), reparented, batch.size());
     }
 
@@ -125,6 +128,9 @@ public class TrashService {
         spaces.require(userId, root.getSpaceId(), WikiAction.ADMIN);
         List<Page> batch = restorableBatch(root);
         effective.requireEditAll(userId, batch);
+        // 지우기 전에 남긴다 — 지운 뒤에는 제목을 읽을 수 없다.
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_PURGED, root,
+                batch.size() > 1 ? "하위 " + (batch.size() - 1) + "개 함께" : null);
         hardDelete(userId, batch);
     }
 
@@ -142,6 +148,8 @@ public class TrashService {
             if (root == null || root.getDeletedAt() == null) continue;
             List<Page> batch = restorableBatch(root);
             effective.requireEditAll(userId, batch);
+            audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_PURGED, root,
+                    "휴지통 비우기");
             hardDelete(userId, batch);
             purged += batch.size();
         }

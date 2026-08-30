@@ -48,6 +48,7 @@ public class PageRestrictionService {
     private final EffectivePermissionService effective;
     private final PermissionClient permissions;
     private final PrincipalDirectory principalDirectory;
+    private final com.platform.wikibackend.audit.AuditService audit;
     private final TeamDirectory teams;
 
     @Transactional(readOnly = true)
@@ -92,6 +93,9 @@ public class PageRestrictionService {
             rows.add(PageRestriction.of(pageId, PageRestriction.Type.EDIT, p.toType(), p.id(), userId));
         }
         restrictions.saveAll(rows);
+        // 접근 범위가 바뀌는 조작이라 흔적을 남긴다 — "언제부터 이 페이지가 잠겼나"의 유일한 근거다.
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_RESTRICTIONS_CHANGED,
+                page, rows.isEmpty() ? "제한 해제" : "보기 " + dedupe(view).size() + "명/팀, 편집 " + dedupe(edit).size() + "명/팀");
         return new PageRestrictionsResponse(
                 principals(rows, PageRestriction.Type.VIEW),
                 principals(rows, PageRestriction.Type.EDIT),

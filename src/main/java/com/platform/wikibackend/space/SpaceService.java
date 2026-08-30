@@ -39,6 +39,7 @@ public class SpaceService {
     private final PageRevisionRepository revisions;
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
+    private final com.platform.wikibackend.audit.AuditService audit;
 
     @Transactional(readOnly = true)
     public List<SpaceResponse> listAccessible(long userId) {
@@ -69,7 +70,11 @@ public class SpaceService {
     public SpaceResponse update(long userId, long spaceId, SpaceUpdateRequest req) {
         Space s = spaces.findById(spaceId).orElseThrow(() -> new NotFoundException("스페이스 없음: " + spaceId));
         require(userId, spaceId, WikiAction.ADMIN);
+        String before = s.getName();
         s.update(req.name(), req.description());
+        audit.record(spaceId, userId, com.platform.wikibackend.domain.AuditAction.SPACE_UPDATED,
+                "SPACE", spaceId, s.getName(),
+                before.equals(s.getName()) ? null : "이름 변경: " + before);
         events.afterCommit(WikiEvents.spaceUpdated(userId, s));
         return SpaceResponse.from(s);
     }

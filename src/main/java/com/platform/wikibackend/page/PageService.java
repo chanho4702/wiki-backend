@@ -66,6 +66,7 @@ public class PageService {
     private final CollaborationDraftMetadataRepository collaborationDrafts;
     private final com.platform.wikibackend.label.LabelService labelService;
     private final com.platform.wikibackend.personal.PersonalService personal;
+    private final com.platform.wikibackend.audit.AuditService audit;
     private final com.platform.wikibackend.watch.WatchService watches;
 
     public PageResponse create(long userId, PageCreateRequest req) {
@@ -481,6 +482,7 @@ public class PageService {
      * 복원 시 TrashService가 pageUpdated로 다시 올린다.
      */
     private void trashOne(long userId, Page p, boolean root) {
+        if (root) audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_TRASHED, p, null);
         p.moveToTrash(userId, root);
         events.afterCommit(WikiEvents.pageDeleted(userId, p.getId(), p.getSpaceId()));
     }

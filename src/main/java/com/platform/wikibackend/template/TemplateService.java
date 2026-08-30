@@ -39,6 +39,7 @@ public class TemplateService {
     private final PageRepository pages;
     private final SpaceService spaces;
     private final EffectivePermissionService effective;
+    private final com.platform.wikibackend.audit.AuditService audit;
 
     @Transactional(readOnly = true)
     public List<TemplateResponse> list(long userId, long spaceId) {
@@ -64,7 +65,10 @@ public class TemplateService {
         PageTemplate template = PageTemplate.of(spaceId, req.name(), req.description(), req.icon(),
                 req.content(), userId);
         requireNameFree(spaceId, template.getName(), null);
-        return TemplateResponse.from(templates.save(template));
+        PageTemplate saved = templates.save(template);
+        audit.record(spaceId, userId, com.platform.wikibackend.domain.AuditAction.TEMPLATE_CREATED,
+                "TEMPLATE", saved.getId(), saved.getName(), null);
+        return TemplateResponse.from(saved);
     }
 
     public TemplateResponse update(long userId, long templateId, TemplateRequest req) {
@@ -72,12 +76,18 @@ public class TemplateService {
         spaces.require(userId, template.getSpaceId(), WikiAction.ADMIN);
         template.apply(req.name(), req.description(), req.icon(), req.content(), userId);
         requireNameFree(template.getSpaceId(), template.getName(), templateId);
+        audit.record(template.getSpaceId(), userId,
+                com.platform.wikibackend.domain.AuditAction.TEMPLATE_UPDATED,
+                "TEMPLATE", templateId, template.getName(), null);
         return TemplateResponse.from(templates.save(template));
     }
 
     public void delete(long userId, long templateId) {
         PageTemplate template = find(templateId);
         spaces.require(userId, template.getSpaceId(), WikiAction.ADMIN);
+        audit.record(template.getSpaceId(), userId,
+                com.platform.wikibackend.domain.AuditAction.TEMPLATE_DELETED,
+                "TEMPLATE", templateId, template.getName(), null);
         templates.delete(template);
     }
 
