@@ -36,14 +36,17 @@ public class CommentService {
     private final com.platform.wikibackend.notification.NotificationService notificationService;
     private final com.platform.wikibackend.permission.EffectivePermissionService effective;
     private final com.platform.wikibackend.watch.WatchService watches;
+    private final com.platform.wikibackend.reaction.ReactionService reactions;
 
     @Transactional(readOnly = true)
     public List<CommentResponse> list(long userId, long pageId) {
         Page page = requirePage(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, page);
-        return comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId).stream()
-                .map(CommentResponse::from)
+        List<PageComment> found = comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId);
+        var reactionsById = reactions.forComments(userId, found.stream().map(PageComment::getId).toList());
+        return found.stream()
+                .map(c -> CommentResponse.from(c, reactionsById.getOrDefault(c.getId(), List.of())))
                 .toList();
     }
 
@@ -126,6 +129,12 @@ public class CommentService {
         boolean isAuthor = comment.getAuthorId().equals(userId);
         if (!isAuthor && !permissions.isAllowed(userId, page.getSpaceId(), WikiAction.ADMIN)) {
             throw new ForbiddenException("본인의 코멘트만 삭제할 수 있습니다");
+        }
+        // 리액션은 FK 없이 (type, id)로만 매달려 있다 — 지우기 전에 답글 것까지 걷어낸다.
+        for (PageComment reply : comments.findByPageIdOrderByCreatedAtAscIdAsc(comment.getPageId())) {
+            if (commentId == reply.getId() || commentId == (reply.getParentId() == null ? -1 : reply.getParentId())) {
+                reactions.removeAllForComment(reply.getId());
+            }
         }
         // bulk 한 방 — 개별 delete는 PG의 답글 cascade와 충돌하고, H2에는 cascade가 없다.
         comments.deleteWithReplies(commentId);

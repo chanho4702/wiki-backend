@@ -65,6 +65,7 @@ public class TrashService {
     private final AttachmentStorageRouter storage;
     private final SpaceService spaces;
     private final com.platform.wikibackend.audit.AuditService audit;
+    private final com.platform.wikibackend.repository.ReactionRepository reactionRepository;
     private final EffectivePermissionService effective;
     private final EventRelay events;
 
@@ -250,6 +251,11 @@ public class TrashService {
             attachments.deleteByPageId(pageId);
             // H2 테스트 스키마엔 FK가 없다(Long 컬럼만) — 명시 삭제로 고아를 막는다.
             revisions.deleteByPageId(pageId);
+            // 리액션은 FK 없이 (type, id)로 매달려 있다 — 댓글을 지우기 전에 걷어낸다(W23).
+            for (com.platform.wikibackend.domain.PageComment c : comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId)) {
+                reactionRepository.deleteByTargetTypeAndTargetId("COMMENT", c.getId());
+            }
+            reactionRepository.deleteByTargetTypeAndTargetId("PAGE", pageId);
             comments.deleteByPageId(pageId);
             restrictions.deleteByPageId(pageId);
             labels.deleteByPageId(pageId);

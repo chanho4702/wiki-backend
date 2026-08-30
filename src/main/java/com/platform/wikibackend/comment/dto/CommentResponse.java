@@ -18,13 +18,20 @@ public record CommentResponse(
         String anchorType,
         String anchorQuote,
         Integer anchorOccurrence,
-        Instant resolvedAt
+        Instant resolvedAt,
+        /** 리액션 집계(W23). 목록에서 한 번에 채운다 — 댓글마다 따로 묻지 않는다. */
+        java.util.List<com.platform.wikibackend.reaction.ReactionService.ReactionSummary> reactions
 ) {
     public static CommentResponse from(PageComment comment) {
+        return from(comment, java.util.List.of());
+    }
+
+    public static CommentResponse from(PageComment comment,
+            java.util.List<com.platform.wikibackend.reaction.ReactionService.ReactionSummary> reactions) {
         return new CommentResponse(comment.getId(), comment.getPageId(), comment.getParentId(),
                 comment.getAuthorId(), comment.getAuthorName(), comment.getBody(),
                 comment.getCreatedAt(), comment.getEditedAt(),
                 comment.getAnchorType().toLowerCase(), comment.getAnchorQuote(),
-                comment.getAnchorOccurrence(), comment.getResolvedAt());
+                comment.getAnchorOccurrence(), comment.getResolvedAt(), reactions);
     }
 }
