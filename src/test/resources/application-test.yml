@@ -38,6 +38,8 @@ platform:
       enabled: false   # 스케줄러 자동 tick 금지 — 보존 테스트가 시각을 직접 넣는다
     attachment-reconciliation:
       enabled: false
+    mail:
+      digest-enabled: false   # 요약 시계 금지 — 테스트가 run()을 직접 부른다
     migration-worker:
       enabled: false   # 스케줄러 자동 tick 금지 — worker 테스트가 시각을 직접 넣는다
     collaboration:

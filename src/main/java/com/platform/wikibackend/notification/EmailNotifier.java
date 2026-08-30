@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,21 +64,31 @@ public class EmailNotifier {
         return !host.isEmpty() && senders.getIfAvailable() != null;
     }
 
-    /** 알림함에 새 행이 생긴 직후 호출 — 합쳐진(refresh) 알림에는 보내지 않는다(아직 안 읽은 사람에게 또 보내는 것). */
-    public void notify(long userId, Notification.Type type, Page page, String note) {
+    /**
+     * 알림함에 새 행이 생긴 직후 호출 — 합쳐진(refresh) 알림에는 보내지 않는다(아직 안 읽은 사람에게
+     * 또 보내는 것). 요약(DAILY) 모드인 사람은 여기서 보내지 않고 행을 그대로 둔다 — 요약 작업이
+     * `emailed_at`이 빈 행을 모은다.
+     */
+    public void notify(Notification saved, Page page, String note) {
         if (!configured()) return;
-        Optional<String> to = prefs.emailFor(userId, type);
+        Notification.Type type = saved.getType();
+        Optional<String> to = prefs.immediateEmailFor(saved.getUserId(), type);
         if (to.isEmpty()) return;
-        JavaMailSender sender = senders.getIfAvailable();
-        if (sender == null) return;
 
         String actor = Optional.ofNullable(actorNames.current()).orElse("누군가");
-        SimpleMailMessage message = compose(to.get(), type, page, actor, note);
+        saved.markEmailed(java.time.Instant.now()); // 나중에 요약 모드로 바꿔도 이 알림이 다시 나가지 않게
+        sendAfterCommit(compose(to.get(), type, page, actor, note));
+    }
+
+    /** 커밋 뒤 별도 스레드로 보낸다. 트랜잭션 밖이면 바로. */
+    public void sendAfterCommit(SimpleMailMessage message) {
+        JavaMailSender sender = senders.getIfAvailable();
+        if (sender == null) return;
         Runnable send = () -> executor.execute(() -> {
             try {
                 sender.send(message);
             } catch (Exception e) {
-                log.warn("알림 메일 발송 실패: to={} page={} type={}", to.get(), page.getId(), type, e);
+                log.warn("알림 메일 발송 실패: to={} subject={}", String.join(",", message.getTo() == null ? new String[0] : message.getTo()), message.getSubject(), e);
             }
         });
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -87,6 +98,38 @@ public class EmailNotifier {
         } else {
             send.run();
         }
+    }
+
+    /** 하루 요약 한 통 — 항목마다 한 줄(무슨 일 · 문서 제목 · 링크). */
+    public SimpleMailMessage composeDigest(String to, List<DigestLine> lines) {
+        StringBuilder body = new StringBuilder();
+        body.append("지난 하루 동안 위키에서 있었던 일 ").append(lines.size()).append("건입니다.\n\n");
+        for (DigestLine line : lines) {
+            body.append("- ").append(line.what()).append(": '").append(line.title()).append("'\n  ")
+                    .append(publicUrl).append("/spaces/").append(line.spaceId()).append("/pages/").append(line.pageId());
+            if (line.note() != null && !line.note().isBlank()) body.append("\n  \u201c").append(line.note().trim()).append("\u201d");
+            body.append("\n");
+        }
+        body.append("\n이 메일은 위키 알림 설정(하루 한 번 요약)에 따라 보내졌습니다. 바꾸려면: ")
+                .append(publicUrl).append("/settings/notifications\n");
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(from);
+        message.setTo(to);
+        message.setSubject("[Wiki] 오늘의 알림 요약 — " + lines.size() + "건");
+        message.setText(body.toString());
+        return message;
+    }
+
+    public record DigestLine(String what, String title, long spaceId, long pageId, String note) {
+    }
+
+    public static String describe(Notification.Type type) {
+        return switch (type) {
+            case MENTIONED -> "나를 멘션";
+            case PAGE_UPDATED -> "문서 업데이트";
+            case COMMENT -> "새 댓글";
+            case SHARED -> "문서 공유";
+        };
     }
 
     SimpleMailMessage compose(String to, Notification.Type type, Page page, String actor, String note) {

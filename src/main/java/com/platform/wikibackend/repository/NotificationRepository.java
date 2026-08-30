@@ -14,4 +14,6 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             Long userId, Long pageId, Notification.Type type);
     List<Notification> findByUserIdAndReadAtIsNull(Long userId);
     List<Notification> findByIdInAndUserId(List<Long> ids, Long userId);
+    /** 요약 메일 대상 — 아직 메일로 나가지 않은 최근 알림(읽음 여부와 무관: 요약은 "그동안 있었던 일"이다). */
+    List<Notification> findByUserIdAndEmailedAtIsNullAndCreatedAtAfterOrderByCreatedAtAsc(Long userId, java.time.Instant since);
 }

@@ -49,6 +49,7 @@ class EmailNotificationTest {
     @Autowired FakePermissionClient perms;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @MockitoBean JavaMailSender mailSender;
+    @Autowired NotificationDigestService digest;
     MockMvc mvc;
 
     Space space;
@@ -133,6 +134,30 @@ class EmailNotificationTest {
         mentionBob();
 
         verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+    }
+
+    @Test
+    void 요약_모드는_바로_보내지_않고_하루_요약_한_통에_모은다() throws Exception {
+        mvc.perform(put("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true,\"emailMode\":\"DAILY\",\"mentioned\":true,\"pageUpdated\":true,\"comment\":true,\"shared\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailMode").value("DAILY"));
+
+        mentionBob();
+        mentionBob();
+        verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+
+        assertThat(digest.run()).isEqualTo(1);
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(5000)).send(sent.capture());
+        assertThat(sent.getValue().getTo()).containsExactly("bob@test.com");
+        assertThat(sent.getValue().getSubject()).contains("요약").contains("2건");
+        assertThat(sent.getValue().getText()).contains("나를 멘션").contains("회의록");
+
+        // 같은 알림은 다음 요약에 다시 들어가지 않는다
+        assertThat(digest.run()).isZero();
+        verify(mailSender, after(500).times(1)).send(any(SimpleMailMessage.class));
     }
 
     @Test

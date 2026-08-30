@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -32,7 +33,7 @@ public class NotificationPrefService {
 
     public NotificationPrefResponse update(long userId, String jwtEmail, NotificationPrefUpdate req) {
         NotificationPref pref = ensure(userId, jwtEmail);
-        pref.update(req.emailEnabled(), req.mentioned(), req.pageUpdated(), req.comment(), req.shared());
+        pref.update(req.emailEnabled(), req.emailMode(), req.mentioned(), req.pageUpdated(), req.comment(), req.shared());
         return NotificationPrefResponse.from(pref, email.configured());
     }
 
@@ -50,12 +51,19 @@ public class NotificationPrefService {
         }
     }
 
-    /** 이 타입의 메일을 받을 주소 — 원하지 않거나 주소를 모르면 empty. */
+    /** 이 타입의 메일을 **바로** 받을 주소 — 요약 모드·원하지 않음·주소 모름이면 empty. */
     @Transactional(readOnly = true)
-    public Optional<String> emailFor(long userId, Notification.Type type) {
+    public Optional<String> immediateEmailFor(long userId, Notification.Type type) {
         return prefs.findById(userId)
-                .filter(p -> p.wants(type) && p.getEmail() != null)
+                .filter(p -> p.getEmailMode() == NotificationPref.EmailMode.IMMEDIATE
+                        && p.wants(type) && p.getEmail() != null)
                 .map(NotificationPref::getEmail);
+    }
+
+    /** 하루 한 번 요약을 받는 사람들 — 채널이 켜져 있고 주소를 아는 경우만. */
+    @Transactional(readOnly = true)
+    public List<NotificationPref> dailyRecipients() {
+        return prefs.findByEmailModeAndEmailEnabledTrueAndEmailIsNotNull(NotificationPref.EmailMode.DAILY);
     }
 
     private NotificationPref ensure(long userId, String jwtEmail) {

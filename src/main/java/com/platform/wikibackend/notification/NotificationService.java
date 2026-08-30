@@ -138,8 +138,8 @@ public class NotificationService {
             log.warn("공유 수신 권한 확인 불가 — 발송 생략: user={} page={}", userId, page.getId());
             return false;
         }
-        notifications.save(Notification.of(userId, Notification.Type.SHARED, page.getId(), actorId, note));
-        email.notify(userId, Notification.Type.SHARED, page, note);
+        Notification saved = notifications.save(Notification.of(userId, Notification.Type.SHARED, page.getId(), actorId, note));
+        email.notify(saved, page, note);
         return true;
     }
 
@@ -160,8 +160,8 @@ public class NotificationService {
                 return;
             }
         }
-        notifications.save(Notification.of(userId, type, pageId, actorId));
-        email.notify(userId, type, page, null);
+        Notification saved = notifications.save(Notification.of(userId, type, pageId, actorId));
+        email.notify(saved, page, null);
     }
 
     /* ── 조회·읽음 처리 ─────────────────────────────────── */

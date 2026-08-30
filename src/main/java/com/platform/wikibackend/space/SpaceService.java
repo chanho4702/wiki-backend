@@ -101,7 +101,7 @@ public class SpaceService {
     }
 
     public void delete(long userId, long spaceId) {
-        if (!spaces.existsById(spaceId)) throw new NotFoundException("스페이스 없음: " + spaceId);
+        Space doomed = spaces.findById(spaceId).orElseThrow(() -> new NotFoundException("스페이스 없음: " + spaceId));
         require(userId, spaceId, WikiAction.ADMIN);
 
         // 스페이스 전체 정리 — 디스크 파일은 DB cascade가 못 지우므로 코드로. (H2 테스트 환경엔 FK도 없음)
@@ -123,6 +123,10 @@ public class SpaceService {
         // 단일 bulk DELETE(deleteAllInBatch)는 row count를 기대하지 않아 cascade와 충돌하지 않는다.
         pages.deleteAllInBatch(all);
 
+        // 삭제 기록은 스페이스보다 오래 남는다(V30) — 전역 관리자의 "스페이스 삭제 기록"이 읽는다.
+        // 같은 트랜잭션이라 삭제가 롤백되면 기록도 함께 사라진다.
+        audit.record(spaceId, userId, com.platform.wikibackend.domain.AuditAction.SPACE_DELETED, "SPACE",
+                spaceId, doomed.getName() + " (" + doomed.getKey() + ")", "문서 " + all.size() + "건 함께 삭제");
         spaces.deleteById(spaceId);
         // 스페이스가 사라져도 org의 grant는 남는다 — 같은 id가 재사용되면 예전 멤버에게
         // 권한이 되살아나므로 함께 회수한다(v0.3.0 RevokeGrant). 실패해도 삭제는 되돌리지 않는다.

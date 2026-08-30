@@ -2,6 +2,8 @@ package com.platform.wikibackend.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
@@ -29,8 +31,15 @@ public class NotificationPref {
     @Column(length = 255)
     private String email;
 
+    /** 바로 보낼지, 하루 한 번 모아 보낼지(V31). */
+    public enum EmailMode { IMMEDIATE, DAILY }
+
     @Column(name = "email_enabled", nullable = false)
     private boolean emailEnabled = true;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "email_mode", nullable = false, length = 16)
+    private EmailMode emailMode = EmailMode.IMMEDIATE;
 
     @Column(name = "on_mentioned", nullable = false)
     private boolean onMentioned = true;
@@ -63,9 +72,10 @@ public class NotificationPref {
         return true;
     }
 
-    public void update(boolean emailEnabled, boolean onMentioned, boolean onPageUpdated,
+    public void update(boolean emailEnabled, EmailMode mode, boolean onMentioned, boolean onPageUpdated,
                        boolean onComment, boolean onShared) {
         this.emailEnabled = emailEnabled;
+        this.emailMode = mode == null ? EmailMode.IMMEDIATE : mode;
         this.onMentioned = onMentioned;
         this.onPageUpdated = onPageUpdated;
         this.onComment = onComment;

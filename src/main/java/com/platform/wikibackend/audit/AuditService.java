@@ -66,6 +66,20 @@ public class AuditService {
                 .toList();
     }
 
+    /**
+     * 스페이스 삭제 기록 — 전역 관리자(GLOBAL grant)만. 스페이스가 없으니 스페이스 ADMIN으로는
+     * 판정할 수 없고, 지워진 스페이스의 이름은 그 조직을 관리하는 사람만 볼 일이다.
+     */
+    @Transactional(readOnly = true)
+    public List<AuditEntry> listSpaceDeletions(long userId) {
+        if (!permissions.accessibleSpaces(userId).all()) {
+            throw new ForbiddenException("스페이스 삭제 기록은 전역 관리자만 볼 수 있습니다");
+        }
+        return logs.findByAction(AuditAction.SPACE_DELETED.name(), Limit.of(PAGE_SIZE)).stream()
+                .map(AuditEntry::from)
+                .toList();
+    }
+
     public record AuditEntry(
             Long id,
             String action,

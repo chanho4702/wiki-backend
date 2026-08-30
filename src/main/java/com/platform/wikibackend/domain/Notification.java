@@ -43,6 +43,10 @@ public class Notification {
     @Column(name = "read_at")
     private Instant readAt;
 
+    /** 메일로 나간 시각(V31). null이면 아직 — 요약 모드가 이 행을 모은다. */
+    @Column(name = "emailed_at")
+    private Instant emailedAt;
+
     /** 공유(SHARED)에만 있는 한마디 — "왜 봐야 하는지". 다른 타입은 null. */
     @Column(length = MAX_NOTE)
     private String note;
@@ -59,6 +63,10 @@ public class Notification {
         n.actorId = actorId;
         n.note = note == null || note.isBlank() ? null : note.trim();
         return n;
+    }
+
+    public void markEmailed(Instant at) {
+        if (emailedAt == null) emailedAt = at;
     }
 
     public boolean isRead() {

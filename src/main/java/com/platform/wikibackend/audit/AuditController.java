@@ -18,6 +18,12 @@ public class AuditController {
 
     private final AuditService audit;
 
+    /** 스페이스 삭제 기록 — 전역 관리자만. 스페이스 안에서는 읽을 곳이 없어 전역 경로다. */
+    @GetMapping("/api/wiki/audit/space-deletions")
+    public List<AuditService.AuditEntry> spaceDeletions(@AuthenticationPrincipal Jwt jwt) {
+        return audit.listSpaceDeletions(userId(jwt));
+    }
+
     @GetMapping("/api/wiki/spaces/{spaceId}/audit")
     public List<AuditService.AuditEntry> list(@AuthenticationPrincipal Jwt jwt,
                                               @PathVariable Long spaceId) {
