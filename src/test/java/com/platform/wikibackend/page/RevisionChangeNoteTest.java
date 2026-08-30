@@ -1,6 +1,7 @@
 package com.platform.wikibackend.page;
 
 import com.platform.wikibackend.TestPages;
+import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.permission.FakePermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
@@ -122,5 +123,24 @@ class RevisionChangeNoteTest {
                         .content("{\"title\":\"보고서\",\"content\":\"고침\",\"expectedVersion\":1,"
                                 + "\"changeNote\":\"" + tooLong + "\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    /**
+     * 편집자 이름 스냅샷(V28). 디렉터리에서 사라진 사람(퇴사)도 이름으로 남아야 6개월 전 누가
+     * 고쳤는지가 숫자가 아니라 이름으로 보인다.
+     */
+    @Test
+    void 리비전에_저장_시점_편집자_이름이_남는다() throws Exception {
+        Page page = pages.save(Page.of(space.getId(), null, "문서", "본문", EDITOR));
+
+        mvc.perform(put("/api/wiki/pages/{id}", page.getId())
+                        .with(asUser(EDITOR, "김철수"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"문서\",\"content\":\"고침\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/wiki/pages/{id}/revisions", page.getId()).with(asUser(EDITOR, "김철수")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].editedByName").value("김철수"));
     }
 }

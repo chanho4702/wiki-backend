@@ -49,6 +49,10 @@ public class PageRevision {
     @Column(name = "change_note", length = 500, updatable = false)
     private String changeNote;
 
+    /** 저장 시점 편집자 표시명(V28). 디렉터리에서 사라진 사람도 이름으로 남는다. null이면 화면이 id로 폴백한다. */
+    @Column(name = "edited_by_name", length = 120)
+    private String editedByName;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -68,6 +72,15 @@ public class PageRevision {
     /** 페이지의 현재 상태를 스냅샷 — "모든 버전이 리비전에 있다" 불변식의 단일 진입점. */
     public static PageRevision snapshotOf(Page page) {
         return snapshotOf(page, null);
+    }
+
+    /** 편집자 이름을 붙인다 — 팩토리는 Page만 알고 Page는 이름을 모르므로 호출부가 얹는다. */
+    public PageRevision withEditorName(String name) {
+        if (name != null && !name.isBlank()) {
+            String trimmed = name.trim();
+            this.editedByName = trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120);
+        }
+        return this;
     }
 
     /** 변경 요약과 함께 스냅샷 — 사용자가 저장 시 남긴 한 줄이 있을 때. */

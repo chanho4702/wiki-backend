@@ -60,6 +60,7 @@ public class TaskService {
     private final SpaceRepository spaces;
     private final PermissionClient permissions;
     private final EffectivePermissionService effective;
+    private final com.platform.wikibackend.common.ActorNames actorNames;
     private final EventRelay events;
 
     /** 본문이 바뀐 뒤 호출 — 그 페이지의 작업 표를 본문에서 다시 만든다. */
@@ -139,7 +140,7 @@ public class TaskService {
         }
         lines[lineNo - 1] = lines[lineNo - 1].replaceFirst("\\[( |x|X)\\]", done ? "[x]" : "[ ]");
         page.edit(page.getTitle(), String.join("\n", lines), userId);
-        revisions.save(PageRevision.snapshotOf(page, done ? "작업 완료 표시" : "작업 다시 열기"));
+        revisions.save(PageRevision.snapshotOf(page, done ? "작업 완료 표시" : "작업 다시 열기").withEditorName(actorNames.current()));
         sync(page);
         events.afterCommit(WikiEvents.pageUpdated(userId, page));
 
