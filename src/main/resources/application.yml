@@ -13,6 +13,18 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  mail:
+    # 이메일 알림 채널(W23). host가 비면 아무것도 발송하지 않고 알림함만 남는다 — OpenSearch와 같은 선택 옵션.
+    host: ${WIKI_MAIL_HOST:}
+    port: ${WIKI_MAIL_PORT:587}
+    username: ${WIKI_MAIL_USERNAME:}
+    password: ${WIKI_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${WIKI_MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${WIKI_MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -74,6 +86,10 @@ platform:
     collaboration:
       # Access Token을 WebSocket query에 싣지 않기 위한 1회용 Redis ticket. 5분 초과는 부팅 시 거부한다.
       ticket-ttl: ${WIKI_COLLABORATION_TICKET_TTL:PT1M}
+    mail:
+      from: ${WIKI_MAIL_FROM:wiki@localhost}
+      # 메일 본문의 링크가 가리킬 위키 주소(브라우저 기준).
+      public-url: ${WIKI_PUBLIC_URL:http://localhost/wiki}
   events:
     enabled: true
 

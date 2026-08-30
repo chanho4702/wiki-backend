@@ -46,6 +46,8 @@ dependencies {
     // 라이트 검색(OpenSearch 없는 배포)이 search-service와 같은 GraphQL 계약을 서비스한다.
     implementation 'org.springframework.boot:spring-boot-starter-graphql'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    // 이메일 알림 채널(W23) — WIKI_MAIL_HOST가 비면 발송기 없이 알림함만 동작한다.
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
     implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'

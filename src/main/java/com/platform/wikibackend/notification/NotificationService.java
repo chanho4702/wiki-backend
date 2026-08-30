@@ -53,6 +53,7 @@ public class NotificationService {
     private final PermissionClient permissions;
     private final EffectivePermissionService effective;
     private final com.platform.wikibackend.watch.WatchService watches;
+    private final EmailNotifier email;
 
     static Set<Long> mentionIds(String body) {
         Set<Long> ids = new HashSet<>();
@@ -138,6 +139,7 @@ public class NotificationService {
             return false;
         }
         notifications.save(Notification.of(userId, Notification.Type.SHARED, page.getId(), actorId, note));
+        email.notify(userId, Notification.Type.SHARED, page, note);
         return true;
     }
 
@@ -159,6 +161,7 @@ public class NotificationService {
             }
         }
         notifications.save(Notification.of(userId, type, pageId, actorId));
+        email.notify(userId, type, page, null);
     }
 
     /* ── 조회·읽음 처리 ─────────────────────────────────── */
