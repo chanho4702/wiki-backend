@@ -40,6 +40,7 @@ public class SpaceService {
     private final AttachmentRepository attachments;
     private final AttachmentStorageRouter storage;
     private final com.platform.wikibackend.audit.AuditService audit;
+    private final com.platform.wikibackend.repository.PageTaskRepository taskRepository;
 
     @Transactional(readOnly = true)
     public List<SpaceResponse> listAccessible(long userId) {
@@ -95,6 +96,7 @@ public class SpaceService {
             attachments.deleteByPageId(p.getId());
             revisions.deleteByPageId(p.getId());
             comments.deleteByPageId(p.getId());
+            taskRepository.deleteByPageId(p.getId());
         }
         // 개별 DELETE(deleteAll)는 운영 PG에서 부모 페이지 삭제가 자식을 cascade로 먼저 지운 뒤
         // 이어지는 자식 개별 DELETE가 0행 → Hibernate StaleStateException(500)을 낸다.

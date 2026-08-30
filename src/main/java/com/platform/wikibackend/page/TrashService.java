@@ -66,6 +66,7 @@ public class TrashService {
     private final SpaceService spaces;
     private final com.platform.wikibackend.audit.AuditService audit;
     private final com.platform.wikibackend.repository.ReactionRepository reactionRepository;
+    private final com.platform.wikibackend.repository.PageTaskRepository taskRepository;
     private final EffectivePermissionService effective;
     private final EventRelay events;
 
@@ -257,6 +258,7 @@ public class TrashService {
             }
             reactionRepository.deleteByTargetTypeAndTargetId("PAGE", pageId);
             comments.deleteByPageId(pageId);
+            taskRepository.deleteByPageId(pageId);
             restrictions.deleteByPageId(pageId);
             labels.deleteByPageId(pageId);
             links.deleteBySourcePageId(pageId);

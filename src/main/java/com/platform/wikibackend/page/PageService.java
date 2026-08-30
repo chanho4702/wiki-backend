@@ -68,6 +68,7 @@ public class PageService {
     private final com.platform.wikibackend.personal.PersonalService personal;
     private final com.platform.wikibackend.audit.AuditService audit;
     private final com.platform.wikibackend.watch.WatchService watches;
+    private final com.platform.wikibackend.task.TaskService taskSync;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -80,6 +81,7 @@ public class PageService {
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
         revisions.save(PageRevision.snapshotOf(saved)); // 버전1도 리비전에 — "모든 버전이 리비전에 있다"
+        taskSync.sync(saved); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
         labelService.reindexLinks(saved); // 백링크 그래프(V14)는 본문의 파생물 — 저장과 같은 트랜잭션에서 갱신
         watches.autoWatch(saved.getId(), userId); // 만든 문서는 자동 구독(W21-4)
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
@@ -134,6 +136,7 @@ public class PageService {
             copyAttachmentsInto(userId, original, saved);
             if (req.restrictionsIncluded()) copyRestrictionsInto(userId, original, saved);
             revisions.save(PageRevision.snapshotOf(saved));
+            taskSync.sync(saved); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
             labelService.reindexLinks(saved);
             events.afterCommit(WikiEvents.pageCreated(userId, saved));
         }
@@ -427,6 +430,7 @@ public class PageService {
         page.edit(req.title(), req.content(), userId);
         draft.advanceTo(page.getVersion());
         revisions.save(PageRevision.snapshotOf(page));
+        taskSync.sync(page); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
         labelService.reindexLinks(page);
         watches.autoWatch(page.getId(), userId);
         events.afterCommit(WikiEvents.pageUpdated(userId, page));
@@ -608,6 +612,7 @@ public class PageService {
         p.edit(target.getTitle(), target.getContent(), userId);
         // 복원도 이력에 남는다 — 어느 버전에서 되돌렸는지가 다음 사람에게 가장 중요한 정보다.
         revisions.save(PageRevision.snapshotOf(p, "v" + version + " 버전으로 복원"));
+        taskSync.sync(p); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
         labelService.reindexLinks(p);
         events.afterCommit(WikiEvents.pageUpdated(userId, p));
         return PageResponse.from(p);
