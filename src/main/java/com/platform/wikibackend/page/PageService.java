@@ -65,6 +65,7 @@ public class PageService {
     private final AttachmentStorageRouter storage;
     private final CollaborationDraftMetadataRepository collaborationDrafts;
     private final com.platform.wikibackend.label.LabelService labelService;
+    private final com.platform.wikibackend.personal.PersonalService personal;
     private final com.platform.wikibackend.watch.WatchService watches;
 
     public PageResponse create(long userId, PageCreateRequest req) {
@@ -512,6 +513,8 @@ public class PageService {
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
         pages.incrementViewCount(pageId);
+        // 개인 "최근 방문"도 여기서 남긴다 — 모든 열람이 이 경로를 지나므로 왕복을 늘릴 이유가 없다(W23).
+        personal.recordVisit(userId, pageId);
         return pages.findViewCount(pageId);
     }
 
