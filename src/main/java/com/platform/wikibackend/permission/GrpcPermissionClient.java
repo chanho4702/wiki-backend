@@ -116,6 +116,7 @@ public class GrpcPermissionClient implements PermissionClient {
     private static Action toProto(WikiAction a) {
         return switch (a) {
             case VIEW -> Action.VIEW;
+            case COMMENT -> Action.COMMENT;
             case EDIT -> Action.EDIT;
             case ADMIN -> Action.ADMIN;
         };

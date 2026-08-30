@@ -62,7 +62,9 @@ class CommentControllerTest {
         spaceId = space.getId();
         pageId = pages.save(Page.of(spaceId, null, "본문", "", AUTHOR)).getId();
         perms.allow(AUTHOR, spaceId, WikiAction.VIEW);
+        perms.allow(AUTHOR, spaceId, WikiAction.COMMENT);
         perms.allow(OTHER, spaceId, WikiAction.VIEW);
+        perms.allow(OTHER, spaceId, WikiAction.COMMENT);
         perms.allow(ADMIN, spaceId, WikiAction.VIEW);
         perms.allow(ADMIN, spaceId, WikiAction.ADMIN);
     }
@@ -195,5 +197,19 @@ class CommentControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JSON.readTree(response).get("id").asLong();
+    }
+
+    /** COMMENT 권한(W23) — 보기만 되는 사람은 남의 댓글을 읽되 달지는 못한다. */
+    @Test
+    void VIEW만_있으면_댓글을_읽되_달_수_없다() throws Exception {
+        long viewer = 77L;
+        perms.allow(viewer, spaceId, WikiAction.VIEW);
+
+        mvc.perform(get("/api/wiki/pages/{id}/comments", pageId).with(asUser(viewer, "Viewer")))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/wiki/pages/{id}/comments", pageId).with(asUser(viewer, "Viewer"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":\"안 됨\"}"))
+                .andExpect(status().isForbidden());
     }
 }

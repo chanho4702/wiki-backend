@@ -29,7 +29,11 @@ public class FakePermissionClient implements PermissionClient {
 
     @Override
     public boolean isAllowed(long userId, long spaceId, WikiAction action) {
-        return allowAllUsers.contains(userId) || allowed.contains(new Key(userId, spaceId, action));
+        if (allowAllUsers.contains(userId) || allowed.contains(new Key(userId, spaceId, action))) return true;
+        // org-service의 계층(EDITOR·ADMIN ⊃ COMMENTER)을 흉내 낸다 — 편집자에게 COMMENT를 따로 주지 않아도 된다
+        return action == WikiAction.COMMENT
+                && (allowed.contains(new Key(userId, spaceId, WikiAction.EDIT))
+                    || allowed.contains(new Key(userId, spaceId, WikiAction.ADMIN)));
     }
 
     @Override

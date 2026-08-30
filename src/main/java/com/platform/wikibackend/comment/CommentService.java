@@ -20,8 +20,8 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * 페이지 댓글/답글. 읽기·쓰기 모두 스페이스 VIEW를 요구한다 — org-service에 COMMENT action이
- * 생기기 전까지의 기준선이며, 보는 사람은 댓글도 달 수 있다(Confluence 기본과 동일).
+ * 페이지 댓글/답글. 읽기는 스페이스 VIEW, 작성은 COMMENT(W23) — VIEWER는 남의 댓글을 보되
+ * 달지는 못한다. EDITOR·ADMIN은 계층상 COMMENT를 품는다(org-service GrantRole.covers).
  * 수정·삭제는 작성자만, 삭제는 스페이스 ADMIN도 가능하다(moderation).
  */
 @Service
@@ -52,7 +52,9 @@ public class CommentService {
 
     public CommentResponse create(long userId, String userName, long pageId, CommentCreateRequest req) {
         Page page = requirePage(pageId);
-        spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        // 작성은 COMMENT(W23) — 보는 사람 모두가 댓글을 달 수 있으면 안 되는 스페이스가 있다.
+        // 읽기는 여전히 VIEW: 댓글을 못 다는 사람도 남들의 댓글은 본다(컨플루언스와 같다).
+        spaces.require(userId, page.getSpaceId(), WikiAction.COMMENT);
         effective.requireView(userId, page);
         if (req.parentId() != null) {
             PageComment parent = comments.findById(req.parentId())
