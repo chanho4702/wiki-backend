@@ -20,7 +20,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     /** 형제 그룹 — 루트는 parentId가 null이라 파생 쿼리로 못 쓰고 명시 비교한다(ALM findRankGroup과 동형). */
     @Query("""
             select p from Page p
-             where p.spaceId = :spaceId
+             where p.spaceId = :spaceId and p.archivedAt is null
                and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
              order by p.sortOrder asc, p.id asc
             """)
@@ -53,7 +53,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
-             where p.spaceId = :spaceId
+             where p.spaceId = :spaceId and p.archivedAt is null
                and ((:parentId is null and p.parentId is null) or p.parentId = :parentId)
              order by p.sortOrder asc, p.id asc
             """)
@@ -71,7 +71,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
 
     /** 자식 수 — 트리가 펼침 화살표를 그릴지 정하려면 자식을 불러오기 전에 알아야 한다. */
     @Query("select p.parentId as parentId, count(p) as count from Page p"
-            + " where p.parentId in (:parentIds) group by p.parentId")
+            + " where p.parentId in (:parentIds) and p.archivedAt is null group by p.parentId")
     List<ParentCount> countChildren(@Param("parentIds") Collection<Long> parentIds);
 
     interface ParentCount {
@@ -87,7 +87,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
-             where p.spaceId = :spaceId
+             where p.spaceId = :spaceId and p.archivedAt is null
              order by p.updatedAt desc, p.id desc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> findRecentlyUpdated(
@@ -98,7 +98,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
-             where p.spaceId = :spaceId and lower(trim(p.title)) in (:titles)
+             where p.spaceId = :spaceId and p.archivedAt is null and lower(trim(p.title)) in (:titles)
              order by p.id asc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> findByTitles(
@@ -109,7 +109,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
-             where p.spaceId = :spaceId and lower(p.title) like lower(concat('%', :q, '%'))
+             where p.spaceId = :spaceId and p.archivedAt is null and lower(p.title) like lower(concat('%', :q, '%'))
              order by p.title asc, p.id asc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> searchByTitle(
@@ -203,6 +203,15 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             """, nativeQuery = true)
     List<Object[]> findTrashedRows(@Param("spaceId") Long spaceId);
 
+    /** 보관 목록·묶음 계산용 — 휴지통 행과 같은 열 순서라 TrashRow.from을 그대로 쓴다(W23). */
+    @Query(value = """
+            select p.id, p.parent_id, p.title, p.type, p.icon,
+                   p.archived_at, p.archived_by, p.archived_root
+              from page p
+             where p.space_id = :spaceId and p.archived_at is not null and p.deleted_at is null
+            """, nativeQuery = true)
+    List<Object[]> findArchivedRows(@Param("spaceId") Long spaceId);
+
     /** 보존 기간이 지난 휴지통 루트 — 자손은 루트를 영구삭제할 때 함께 정리된다. */
     @Query(value = """
             select p.id from page p
@@ -246,7 +255,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
                 cast(p.type as string), p.title, p.content, cast(null as string), p.updatedAt,
                 case when lower(p.title) like :q then 3 else 1 end)
             from Page p join Space s on s.id = p.spaceId
-            where p.spaceId in :spaceIds
+            where p.spaceId in :spaceIds and p.archivedAt is null
               and (:includeDrafts = true or p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED)
               and (lower(p.title) like :q or lower(p.content) like :q)
               and (:anyAuthor = true or p.updatedBy in :authorIds)

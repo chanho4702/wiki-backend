@@ -73,6 +73,9 @@ public class PageService {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
         validateParent(req.spaceId(), req.parentId(), null);
         requireEditableTargetParent(userId, req.spaceId(), req.parentId());
+        if (req.parentId() != null && pages.findById(req.parentId()).map(Page::isArchived).orElse(false)) {
+            throw new ConflictException("보관된 문서 아래에는 새 문서를 만들 수 없습니다");
+        }
         Page saved = pages.save(Page.of(req.spaceId(), req.parentId(), req.title(), req.content(), userId,
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
@@ -376,6 +379,9 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        if (p.isArchived()) {
+            throw new ConflictException("보관된 문서는 편집할 수 없습니다. 먼저 보관을 해제하세요");
+        }
         if (!Objects.equals(p.getVersion(), req.expectedVersion())) {
             throw new ConflictException("버전 충돌 — 현재 " + p.getVersion() + ", 요청 " + req.expectedVersion());
         }

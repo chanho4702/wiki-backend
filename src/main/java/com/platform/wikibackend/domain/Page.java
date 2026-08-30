@@ -89,6 +89,19 @@ public class Page {
     @Column(name = "deleted_root", nullable = false)
     private boolean deletedRoot;
 
+    /**
+     * 보관(V25) — 값이 있으면 트리·검색에서 빠지되 링크로는 계속 열린다. 휴지통과 달리
+     * @SQLRestriction에 걸지 않는다: 보관은 "숨김"이지 "삭제"가 아니다.
+     */
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
+    @Column(name = "archived_by")
+    private Long archivedBy;
+
+    @Column(name = "archived_root", nullable = false)
+    private boolean archivedRoot;
+
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
         return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
     }
@@ -110,6 +123,7 @@ public class Page {
         p.createdBy = authorId;
         p.updatedBy = authorId;
         p.deletedRoot = false;
+        p.archivedRoot = false;
         return p;
     }
 
@@ -179,6 +193,24 @@ public class Page {
         this.deletedRoot = false;
         this.parentId = parentId;
         this.sortOrder = sortOrder;
+    }
+
+    public boolean isArchived() {
+        return archivedAt != null;
+    }
+
+    /** 보관은 편집이 아니다 — version·리비전을 건드리지 않는다(휴지통과 같은 규칙). */
+    public void archive(Long actorId, boolean root) {
+        this.archivedAt = Instant.now();
+        this.archivedBy = actorId;
+        this.archivedRoot = root;
+    }
+
+    /** 자리는 그대로다 — 보관은 이동이 아니라 parent·순번을 건드리지 않는다. */
+    public void unarchive() {
+        this.archivedAt = null;
+        this.archivedBy = null;
+        this.archivedRoot = false;
     }
 
     /**
