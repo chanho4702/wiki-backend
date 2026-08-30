@@ -510,6 +510,16 @@ public class PageService {
     }
 
     /** 조회 1회 기록 — 원자 UPDATE(동시 조회 lost update 방지) 후 누적치 반환. */
+    /** 페이지 공유(W23) — 보는 사람이면 누구나 보낼 수 있다(링크 복사와 같은 범위). */
+    public com.platform.wikibackend.page.dto.ShareResponse share(
+            long userId, long pageId, com.platform.wikibackend.page.dto.ShareRequest req) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, p);
+        int delivered = notificationService.share(userId, p, req.userIds(), req.note());
+        return new com.platform.wikibackend.page.dto.ShareResponse(delivered);
+    }
+
     public long recordView(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);

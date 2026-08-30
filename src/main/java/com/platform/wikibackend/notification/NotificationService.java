@@ -18,7 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -107,6 +109,36 @@ public class NotificationService {
         Set<Long> users = new HashSet<>(currentMentions);
         users.addAll(watches.watcherIds(page.getId()));
         return users;
+    }
+
+    /**
+     * 페이지 공유(W23) — 수신자마다 SHARED 알림 한 건. 합치지 않는다: 두 사람이 같은 문서를
+     * 각자 다른 메모로 보냈으면 둘 다 의미 있다(MENTIONED와 같은 규칙).
+     *
+     * 볼 수 없는 수신자는 조용히 건너뛴다(deliver의 fail-closed). 공유했다고 권한이 생기지는
+     * 않는다 — 권한은 org-service 원장이고, 공유는 알림이다. 돌려주는 값은 실제로 전달된 수다.
+     */
+    public int share(long actorId, Page page, Collection<Long> recipientIds, String note) {
+        if (note != null && note.length() > Notification.MAX_NOTE) {
+            throw new IllegalArgumentException("메모는 " + Notification.MAX_NOTE + "자를 넘을 수 없습니다");
+        }
+        int delivered = 0;
+        for (Long userId : new LinkedHashSet<>(recipientIds)) {
+            if (userId == null || userId == actorId) continue; // 자신에게 보내는 공유는 의미가 없다
+            if (deliverShared(userId, page, actorId, note)) delivered++;
+        }
+        return delivered;
+    }
+
+    private boolean deliverShared(long userId, Page page, long actorId, String note) {
+        try {
+            if (!isVisible(userId, page)) return false;
+        } catch (ServiceUnavailableException e) {
+            log.warn("공유 수신 권한 확인 불가 — 발송 생략: user={} page={}", userId, page.getId());
+            return false;
+        }
+        notifications.save(Notification.of(userId, Notification.Type.SHARED, page.getId(), actorId, note));
+        return true;
     }
 
     private void deliver(long userId, Notification.Type type, Page page, long actorId) {

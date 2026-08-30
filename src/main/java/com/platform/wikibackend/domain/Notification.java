@@ -15,7 +15,9 @@ import java.time.Instant;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Notification {
 
-    public enum Type { MENTIONED, PAGE_UPDATED, COMMENT }
+    public enum Type { MENTIONED, PAGE_UPDATED, COMMENT, SHARED }
+
+    public static final int MAX_NOTE = 300;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -41,12 +43,21 @@ public class Notification {
     @Column(name = "read_at")
     private Instant readAt;
 
+    /** 공유(SHARED)에만 있는 한마디 — "왜 봐야 하는지". 다른 타입은 null. */
+    @Column(length = MAX_NOTE)
+    private String note;
+
     public static Notification of(long userId, Type type, long pageId, long actorId) {
+        return of(userId, type, pageId, actorId, null);
+    }
+
+    public static Notification of(long userId, Type type, long pageId, long actorId, String note) {
         Notification n = new Notification();
         n.userId = userId;
         n.type = type;
         n.pageId = pageId;
         n.actorId = actorId;
+        n.note = note == null || note.isBlank() ? null : note.trim();
         return n;
     }
 

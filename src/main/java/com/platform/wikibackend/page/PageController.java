@@ -70,6 +70,13 @@ public class PageController {
         return pages.setIcon(userId(jwt), id, req.icon());
     }
 
+    @PostMapping("/api/wiki/pages/{id}/share")
+    public com.platform.wikibackend.page.dto.ShareResponse share(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+            @jakarta.validation.Valid @RequestBody com.platform.wikibackend.page.dto.ShareRequest req) {
+        return pages.share(userId(jwt), id, req);
+    }
+
     @PostMapping("/api/wiki/pages/{id}/views")
     public java.util.Map<String, Long> recordView(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return java.util.Map.of("views", pages.recordView(userId(jwt), id));
