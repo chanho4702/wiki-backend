@@ -50,6 +50,14 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     // 이메일 알림 채널(W23) — WIKI_MAIL_HOST가 비면 발송기 없이 알림함만 동작한다.
     implementation 'org.springframework.boot:spring-boot-starter-mail'
+    // 페이지 PDF 내보내기(W26) — MD→HTML은 flexmark, HTML→PDF는 openhtmltopdf 커뮤니티 포크(순수 JVM, PDFBox 3).
+    // 브라우저(헤드리스 크롬)를 띄우지 않는 이유: 온프렘 단일 머신에서 의존이 무겁고 폰트·보안 관리가 늘어난다.
+    implementation 'com.vladsch.flexmark:flexmark:0.64.8'
+    implementation 'com.vladsch.flexmark:flexmark-ext-tables:0.64.8'
+    implementation 'com.vladsch.flexmark:flexmark-ext-gfm-strikethrough:0.64.8'
+    implementation 'com.vladsch.flexmark:flexmark-ext-gfm-tasklist:0.64.8'
+    implementation 'io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.37'
+    implementation 'org.jsoup:jsoup:1.18.3'   // flexmark HTML을 openhtmltopdf가 요구하는 XHTML로 정규화
     implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
