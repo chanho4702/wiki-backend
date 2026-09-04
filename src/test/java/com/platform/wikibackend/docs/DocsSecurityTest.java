@@ -6,10 +6,14 @@ import com.platform.wikibackend.config.PublicReadPermissionClient;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.repository.NotificationPrefRepository;
 import com.platform.wikibackend.repository.PageRepository;
+import com.platform.wikibackend.repository.PageRestrictionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -51,6 +55,8 @@ class DocsSecurityTest {
     @Autowired WebApplicationContext context;
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
+    @Autowired PageRestrictionRepository restrictions;
+    @Autowired NotificationPrefRepository notificationPrefs;
     @Autowired JdbcTemplate jdbc;
     @Autowired PermissionClient permissions;
     MockMvc mvc;
@@ -58,6 +64,8 @@ class DocsSecurityTest {
     @BeforeEach
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        restrictions.deleteAll();
+        notificationPrefs.deleteAll();
         TestPages.deleteAll(jdbc);
         spaces.deleteAll();
     }
@@ -180,5 +188,67 @@ class DocsSecurityTest {
                 .andExpect(status().isCreated());
 
         assertThat(pages.findBySpaceIdOrderById(space.getId())).hasSize(1);
+    }
+
+    // ── 사용자 범위 경로: GET이라고 안전하지 않다 ──
+
+    /**
+     * "GET은 읽기"라는 가정을 깨는 경로들. 특히 `/notifications/prefs`는 행이 없으면 기본 설정을
+     * INSERT 하므로, 열어 두면 익명 GET 하나가 user_id=0 행을 만든다.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/wiki/notifications",
+            "/api/wiki/notifications/prefs",
+            "/api/wiki/stars",
+            "/api/wiki/recent",
+            "/api/wiki/tasks/mine",
+            "/api/wiki/migrations/1",
+            "/api/wiki/audit/space-deletions"})
+    void 사용자_범위_경로는_익명_GET도_403이다(String path) throws Exception {
+        mvc.perform(get(path)).andExpect(status().isForbidden());
+    }
+
+    /** 임포터에게도 열 이유가 없다 — 임포터는 문서만 넣는다. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/wiki/notifications/prefs",
+            "/api/wiki/stars",
+            "/api/wiki/recent",
+            "/api/wiki/tasks/mine",
+            "/api/wiki/migrations/1"})
+    void 사용자_범위_경로는_임포터_토큰으로도_403이다(String path) throws Exception {
+        mvc.perform(get(path).header(TOKEN_HEADER, "test-token")).andExpect(status().isForbidden());
+    }
+
+    /** 위 403이 "필터 체인이 막았다"인지 확인한다 — 서비스까지 갔다면 기본 설정 행이 남는다. */
+    @Test
+    void 알림_설정_익명_GET은_기본_설정_행을_만들지_않는다() throws Exception {
+        mvc.perform(get("/api/wiki/notifications/prefs")).andExpect(status().isForbidden());
+
+        assertThat(notificationPrefs.count()).isZero();
+    }
+
+    // ── 페이지 제한: 익명(user 0)은 어떤 주체에도 해당하지 않는다 ──
+
+    /**
+     * 임포터가 실수로 VIEW 제한을 남긴 문서가 공개되면 안 된다. docs의 PrincipalDirectory는
+     * 항상 통과라 제한 저장 자체는 성립한다 — 그래서 판정 쪽이 실제로 닫히는지 확인한다.
+     * 익명 주체는 sub=0이고 TeamDirectory도 빈 목록이라 USER·TEAM 어디에도 걸리지 않는다.
+     */
+    @Test
+    void VIEW_제한이_걸린_페이지는_익명에게_403이다() throws Exception {
+        Space space = spaces.save(Space.of("docs", "정리", null, 1L));
+        Page page = pages.save(Page.of(space.getId(), null, "비공개 메모", "본문", 1L));
+
+        mvc.perform(put("/api/wiki/pages/" + page.getId() + "/restrictions")
+                        .header(TOKEN_HEADER, "test-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"view\":[{\"type\":\"USER\",\"id\":1}],\"edit\":[]}"))
+                .andExpect(status().isOk());
+        assertThat(restrictions.count()).isPositive();   // 저장이 실제로 됐다
+
+        mvc.perform(get("/api/wiki/pages/" + page.getId()))
+                .andExpect(status().isForbidden());
     }
 }

@@ -53,6 +53,21 @@ public class DocsSecurityConfig {
                         // 조회수는 공개 인스턴스에서 세지 않는다 — 임포터에게도 열지 않는다.
                         // GET 허용 규칙보다 먼저 와야 한다(POST라 겹치지는 않지만 의도를 앞에 둔다).
                         .requestMatchers(HttpMethod.POST, "/api/wiki/pages/*/views").denyAll()
+                        // ── 사용자 범위 경로는 GET 허용보다 먼저 닫는다 ──
+                        // "GET은 읽기"라는 가정이 이 서비스에서는 성립하지 않는다:
+                        // GET /notifications/prefs는 없으면 기본 설정 행을 INSERT 한다(익명 GET이 쓰기).
+                        // 나머지도 결과가 로그인 사용자 기준이라 공개 인스턴스에서는 뜻이 없다 —
+                        // sub=0의 개인 데이터를 만들거나 보여 주기 전에 경로째로 막는다.
+                        // 임포터에게도 열지 않는다(임포터는 문서만 넣는다).
+                        .requestMatchers("/api/wiki/notifications", "/api/wiki/notifications/**").denyAll()
+                        .requestMatchers("/api/wiki/stars", "/api/wiki/stars/**").denyAll()
+                        .requestMatchers("/api/wiki/recent").denyAll()
+                        .requestMatchers("/api/wiki/tasks", "/api/wiki/tasks/**").denyAll()
+                        .requestMatchers("/api/wiki/migrations", "/api/wiki/migrations/**").denyAll()
+                        // 전역 감사 로그는 accessibleSpaces().all()로 전역 관리자를 판정한다 —
+                        // PublicReadPermissionClient가 all=true를 주므로 익명에게 열려 버린다.
+                        // 스페이스별 감사(/spaces/*/audit)는 ADMIN 판정이라 이미 닫혀 있다.
+                        .requestMatchers("/api/wiki/audit/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/api/wiki/**").permitAll()
                         // 라이트 검색 GraphQL — 읽기 질의만 있는 스키마다(mutation 없음).
                         .requestMatchers(HttpMethod.POST, "/graphql").permitAll()

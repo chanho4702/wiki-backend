@@ -5,11 +5,16 @@
 # 공개 인스턴스가 끼어들면 안 되기 때문이다.
 spring:
   autoconfigure:
-    # JWT 검증 자동설정을 명시적으로 제외한다.
+    # 플랫폼 JWT 검증(issuer·audience 강제)을 제외한다.
     # 설계 문서는 `platform.jwt.issuer/audience`를 비우면 common-starter의 @ConditionalOnProperty가
     # 알아서 꺼진다고 봤지만, application.yml이 env 기본값(`${PLATFORM_ISSUER:...}`)을 주므로
-    # 그 게이트는 이 프로필에서도 항상 켜진다. docs 체인은 JwtDecoder를 쓰지 않으므로 여기서 끊는다
-    # — 공개 인스턴스에 살아 있는 토큰 검증기를 남겨 두면 "인증이 도는 줄" 오해를 부른다.
+    # 그 게이트는 이 프로필에서도 항상 켜진다. 그래서 명시적으로 제외한다.
+    #
+    # 이것으로 JwtDecoder가 사라지지는 않는다: `spring.security.oauth2.resourceserver.jwt.jwk-set-uri`
+    # 기본값이 남아 있어 Boot의 리소스 서버 자동설정이 검증 없는 디코더를 대신 만든다. 무해하다 —
+    # docs 필터 체인은 `oauth2ResourceServer()`를 구성하지 않아 그 빈을 아무도 쓰지 않고,
+    # 주체는 DocsPrincipalFilter가 직접 심는다. Boot 쪽까지 제외하려 들지 말 것(클래스명이
+    # Boot 버전마다 옮겨 다녀 오타 하나로 부팅이 깨진다).
     exclude: com.platform.common.security.PlatformResourceServerAutoConfiguration
   mail:
     host: ""   # 공개 인스턴스는 메일을 보내지 않는다(구독자도 없다)
