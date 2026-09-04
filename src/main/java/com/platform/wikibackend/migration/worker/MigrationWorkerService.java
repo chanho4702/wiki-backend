@@ -1,5 +1,6 @@
 package com.platform.wikibackend.migration.worker;
 
+import com.platform.wikibackend.migration.confluence.link.MigrationLinkFixupService;
 import com.platform.wikibackend.migration.model.MigrationIssue;
 import com.platform.wikibackend.migration.model.MigrationItem;
 import com.platform.wikibackend.migration.model.MigrationItemStatus;
@@ -16,6 +17,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.EnumSet;
@@ -45,6 +48,7 @@ public class MigrationWorkerService {
     private final MigrationObjectMappingWriter objectMappings;
     private final MigrationRetryPolicy retryPolicy;
     private final MigrationWorkerProperties properties;
+    private final MigrationLinkFixupService linkFixup;
 
     /**
      * 처리할 item 하나를 점유한다. 같은 item을 두 노드가 동시에 노리면 조건부 UPDATE에서 한쪽만
@@ -159,7 +163,36 @@ public class MigrationWorkerService {
             job.complete(now);
         }
         jobs.saveAndFlush(job);
+        scheduleLinkFixup(job.getId());
         return Optional.of(job.getStatus());
+    }
+
+    /**
+     * 잡이 끝났으니 임시 링크를 마저 잇는다(M2 §4.2).
+     *
+     * **커밋 뒤에** 돈다. 여기서 바로 부르면 문서 수백 건을 고치는 동안 job 행을 잠근 채로 있게 되고,
+     * 정리 중 예외 하나가 잡의 마감 자체를 롤백한다 — 옮기기는 다 끝났는데 상태가 RUNNING으로
+     * 남는 것이 가장 나쁜 결말이다. 그래서 커밋이 확정된 뒤 별도 트랜잭션으로 돌리고, 실패는 삼킨다.
+     */
+    private void scheduleLinkFixup(long jobId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            runLinkFixup(jobId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                runLinkFixup(jobId);
+            }
+        });
+    }
+
+    private void runLinkFixup(long jobId) {
+        try {
+            linkFixup.run(jobId);
+        } catch (RuntimeException exception) {
+            log.warn("이관 링크 정리에 실패했다 — 잡 결과는 그대로 둔다: job={}", jobId, exception);
+        }
     }
 
     /**
@@ -222,6 +255,6 @@ public class MigrationWorkerService {
                 job.getSourceInstanceId(),
                 job.getMode(), job.getTargetSpaceId(), item.getStage(), item.getExternalObjectId(),
                 item.getSourceVersion(), item.getSourceChecksum(), item.getPayloadRef(),
-                item.getTargetPageId(), item.getRetryCount() + 1);
+                item.getTargetPageId(), item.getSiblingOrder(), item.getRetryCount() + 1);
     }
 }

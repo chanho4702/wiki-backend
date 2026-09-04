@@ -99,10 +99,87 @@ public class ConfluenceDcClient {
         return new ConfluenceContentPage(List.copyOf(page), page.size() >= limit);
     }
 
-    /** 본문·이력·라벨·첨부 목록까지 한 번에 — 페이지당 왕복을 늘리지 않는다. */
+    /**
+     * 본문·이력·라벨·첨부 목록·제한까지 한 번에 — 페이지당 왕복을 늘리지 않는다.
+     *
+     * restrictions는 DC 7.x/8.x가 같은 이름으로 준다. 없는 사이트에서는 그냥 빠진 채로 오고,
+     * 그때는 "제한 없음"으로 읽힌다 — 제한을 못 읽었다고 페이지를 못 옮기게 하지는 않는다.
+     */
     public JsonNode content(ConfluenceDcCredentials credentials, String contentId) {
         return get(credentials, "/rest/api/content/" + encode(contentId)
-                + "?expand=body.storage,version,ancestors,history,metadata.labels,children.attachment");
+                + "?expand=body.storage,version,ancestors,history,metadata.labels,children.attachment"
+                + ",restrictions.read.restrictions.user,restrictions.read.restrictions.group"
+                + ",restrictions.update.restrictions.user,restrictions.update.restrictions.group");
+    }
+
+    /**
+     * 한 부모의 자식 페이지를 **원본이 정한 순서 그대로** 받는다. 목록 API(`/content?spaceKey=`)는
+     * 형제 순서를 알려주지 않아, 원본 정렬을 지키려면 부모마다 이 호출이 한 번씩 더 필요하다.
+     */
+    public ConfluenceContentPage listChildPages(ConfluenceDcCredentials credentials, String parentId,
+                                                int start) {
+        int limit = properties.childPageSize();
+        return toPage(get(credentials, "/rest/api/content/" + encode(parentId)
+                + "/child/page?expand=version&start=" + start + "&limit=" + limit), limit);
+    }
+
+    /** 스페이스 최상단 페이지 — 루트의 형제 순서다. */
+    public ConfluenceContentPage listRootPages(ConfluenceDcCredentials credentials, int start) {
+        int limit = properties.childPageSize();
+        return toPage(get(credentials, "/rest/api/space/" + encode(credentials.spaceKey())
+                + "/content/page?depth=root&expand=version&start=" + start + "&limit=" + limit), limit);
+    }
+
+    /**
+     * 첨부 본체. 주소는 원본 응답의 `_links.download`가 아니라 고정 패턴으로 조합한다 —
+     * 남의 서버가 알려준 주소를 그대로 따라가면 baseUrl 검증이 무의미해진다(SSRF).
+     *
+     * 바이트를 통째로 메모리에 담는다. 상한(maxAttachmentBytes)을 호출부가 미리 걸러 주는 것을
+     * 전제로 하고, 여기서도 Content-Length가 상한을 넘으면 받기 전에 끊는다.
+     */
+    public byte[] downloadAttachment(ConfluenceDcCredentials credentials, String pageId,
+                                     String filename, int version) {
+        String path = "/download/attachments/" + encode(pageId) + "/" + encode(filename)
+                + "?version=" + version + "&api=v2";
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(credentials.baseUrl() + path))
+                .timeout(properties.readTimeout())
+                .header("Authorization", "Bearer " + credentials.token())
+                .GET()
+                .build();
+        HttpResponse<byte[]> response;
+        try {
+            response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException exception) {
+            throw MigrationStageException.retryable(ConfluenceDcCodes.UNAVAILABLE);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw MigrationStageException.retryable(ConfluenceDcCodes.UNAVAILABLE);
+        }
+        raiseForStatus(response.statusCode());
+        byte[] body = response.body();
+        if (body.length > properties.maxAttachmentBytes()) {
+            // 목록이 알려준 크기가 거짓이었다. 받아 놓고 버리지만, 저장소에는 넣지 않는다.
+            throw MigrationStageException.permanent(ConfluenceDcCodes.ATTACHMENT_TOO_LARGE);
+        }
+        return body;
+    }
+
+    private ConfluenceContentPage toPage(JsonNode response, int limit) {
+        JsonNode results = response.path("results");
+        if (!results.isArray()) {
+            throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
+        }
+        List<ConfluenceContentSummary> page = new ArrayList<>(results.size());
+        for (JsonNode node : results) {
+            String id = node.path("id").asText(null);
+            if (id == null || id.isBlank()) {
+                throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
+            }
+            page.add(new ConfluenceContentSummary(id, node.path("title").asText(""),
+                    node.path("version").path("number").asInt(1), List.of()));
+        }
+        return new ConfluenceContentPage(List.copyOf(page), page.size() >= limit);
     }
 
     private JsonNode get(ConfluenceDcCredentials credentials, String path) {
@@ -124,7 +201,20 @@ public class ConfluenceDcClient {
             Thread.currentThread().interrupt();
             throw MigrationStageException.retryable(ConfluenceDcCodes.UNAVAILABLE);
         }
-        int status = response.statusCode();
+        raiseForStatus(response.statusCode());
+        try {
+            JsonNode body = objectMapper.readTree(response.body());
+            if (body == null || !body.isObject()) {
+                throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
+            }
+            return body;
+        } catch (IOException exception) {
+            throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
+        }
+    }
+
+    /** 상태 코드 → 재시도 정책. JSON과 첨부 다운로드가 같은 규칙을 쓴다. */
+    private static void raiseForStatus(int status) {
         if (status >= 300 && status < 400) {
             throw MigrationStageException.permanent(ConfluenceDcCodes.REDIRECT_REFUSED);
         }
@@ -138,15 +228,6 @@ public class ConfluenceDcClient {
             throw MigrationStageException.retryable(ConfluenceDcCodes.UNAVAILABLE);
         }
         if (status >= 400) {
-            throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
-        }
-        try {
-            JsonNode body = objectMapper.readTree(response.body());
-            if (body == null || !body.isObject()) {
-                throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
-            }
-            return body;
-        } catch (IOException exception) {
             throw MigrationStageException.permanent(ConfluenceDcCodes.INVALID_RESPONSE);
         }
     }

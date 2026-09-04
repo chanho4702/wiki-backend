@@ -66,6 +66,13 @@ public class MigrationItem {
     @Column(name = "target_page_id")
     private Long targetPageId;
 
+    /**
+     * 원본에서 같은 부모 아래 몇 번째였는가(M2). 모르면 null이고, 그때는 발견 순서를 그대로 쓴다.
+     * 재이관에서 원본 순서가 바뀌면 이 값만 갱신해 대상 문서를 옮기지 않고 정렬만 맞춘다.
+     */
+    @Column(name = "sibling_order")
+    private Integer siblingOrder;
+
     @Column(name = "last_error_code", length = 128)
     private String lastErrorCode;
 
@@ -95,6 +102,11 @@ public class MigrationItem {
 
     public static MigrationItem pending(Long jobId, String externalObjectId, String sourceVersion,
                                         String sourceChecksum, String payloadRef) {
+        return pending(jobId, externalObjectId, sourceVersion, sourceChecksum, payloadRef, null);
+    }
+
+    public static MigrationItem pending(Long jobId, String externalObjectId, String sourceVersion,
+                                        String sourceChecksum, String payloadRef, Integer siblingOrder) {
         MigrationItem item = new MigrationItem();
         item.jobId = MigrationSourceKey.require(jobId, "jobId");
         item.externalObjectId = MigrationSourceKey.requireText(externalObjectId, "externalObjectId", 512);
@@ -105,7 +117,20 @@ public class MigrationItem {
         item.stage = MigrationStage.EXTRACT;
         item.status = MigrationItemStatus.PENDING;
         item.retryCount = 0;
+        item.siblingOrder = siblingOrder;
         return item;
+    }
+
+    /**
+     * 원본 형제 순서를 다시 적는다. 바뀐 값이 있을 때만 true라, 재발견이 아무것도 달라지지 않은
+     * 스페이스에 쓸데없는 UPDATE를 만들지 않는다.
+     */
+    public boolean applySiblingOrder(Integer siblingOrder) {
+        if (java.util.Objects.equals(this.siblingOrder, siblingOrder)) {
+            return false;
+        }
+        this.siblingOrder = siblingOrder;
+        return true;
     }
 
     public static String sourceKeyFor(String externalObjectId) {

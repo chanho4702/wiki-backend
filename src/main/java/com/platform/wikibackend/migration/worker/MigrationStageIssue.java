@@ -19,6 +19,11 @@ public record MigrationStageIssue(MigrationIssueSeverity severity, String code, 
         }
     }
 
+    /** 손실이 아니라 알림 — dry-run이 "이만큼 옮길 예정"을 보고할 때 쓴다. */
+    public static MigrationStageIssue info(String code, String sourcePath) {
+        return new MigrationStageIssue(MigrationIssueSeverity.INFO, code, sourcePath);
+    }
+
     public static MigrationStageIssue warning(String code, String sourcePath) {
         return new MigrationStageIssue(MigrationIssueSeverity.WARNING, code, sourcePath);
     }

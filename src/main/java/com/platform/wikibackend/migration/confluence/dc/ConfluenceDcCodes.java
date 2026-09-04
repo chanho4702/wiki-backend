@@ -21,6 +21,12 @@ public final class ConfluenceDcCodes {
      */
     public static final String REDIRECT_REFUSED = "DC_REDIRECT_REFUSED";
 
+    /**
+     * 목록이 알려준 크기를 믿고 받았는데 실제 본문이 상한을 넘었다. 다시 받아도 같으므로
+     * 재시도하지 않는다 — 호출부가 이 코드를 잡아 경고로 낮추고 그 파일만 건너뛴다.
+     */
+    public static final String ATTACHMENT_TOO_LARGE = "DC_ATTACHMENT_TOO_LARGE";
+
     private ConfluenceDcCodes() {
     }
 }

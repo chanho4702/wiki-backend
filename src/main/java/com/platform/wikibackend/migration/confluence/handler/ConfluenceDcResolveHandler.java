@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.wikibackend.migration.MigrationPayloadStore;
 import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
+import com.platform.wikibackend.migration.confluence.link.MigrationLinkResolver;
+import com.platform.wikibackend.migration.confluence.link.MigrationLinkRewriter;
+import com.platform.wikibackend.migration.confluence.media.MigrationAttachmentImporter;
+import com.platform.wikibackend.migration.confluence.restriction.MigrationRestrictionApplier;
 import com.platform.wikibackend.migration.ir.DocumentIrMarkdownContext;
 import com.platform.wikibackend.migration.ir.DocumentIrMarkdownResult;
 import com.platform.wikibackend.migration.ir.DocumentIrMarkdownWriter;
@@ -39,6 +43,13 @@ import java.util.Optional;
  * 재실행 규칙이 여기에 있다. 같은 원본을 같은 상태로 다시 만나면 **아무것도 다시 쓰지 않고** 이미
  * 만든 문서 id를 돌려준다(S1 멱등). 원본이 바뀌었으면 새 리비전으로 갱신한다 — 지우고 다시 만들면
  * 링크·별표·댓글이 딸려 사라진다.
+ *
+ * M2에서 이 단계가 하는 일이 셋 늘었다.
+ * 1. **링크 재작성** — 문서를 쓰기 전에 원본 사이트 URL을 우리 주소로 바꾼다. 아직 안 옮긴 문서를
+ *    가리키면 임시 스킴으로 남기고 잡 마무리 pass가 마저 잇는다.
+ * 2. **첨부 등록** — MEDIA_COPY가 받아 둔 파일을 이 문서의 첨부로 만들고, 본문 참조를 그 URL로 바꾼다.
+ *    페이지가 있어야 첨부를 만들 수 있어 순서가 "문서 → 첨부 → 본문 정리"가 된다.
+ * 3. **제한 적용** — 원본의 보기·편집 제한을 옮긴다. 대조 실패는 공개가 아니라 잠금이다(fail-closed).
  */
 @Component
 @RequiredArgsConstructor
@@ -47,6 +58,9 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
     private final MigrationPayloadStore payloads;
     private final DocumentIrMarkdownWriter markdownWriter;
     private final ImportedPageWriter pageWriter;
+    private final MigrationLinkRewriter linkRewriter;
+    private final MigrationAttachmentImporter attachmentImporter;
+    private final MigrationRestrictionApplier restrictionApplier;
     private final MigrationObjectMappingWriter objectMappings;
     private final MigrationObjectMappingRepository mappings;
     private final MigrationJobRepository jobs;
@@ -92,11 +106,20 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
                 && existing.get().getTargetPageId() != null
                 && pages.existsById(existing.get().getTargetPageId())) {
             // 원본도 그대로고 대상 문서도 살아 있다. 손대지 않는 것이 정답이다 — 다시 쓰면 아무것도
-            // 안 바뀐 리비전이 쌓이고 "수정됨" 알림 대상이 늘어난다.
+            // 안 바뀐 리비전이 쌓이고 "수정됨" 알림 대상이 늘어난다. 다만 형제 순서는 본문과 무관하게
+            // 바뀔 수 있어(checksum은 id+버전이다) 순번만 따로 맞춘다.
+            pageWriter.resequence(existing.get().getTargetPageId(), work.siblingOrder());
             return MigrationStageOutcome.page(existing.get().getTargetPageId(), issues);
         }
 
-        ImportedPageWriter.ImportedPage page = toImportedPage(work, job, snapshot, rendered.markdown(),
+        MigrationLinkResolver.Context linkContext = new MigrationLinkResolver.Context(work.provider(),
+                work.sourceInstanceId(), source == null ? null : source.getBaseUrl(),
+                job.getTargetSpaceId(), false);
+        MigrationLinkRewriter.Result linked =
+                linkRewriter.rewriteSourceLinks(rendered.markdown(), linkContext);
+        issues.addAll(linked.issues());
+
+        ImportedPageWriter.ImportedPage page = toImportedPage(work, job, snapshot, linked.markdown(),
                 issues);
         long pageId;
         if (existing.isPresent() && existing.get().getTargetPageId() != null
@@ -111,11 +134,38 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
             pageId = result.pageId();
             issues.addAll(result.issues());
         }
+
+        issues.addAll(attachBody(work, job, pageId, linked.markdown()));
+        issues.addAll(restrictionApplier.apply(snapshot, pageId, job.getRequestedBy()));
+
         // object map은 여기서 바로 갱신한다. worker는 DONE에 닿을 때 한 번 더 부르는데(멱등),
         // 그 사이의 VERIFY가 실패해 재시도되면 이 항목의 자식들이 부모를 못 찾는다.
         objectMappings.upsert(work.provider(), work.sourceInstanceId(), work.externalObjectId(),
                 work.sourceVersion(), work.sourceChecksum(), pageId, work.jobId());
         return MigrationStageOutcome.page(pageId, issues);
+    }
+
+    /**
+     * 첨부를 이 문서에 붙이고 본문의 `attachment:{파일명}` 참조를 실제 주소로 바꾼다.
+     *
+     * 문서를 이미 쓴 뒤에야 할 수 있는 일이다 — 첨부 레코드는 페이지에 매달리고, 본문 참조는 그
+     * 첨부의 id로 걸린다. 본문을 다시 누르되 새 리비전은 만들지 않는다(같은 저장의 마무리다).
+     */
+    private List<MigrationStageIssue> attachBody(MigrationStageWork work, MigrationJob job,
+                                                 long pageId, String markdown) {
+        List<MigrationStageIssue> issues = new ArrayList<>();
+        MigrationAttachmentImporter.Registered registered =
+                attachmentImporter.register(work.itemId(), pageId, job.getRequestedBy());
+        issues.addAll(registered.issues());
+
+        MigrationAttachmentImporter.Rewritten rewritten =
+                attachmentImporter.rewrite(markdown, registered);
+        issues.addAll(rewritten.issues());
+        if (!rewritten.markdown().equals(markdown)) {
+            pageWriter.rewriteBody(pageId, rewritten.markdown());
+            payloads.write(work.itemId(), MigrationPayloadKind.MARKDOWN, rewritten.markdown());
+        }
+        return issues;
     }
 
     private ImportedPageWriter.ImportedPage toImportedPage(MigrationStageWork work, MigrationJob job,
@@ -124,9 +174,9 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
         Long parentId = resolveParent(work, snapshot, issues);
         JsonNode createdBy = snapshot.path("history").path("createdBy");
         String displayName = createdBy.path("displayName").asText("");
-        // 이메일로 우리 사용자를 찾는 창구가 아직 없다(PrincipalDirectory엔 id 조회만 있다).
-        // 계정을 새로 만들지 않는 것이 이 모듈의 전제이므로(기획 §2 제외), M1은 잡 요청자를
-        // 작성자로 두고 원본 이름은 리비전 편집자 이름으로 남긴다.
+        // 이메일로 우리 사용자를 찾는 창구가 아직 없다(org proto 0.14.0에 조회 API가 없다).
+        // 계정을 새로 만들지 않는 것이 이 모듈의 전제이므로(기획 §2 제외), 잡 요청자를 작성자로 두고
+        // 원본 이름은 리비전 편집자 이름으로 남긴다.
         issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.AUTHOR_UNMAPPED,
                 "user:" + (displayName.isBlank() ? "unknown" : displayName)));
 
@@ -141,7 +191,7 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
         Instant updatedAt = parseInstant(snapshot.path("version").path("when").asText(""));
         return new ImportedPageWriter.ImportedPage(job.getTargetSpaceId(), parentId,
                 work.externalObjectId(), snapshot.path("title").asText(""), markdown,
-                job.getRequestedBy(), displayName, createdAt, updatedAt, labels);
+                job.getRequestedBy(), displayName, createdAt, updatedAt, labels, work.siblingOrder());
     }
 
     /**

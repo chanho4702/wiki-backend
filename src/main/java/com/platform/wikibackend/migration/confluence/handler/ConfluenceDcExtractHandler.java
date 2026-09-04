@@ -140,8 +140,47 @@ public class ConfluenceDcExtractHandler implements MigrationStageHandler {
             row.put("title", file.path("title").asText(""));
             row.put("mediaType", file.path("extensions").path("mediaType").asText(""));
             row.put("fileSize", file.path("extensions").path("fileSize").asLong(0));
+            // 다운로드 URL이 version 파라미터를 요구한다. 없으면 1로 둔다 — 첫 버전이 정상이다.
+            row.put("version", file.path("version").path("number").asInt(1));
         }
+
+        out.set("restrictions", trimRestrictions(content.path("restrictions")));
         return out;
+    }
+
+    /**
+     * 페이지 제한을 우리 계약 형태로 눕힌다(M2).
+     *
+     * DC 응답은 `restrictions.read.restrictions.user.results[]`처럼 네 겹인데, 그대로 담으면
+     * 버전마다 다른 껍데기가 스냅샷에 새어 든다. 여기서 이름만 남기고, 우리 계정 대조는 RESOLVE가 한다.
+     */
+    private ObjectNode trimRestrictions(JsonNode restrictions) {
+        ObjectNode out = objectMapper.createObjectNode();
+        copyRestrictionGroup(restrictions.path("read"), out.putObject("read"));
+        copyRestrictionGroup(restrictions.path("update"), out.putObject("update"));
+        return out;
+    }
+
+    private void copyRestrictionGroup(JsonNode source, ObjectNode target) {
+        var users = target.putArray("users");
+        for (JsonNode user : source.path("restrictions").path("user").path("results")) {
+            ObjectNode row = objectMapper.createObjectNode();
+            row.put("username", user.path("username").asText(""));
+            row.put("displayName", user.path("displayName").asText(""));
+            row.put("email", user.path("email").asText(""));
+            if (!row.path("username").asText("").isBlank()
+                    || !row.path("displayName").asText("").isBlank()
+                    || !row.path("email").asText("").isBlank()) {
+                users.add(row);
+            }
+        }
+        var groups = target.putArray("groups");
+        for (JsonNode group : source.path("restrictions").path("group").path("results")) {
+            String name = group.path("name").asText("");
+            if (!name.isBlank()) {
+                groups.add(name);
+            }
+        }
     }
 
     private void copyText(JsonNode from, ObjectNode to, String field) {

@@ -74,6 +74,22 @@ public class PageRevision {
         return snapshotOf(page, null);
     }
 
+    /**
+     * 이미 뜬 스냅샷의 본문만 바꾼다(W29 M2 첨부 참조 정리).
+     *
+     * 문서 본문을 새 버전 없이 눌렀다면 이력도 같이 눌러야 한다 — 안 그러면 "현재"와 같은 번호의
+     * 리비전이 서로 다른 본문을 들고 있어, 복원이 첨부 참조를 되돌려 깨뜨린다.
+     */
+    public void replaceContent(String content) {
+        if (RevisionContent.shouldCompress(content)) {
+            this.contentGzip = RevisionContent.compress(content);
+            this.contentText = null;
+        } else {
+            this.contentText = content;
+            this.contentGzip = null;
+        }
+    }
+
     /** 편집자 이름을 붙인다 — 팩토리는 Page만 알고 Page는 이름을 모르므로 호출부가 얹는다. */
     public PageRevision withEditorName(String name) {
         if (name != null && !name.isBlank()) {

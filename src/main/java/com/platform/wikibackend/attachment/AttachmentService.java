@@ -105,6 +105,78 @@ public class AttachmentService {
         }
     }
 
+    /**
+     * 이관용 스테이징(W29 M2) — 바이트를 저장소에 넣고 좌표만 돌려준다. 아직 어떤 페이지에도 붙지 않는다.
+     *
+     * MEDIA_COPY 단계는 RESOLVE보다 먼저 돌아 대상 페이지가 아직 없다. 그래서 파일을 먼저 받아 두고
+     * 페이지가 생긴 뒤 {@link #registerStored}가 그 객체를 **그대로 가리킨다** — 두 번 올리지 않는다.
+     *
+     * 트랜잭션을 열지 않는다. 저장소 쓰기는 롤백되지 않는 외부 작업이고, 여기서 커넥션을 잡고 있으면
+     * 100MB 파일 하나가 커넥션 풀을 그만큼 붙든다. 실패한 스테이징 객체는 고아로 남지만, 그것이
+     * 재시도마다 원본을 다시 긁는 것보다 싸다.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public StagedObject stageImported(byte[] content) {
+        try {
+            String contentType;
+            try (InputStream probe = new java.io.ByteArrayInputStream(content)) {
+                contentType = AttachmentMediaTypes.detect(probe);
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            String checksum = HexFormat.of().formatHex(digest.digest(content));
+            StoredObject stored;
+            try (InputStream input = new java.io.ByteArrayInputStream(content)) {
+                stored = storage.store(input, content.length, contentType);
+            }
+            return new StagedObject(stored, contentType, checksum, content.length);
+        } catch (IOException e) {
+            throw new UncheckedIOException("이관 첨부 스테이징 실패", e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256을 사용할 수 없습니다", e);
+        }
+    }
+
+    /**
+     * 이미 저장소에 있는 객체를 첨부 레코드로 등록한다(W29 M2 내부 경로).
+     *
+     * upload와 다른 점 세 가지, 전부 의도한 것이다.
+     * 1. **권한 검사를 하지 않는다** — 부르는 쪽은 잡 요청자(대상 스페이스 ADMIN)를 대신하는 워커이고,
+     *    검사 대상인 페이지는 방금 그 워커가 만든 것이다.
+     * 2. **바이트를 다시 올리지 않는다** — 스테이징 객체를 그대로 가리킨다. 같은 파일을 두 벌 두면
+     *    100페이지짜리 스페이스에서 저장소가 두 배가 된다.
+     * 3. **감사 로그를 남기지 않는다** — 수백 건의 이관을 사람이 올린 것처럼 기록하면 감사 로그가
+     *    쓸모없어진다. 이관 자체의 기록은 migration_job이 들고 있다.
+     *
+     * 같은 이름이 이미 있으면 W23 규칙(같은 이름 재업로드 = 새 버전)을 그대로 타되, checksum이 같으면
+     * 아무것도 하지 않는다 — 재이관이 같은 파일로 버전만 쌓는 것을 막는다.
+     */
+    public long registerStored(long userId, long pageId, String filename, String contentType,
+                               long sizeBytes, String checksum, StoredObject stored) {
+        Page page = pages.getOwned(pageId);
+        Attachment existing = attachments
+                .findByPageIdAndFilenameAndLifecycleStatus(pageId, filename,
+                        AttachmentLifecycleStatus.CONFIRMED)
+                .orElse(null);
+        if (existing != null) {
+            if (checksum != null && checksum.equals(existing.getChecksumSha256())) {
+                return existing.getId();
+            }
+            versions.save(com.platform.wikibackend.domain.AttachmentVersion.snapshotOf(existing));
+            existing.replaceWith(contentType, sizeBytes, stored, checksum, userId);
+            Attachment replaced = attachments.save(existing);
+            events.afterCommit(WikiEvents.attachmentAdded(userId, replaced, page.getSpaceId()));
+            return replaced.getId();
+        }
+        Attachment saved = attachments.save(Attachment.of(pageId, filename, contentType, sizeBytes,
+                stored, checksum, userId, AttachmentLifecycleStatus.CONFIRMED));
+        events.afterCommit(WikiEvents.attachmentAdded(userId, saved, page.getSpaceId()));
+        return saved.getId();
+    }
+
+    /** 스테이징 결과 — 아직 어떤 페이지에도 붙지 않은 저장 객체와 그 지문. */
+    public record StagedObject(StoredObject stored, String contentType, String checksum, long sizeBytes) {
+    }
+
     @Transactional(readOnly = true)
     public List<AttachmentResponse> list(long userId, long pageId) {
         Page page = pages.getOwned(pageId);

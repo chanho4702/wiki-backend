@@ -130,6 +130,18 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     List<com.platform.wikibackend.page.dto.PageTreeItem> findByTitles(
             @Param("spaceId") Long spaceId, @Param("titles") Collection<String> titles);
 
+    /**
+     * 제목이 정확히 같은 문서(W29 M2 링크 재작성). 여러 건이면 어느 것인지 정할 수 없다는 뜻이라
+     * 목록을 그대로 돌려주고 호출부가 LINK_AMBIGUOUS로 보고한다 — 임의로 하나를 고르지 않는다.
+     */
+    @Query("""
+            select p from Page p
+             where p.spaceId = :spaceId and lower(trim(p.title)) = lower(trim(:title))
+             order by p.id asc
+            """)
+    List<Page> findBySpaceIdAndTitleIgnoringCase(@Param("spaceId") Long spaceId,
+                                                 @Param("title") String title);
+
     /** 제목 부분 일치 — 사이드바 필터와 `[[` 자동완성이 쓴다(클라이언트 전량 필터 대체). */
     @Query("""
             select new com.platform.wikibackend.page.dto.PageTreeItem(

@@ -13,5 +13,12 @@ public record MigrationItemEnqueueRequest(
         @Size(max = 100) String sourceVersion,
         @NotBlank @Pattern(regexp = "[a-f0-9]{64}", message = "sourceChecksum은 소문자 SHA-256이어야 합니다")
         String sourceChecksum,
-        @NotBlank @Size(max = 1024) String payloadRef) {
+        @NotBlank @Size(max = 1024) String payloadRef,
+        /** 원본이 정한 형제 순서(M2). 모르면 null — 그때는 발견 순서를 그대로 쓴다. */
+        Integer siblingOrder) {
+
+    public MigrationItemEnqueueRequest(String externalObjectId, String sourceVersion,
+                                       String sourceChecksum, String payloadRef) {
+        this(externalObjectId, sourceVersion, sourceChecksum, payloadRef, null);
+    }
 }

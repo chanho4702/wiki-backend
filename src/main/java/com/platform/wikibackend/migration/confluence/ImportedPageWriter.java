@@ -66,7 +66,7 @@ public class ImportedPageWriter {
 
         Page page = pages.save(Page.imported(source.spaceId(), source.parentId(), title,
                 source.markdown(), source.authorId(), source.createdAt(), source.updatedAt()));
-        page.resequence(pages.findMaxSortOrder(source.spaceId(), source.parentId()) + 1);
+        page.resequence(sortOrderOf(source));
         pages.flush();
 
         writeRevision(page, source, null);
@@ -89,6 +89,11 @@ public class ImportedPageWriter {
         Page page = pages.findById(pageId).orElseThrow();
 
         page.reimport(title, source.markdown(), source.authorId(), source.updatedAt());
+        if (source.siblingOrder() != null) {
+            // 원본에서 순서만 바뀐 경우다. movePage가 아니라 sortOrder만 눌러 준다 —
+            // 이동 경로는 부모 재계산·권한 검사까지 도는데 여기서는 부모가 그대로다.
+            page.resequence(source.siblingOrder());
+        }
         pages.flush();
 
         writeRevision(page, source, changeNote);
@@ -98,6 +103,67 @@ public class ImportedPageWriter {
         pages.overwriteTimestamps(page.getId(), page.getCreatedAt(), source.updatedAt());
         events.afterCommit(WikiEvents.pageUpdated(source.authorId(), page));
         return new ImportResult(page.getId(), issues);
+    }
+
+    /**
+     * 첨부를 등록한 뒤 본문의 참조만 실제 URL로 바꿔 넣는다(M2 §4.1).
+     *
+     * 새 리비전을 만들지 않는다. 첨부 참조 정리는 이관이라는 한 번의 저장을 끝맺는 일이지 별도의
+     * 편집이 아니고, 리비전을 하나 더 쌓으면 옮겨온 문서마다 "v2 수정됨"이 생겨 이력이 거짓이 된다.
+     * 대신 방금 쓴 리비전의 본문도 같이 눌러 현재와 이력을 일치시킨다.
+     *
+     * 검색 색인은 다시 쏜다 — 본문이 바뀌었으므로 색인도 바뀌어야 한다.
+     *
+     * @return 실제로 바뀌었으면 true
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean rewriteBody(long pageId, String markdown) {
+        Page page = pages.findById(pageId).orElseThrow();
+        if (page.getContent().equals(markdown)) {
+            return false;
+        }
+        page.rewriteImportedContent(markdown);
+        pages.flush();
+        revisions.findByPageIdAndVersion(pageId, page.getVersion())
+                .ifPresent(revision -> {
+                    revision.replaceContent(markdown);
+                    revisions.save(revision);
+                });
+        tasks.sync(page);
+        labelService.reindexLinks(page);
+        events.afterCommit(WikiEvents.pageUpdated(page.getUpdatedBy(), page));
+        return true;
+    }
+
+    /**
+     * 순번만 갱신한다(M2 §4.4). 원본에서 문서 순서만 바뀐 재이관이 여기로 온다 — 본문이 그대로라
+     * 리비전도 이벤트도 만들 이유가 없다.
+     *
+     * @return 실제로 바뀌었으면 true
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean resequence(long pageId, Integer siblingOrder) {
+        if (siblingOrder == null) {
+            return false;
+        }
+        Page page = pages.findById(pageId).orElse(null);
+        if (page == null || page.getSortOrder() == siblingOrder.longValue()) {
+            return false;
+        }
+        page.resequence(siblingOrder);
+        pages.flush();
+        return true;
+    }
+
+    /**
+     * 정렬 순번. 원본이 알려준 형제 순서가 있으면 그대로 쓰고(M2 §4.4), 없으면 발견 순서대로
+     * 뒤에 붙인다(M1 규칙).
+     */
+    private long sortOrderOf(ImportedPage source) {
+        if (source.siblingOrder() != null) {
+            return source.siblingOrder();
+        }
+        return pages.findMaxSortOrder(source.spaceId(), source.parentId()) + 1;
     }
 
     /**
@@ -150,7 +216,8 @@ public class ImportedPageWriter {
      */
     public record ImportedPage(long spaceId, Long parentId, String externalObjectId, String title,
                                String markdown, long authorId, String authorDisplayName,
-                               Instant createdAt, Instant updatedAt, List<String> labels) {
+                               Instant createdAt, Instant updatedAt, List<String> labels,
+                               Integer siblingOrder) {
 
         public ImportedPage {
             labels = labels == null ? List.of() : List.copyOf(labels);

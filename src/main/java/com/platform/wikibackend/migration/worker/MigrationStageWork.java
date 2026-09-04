@@ -22,6 +22,8 @@ public record MigrationStageWork(
         String sourceChecksum,
         String payloadRef,
         Long targetPageId,
+        /** 원본이 정한 형제 순서(M2). null이면 발견 순서를 그대로 쓴다. */
+        Integer siblingOrder,
         int attempt) {
 
     public boolean dryRun() {

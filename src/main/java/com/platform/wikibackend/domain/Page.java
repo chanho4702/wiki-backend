@@ -182,6 +182,17 @@ public class Page {
         this.content = content;
     }
 
+    /**
+     * 이관 직후 본문의 첨부 참조를 실제 첨부 URL로 바꿔치기한다(W29 M2).
+     *
+     * 첨부 레코드는 페이지가 있어야 만들 수 있고 본문 참조는 그 id로 걸리므로, 문서를 한 번 쓰고
+     * 첨부를 등록한 뒤 본문만 다시 눌러야 한다. 그 눌림은 **같은 저장의 마무리**이지 새 편집이
+     * 아니므로 version을 올리지 않는다 — 올리면 이관 문서마다 "v2 수정됨"이 생긴다.
+     */
+    public void rewriteImportedContent(String content) {
+        this.content = content;
+    }
+
     /** 이모지 아이콘 변경(null = 해제) — 메타데이터라 version·리비전을 올리지 않는다(rankTo와 같은 원칙). */
     public void changeIcon(String icon) {
         this.icon = icon;

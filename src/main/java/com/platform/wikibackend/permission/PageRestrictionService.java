@@ -102,6 +102,33 @@ public class PageRestrictionService {
                 inheritedView(page));
     }
 
+    /**
+     * 이관 전용 내부 교체(W29 M2 §4.3).
+     *
+     * 공개 경로({@link #replace})와 세 가지가 다르고, 전부 의도한 것이다.
+     * 1. **권한 검사를 하지 않는다** — 부르는 쪽은 잡 요청자(대상 스페이스 ADMIN)를 대신하는 워커이고,
+     *    대상 문서는 방금 그 워커가 만든 것이다.
+     * 2. **셀프 락아웃 가드를 걸지 않는다** — 원본의 제한을 그대로 옮기는 것이 목적이고, 요청자가
+     *    목록에 없는 구성도 원본에 있었다면 그것이 정답이다(ADMIN이 공개 경로에서 갖는 재량과 같다).
+     * 3. **감사 로그를 남기지 않는다** — 수백 건의 이관을 사람이 건 것처럼 기록하면 "언제부터 이
+     *    페이지가 잠겼나"의 근거가 오히려 흐려진다. 이관의 기록은 migration_job이 들고 있다.
+     *
+     * 주체 실재 검증(principalDirectory)도 부르지 않는다 — 여기 오는 id는 org 대조를 이미 통과했거나
+     * 잡 요청자 본인이다.
+     */
+    public void replaceImported(long pageId, List<RestrictionPrincipal> view,
+                                List<RestrictionPrincipal> edit, long actorId) {
+        restrictions.deleteByPageId(pageId);
+        List<PageRestriction> rows = new ArrayList<>();
+        for (RestrictionPrincipal p : dedupe(view)) {
+            rows.add(PageRestriction.of(pageId, PageRestriction.Type.VIEW, p.toType(), p.id(), actorId));
+        }
+        for (RestrictionPrincipal p : dedupe(edit)) {
+            rows.add(PageRestriction.of(pageId, PageRestriction.Type.EDIT, p.toType(), p.id(), actorId));
+        }
+        restrictions.saveAll(rows);
+    }
+
     private boolean matchesSelf(long userId, RestrictionPrincipal p) {
         if (p.toType() == PageRestriction.PrincipalType.USER) return p.id() == userId;
         return teams.teamsOf(userId).contains(p.id());

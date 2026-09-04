@@ -150,8 +150,44 @@ class ConfluenceDcStageHandlerTest {
         assertThat(payloads.read(item.getId(), MigrationPayloadKind.IR)).isPresent();
     }
 
+    /**
+     * MEDIA_COPY는 파일을 받아 두고, 그 사실을 IR에 반영한다. IR을 다시 만드는 것이 핵심이다 —
+     * NORMALIZE는 자산 목록이 비어 있는 채로 돌아 이미지를 "옮기지 못한 원본 요소"로 눕히기 때문에,
+     * 여기서 갈아끼우지 않으면 파일은 옮겨졌는데 본문에는 안내 문구만 남는다.
+     */
     @Test
-    void MEDIA_COPY는_옮기지_못한_첨부를_경고로_남긴다() {
+    void MEDIA_COPY는_첨부를_받아_두고_IR을_다시_만든다() throws Exception {
+        dc.putPage("10001", "서비스 운영 가이드", null,
+                "<p>구성도</p><ac:image><ri:attachment ri:filename=\"topology.png\"/></ac:image>",
+                27, List.of(), List.of(FakeConfluenceDcServer.png("topology.png")),
+                FakeConfluenceDcServer.FakeRestrictions.none());
+        MigrationItem item = enqueue("10001", "27");
+        extract.handle(work(item, MigrationStage.EXTRACT, "27"));
+        normalize.handle(work(item, MigrationStage.NORMALIZE, "27"));
+        // 첫 정규화는 자산 목록이 비어 있어 이미지를 "옮기지 못한 원본 요소"로 눕힌다.
+        assertThat(json.readTree(payloads.require(item.getId(), MigrationPayloadKind.IR).body())
+                .path("assets")).isEmpty();
+
+        mediaCopy.handle(work(item, MigrationStage.MEDIA_COPY, "27"));
+
+        String manifest = payloads.require(item.getId(), MigrationPayloadKind.MEDIA_MANIFEST).body();
+        assertThat(json.readTree(manifest).path("files")).hasSize(1);
+        assertThat(json.readTree(manifest).path("files").get(0).path("filename").asText())
+                .isEqualTo("topology.png");
+        // 재정규화 결과 — IR에 자산이 선언되고 본문이 그 자산을 가리킨다.
+        String ir = payloads.require(item.getId(), MigrationPayloadKind.IR).body();
+        assertThat(json.readTree(ir).path("assets")).hasSize(1);
+        assertThat(json.readTree(ir).path("assets").get(0).path("sourceExternalId").asText())
+                .isEqualTo("attachment:topology.png");
+    }
+
+    /** 상한을 넘는 파일은 받지 않고 보고서에만 남긴다 — 워커가 메모리째 넘어가면 안 된다. */
+    @Test
+    void MEDIA_COPY는_상한을_넘는_첨부를_건너뛰고_경고한다() {
+        dc.putPage("10001", "서비스 운영 가이드", null,
+                "<p><ac:link><ri:attachment ri:filename=\"huge.bin\"/></ac:link></p>", 27, List.of(),
+                List.of(FakeConfluenceDcServer.oversized("huge.bin", 10_000_000_000L)),
+                FakeConfluenceDcServer.FakeRestrictions.none());
         MigrationItem item = enqueue("10001", "27");
         extract.handle(work(item, MigrationStage.EXTRACT, "27"));
         normalize.handle(work(item, MigrationStage.NORMALIZE, "27"));
@@ -160,8 +196,8 @@ class ConfluenceDcStageHandlerTest {
 
         assertThat(outcome.issues())
                 .anySatisfy(issue -> {
-                    assertThat(issue.code()).isEqualTo(ConfluenceDcIssues.ATTACHMENT_NOT_COPIED);
-                    assertThat(issue.sourcePath()).isEqualTo("attachment:topology.png");
+                    assertThat(issue.code()).isEqualTo(ConfluenceDcIssues.ATTACHMENT_TOO_LARGE);
+                    assertThat(issue.sourcePath()).isEqualTo("attachment:huge.bin");
                 });
     }
 
@@ -248,6 +284,6 @@ class ConfluenceDcStageHandlerTest {
                                             Long targetPageId) {
         return new MigrationStageWork(job.getId(), item.getId(), "token", MigrationProvider.CONFLUENCE_DC,
                 job.getSourceInstanceId(), job.getMode(), spaceId, stage, item.getExternalObjectId(),
-                version, CHECKSUM, item.getPayloadRef(), targetPageId, 1);
+                version, CHECKSUM, item.getPayloadRef(), targetPageId, item.getSiblingOrder(), 1);
     }
 }

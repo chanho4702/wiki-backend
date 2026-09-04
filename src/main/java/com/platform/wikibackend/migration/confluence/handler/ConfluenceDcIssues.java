@@ -6,8 +6,32 @@ public final class ConfluenceDcIssues {
     /** enqueue 때 본 버전과 실제로 읽은 버전이 다르다 — 발견 뒤 원본이 수정됐다. */
     public static final String SOURCE_VERSION_DRIFT = "SOURCE_VERSION_DRIFT";
 
-    /** M1은 첨부 본체를 옮기지 않는다(M2). 본문의 참조는 남지만 파일은 아직 없다. */
+    /** 첨부 본체를 옮기지 못했다. 본문의 참조는 남지만 파일은 없다. */
     public static final String ATTACHMENT_NOT_COPIED = "ATTACHMENT_NOT_COPIED";
+
+    /** dry-run이 "이 파일을 이만큼 옮길 예정"이라고 알린다(INFO). 손실이 아니다. */
+    public static final String ATTACHMENT_PLANNED = "ATTACHMENT_PLANNED";
+
+    /** 파일 하나가 상한(platform.wiki.migration.dc.max-attachment-bytes)을 넘어 건너뛰었다. */
+    public static final String ATTACHMENT_TOO_LARGE = "ATTACHMENT_TOO_LARGE";
+
+    /** 본문이 가리키는 파일명에 해당하는 첨부 레코드를 못 찾아 참조를 그대로 두었다. */
+    public static final String ATTACHMENT_REF_UNRESOLVED = "ATTACHMENT_REF_UNRESOLVED";
+
+    /** 원본 사이트 링크가 가리키는 문서를 끝내 못 찾아 원본 절대 URL로 되돌렸다. */
+    public static final String LINK_UNRESOLVED = "LINK_UNRESOLVED";
+
+    /** 제목으로 찾은 문서가 대상 스페이스에 여럿이라 어느 것인지 정할 수 없었다. */
+    public static final String LINK_AMBIGUOUS = "LINK_AMBIGUOUS";
+
+    /** 링크의 앵커가 대상 문서의 헤딩 어느 것과도 맞지 않아 앵커만 떼었다. */
+    public static final String ANCHOR_DROPPED = "ANCHOR_DROPPED";
+
+    /**
+     * 원본 제한의 사용자·그룹을 우리 계정으로 대조하지 못했다. 공개로 풀지 않고 잡 요청자
+     * 단독 제한으로 닫는다(ADR-W14-07 fail-closed) — 잘못 열린 문서가 잘못 잠긴 문서보다 나쁘다.
+     */
+    public static final String RESTRICTION_PRINCIPAL_UNMAPPED = "RESTRICTION_PRINCIPAL_UNMAPPED";
 
     /** 조상의 대상 페이지를 찾지 못해 루트에 두었다. */
     public static final String PARENT_NOT_FOUND = "PARENT_NOT_FOUND";
