@@ -14,9 +14,13 @@ public interface MigrationIssueRepository extends JpaRepository<MigrationIssue, 
 
     Optional<MigrationIssue> findByItemIdAndIssueKey(Long itemId, String issueKey);
 
+    /**
+     * 손실 보고서의 code별 집계. 대표 위치는 min(source_path)로 뽑는다 — 어느 것이든 하나면
+     * 충분하고, 집계 쿼리 안에서 결정되므로 code마다 행을 한 번 더 읽지 않는다.
+     */
     @Query("""
             select new com.platform.wikibackend.migration.report.MigrationIssueSummary(
-                       s.severity, s.code, count(s), sum(s.occurrenceCount))
+                       s.severity, s.code, count(s), sum(s.occurrenceCount), min(s.sourcePath))
               from MigrationIssue s
              where s.jobId = :jobId
              group by s.severity, s.code

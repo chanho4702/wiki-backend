@@ -10,6 +10,8 @@ import com.platform.wikibackend.migration.model.MigrationProvider;
 import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
 import com.platform.wikibackend.migration.repository.MigrationItemRepository;
 import com.platform.wikibackend.migration.repository.MigrationJobRepository;
+import com.platform.wikibackend.migration.repository.MigrationPayloadRepository;
+import com.platform.wikibackend.migration.repository.MigrationSourceRepository;
 import com.platform.wikibackend.migration.repository.MigrationObjectMappingRepository;
 import com.platform.wikibackend.permission.FakePermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
@@ -50,6 +52,8 @@ class MigrationControllerTest {
     @Autowired MigrationObjectMappingRepository mappings;
     @Autowired MigrationItemRepository items;
     @Autowired MigrationJobRepository jobs;
+    @Autowired MigrationSourceRepository sources;
+    @Autowired MigrationPayloadRepository payloads;
     @Autowired SpaceRepository spaces;
 
     private Long spaceId;
@@ -59,6 +63,8 @@ class MigrationControllerTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         permissions.reset();
         issues.deleteAllInBatch();
+        payloads.deleteAllInBatch();
+        sources.deleteAllInBatch();
         mappings.deleteAllInBatch();
         items.deleteAllInBatch();
         jobs.deleteAllInBatch();
@@ -138,8 +144,118 @@ class MigrationControllerTest {
                 .andExpect(jsonPath("$.issues[0].code").value("NOTION_FORBIDDEN"))
                 .andExpect(jsonPath("$.issues[0].severity").value("ERROR"))
                 .andExpect(jsonPath("$.issues[0].occurrences").value(1))
+                // 대표 위치가 없으면 화면이 "MACRO_OPAQUE 3건"까지만 알고 어디였는지 모른다.
+                .andExpect(jsonPath("$.issues[0].sampleSourcePath").value("page-9"))
                 .andExpect(jsonPath("$.deadLetters[0].externalObjectId").value("page-9"))
                 .andExpect(jsonPath("$.deadLetters[0].lastErrorCode").value("NOTION_FORBIDDEN"));
+    }
+
+    @Test
+    void 연결_확인과_잡_목록은_전역_관리자만_할_수_있다() throws Exception {
+        // 대상 스페이스가 아직 없거나 여러 스페이스에 걸치므로 스페이스 ADMIN으로는 판정할 수 없다.
+        mvc.perform(post("/api/wiki/migrations/confluence-dc/probe").with(asUser(ADMIN, "Admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of(
+                                "baseUrl", "https://wiki.example.com",
+                                "spaceKey", "ENG",
+                                "token", "pat-token"))))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/wiki/migrations").with(asUser(ADMIN, "Admin")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 전역_관리자는_잡_목록을_최신순으로_본다() throws Exception {
+        permissions.allowAll(ADMIN);
+        long first = createJob(MigrationJobMode.DRY_RUN);
+        long second = createJob(MigrationJobMode.IMPORT);
+
+        mvc.perform(get("/api/wiki/migrations").with(asUser(ADMIN, "Admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(second))
+                .andExpect(jsonPath("$[1].id").value(first))
+                .andExpect(jsonPath("$[0].provider").value("NOTION"))
+                .andExpect(jsonPath("$[0].sourceSpaceKey").doesNotExist());
+    }
+
+    @Test
+    void 상세는_원본_요약과_단계별_집계를_함께_준다() throws Exception {
+        long jobId = createConfluenceJob();
+
+        mvc.perform(get("/api/wiki/migrations/{id}", jobId).with(asUser(ADMIN, "Admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("CONFLUENCE_DC"))
+                // baseUrl의 호스트가 sourceInstanceId로 채워진다 — 관리자가 두 번 입력하지 않는다.
+                .andExpect(jsonPath("$.sourceInstanceId").value("wiki.example.com"))
+                .andExpect(jsonPath("$.source.baseUrl").value("https://wiki.example.com"))
+                .andExpect(jsonPath("$.source.spaceKey").value("ENG"))
+                .andExpect(jsonPath("$.source.discoveredCount").value(0))
+                // 토큰은 어떤 응답에도 실리지 않는다(기획 P8).
+                .andExpect(jsonPath("$.source.token").doesNotExist())
+                .andExpect(jsonPath("$.counts.byStatus").exists())
+                .andExpect(jsonPath("$.counts.byStage").exists());
+    }
+
+    @Test
+    void CONFLUENCE_DC_잡은_원본_정보_없이_만들_수_없다() throws Exception {
+        Map<String, Object> body = Map.of(
+                "provider", "CONFLUENCE_DC",
+                "targetSpaceId", spaceId,
+                "mode", "IMPORT");
+
+        mvc.perform(post("/api/wiki/migrations").with(asUser(ADMIN, "Admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("원본 컨플루언스 접속 정보가 필요합니다"));
+    }
+
+    @Test
+    void http가_아닌_원본_주소는_거부한다() throws Exception {
+        // SSRF 1차 방어 — 스킴을 열어두면 서버 로컬 파일을 읽게 만들 수 있다.
+        Map<String, Object> body = Map.of(
+                "provider", "CONFLUENCE_DC",
+                "targetSpaceId", spaceId,
+                "mode", "IMPORT",
+                "source", Map.of("baseUrl", "file:///etc/passwd", "spaceKey", "ENG", "token", "t"));
+
+        mvc.perform(post("/api/wiki/migrations").with(asUser(ADMIN, "Admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("원본 컨플루언스 주소는 http 또는 https여야 합니다"));
+    }
+
+    @Test
+    void 항목이_없는_잡은_시작할_수_없다() throws Exception {
+        long jobId = createConfluenceJob();
+
+        mvc.perform(post("/api/wiki/migrations/{id}/start", jobId).with(asUser(ADMIN, "Admin")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error")
+                        .value(MigrationJobService.MIGRATION_NOTHING_DISCOVERED));
+    }
+
+    @Test
+    void 항목_목록은_상태로_거를_수_있다() throws Exception {
+        long jobId = createJob(MigrationJobMode.IMPORT);
+        mvc.perform(post("/api/wiki/migrations/{id}/items", jobId).with(asUser(ADMIN, "Admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(enqueueBody("page-1"))))
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/api/wiki/migrations/{id}/items", jobId).with(asUser(ADMIN, "Admin"))
+                        .param("status", "PENDING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.items[0].externalObjectId").value("page-1"));
+
+        mvc.perform(get("/api/wiki/migrations/{id}/items", jobId).with(asUser(ADMIN, "Admin"))
+                        .param("status", "DEAD_LETTER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
     }
 
     @Test
@@ -177,6 +293,23 @@ class MigrationControllerTest {
                         .content(json.writeValueAsString(createBody(mode))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(response).get("id").asLong();
+    }
+
+    private long createConfluenceJob() throws Exception {
+        Map<String, Object> body = Map.of(
+                "provider", "CONFLUENCE_DC",
+                "targetSpaceId", spaceId,
+                "mode", "IMPORT",
+                "source", Map.of(
+                        "baseUrl", "https://wiki.example.com/",
+                        "spaceKey", "ENG",
+                        "token", "pat-token"));
+        String response = mvc.perform(post("/api/wiki/migrations").with(asUser(ADMIN, "Admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(body)))
+                .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return json.readTree(response).get("id").asLong();
     }

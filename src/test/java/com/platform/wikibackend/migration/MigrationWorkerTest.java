@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * worker 실행기 계약: 점유 → stage 전진 → 재시도/DLQ → job 마감.
@@ -160,8 +161,19 @@ class MigrationWorkerTest {
 
     @Test
     void handler가_없는_provider는_재시도하지_않고_바로_dead_letter다() {
-        assertThat(registry.find(MigrationProvider.CONFLUENCE_DC, MigrationStage.EXTRACT)).isEmpty();
-        MigrationJob job = startedJob(MigrationProvider.CONFLUENCE_DC, MigrationJobMode.DRY_RUN);
+        // W29에서 CONFLUENCE_DC 5단계 handler가 붙어 provider 단위로는 빈 자리가 없다.
+        // 등록되지 않은 조합은 registry가 비재시도 실패로 막는다는 계약만 남는다.
+        assertThat(registry.find(MigrationProvider.CONFLUENCE_DC, MigrationStage.DONE)).isEmpty();
+        assertThatThrownBy(() -> registry.require(MigrationProvider.CONFLUENCE_DC, MigrationStage.DONE))
+                .isInstanceOfSatisfying(MigrationStageException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo(MigrationStageHandlerRegistry.HANDLER_UNAVAILABLE);
+                    assertThat(e.isRetryable()).isFalse();
+                });
+
+        stages.on(MigrationStage.EXTRACT, work -> {
+            throw MigrationStageException.permanent(MigrationStageHandlerRegistry.HANDLER_UNAVAILABLE);
+        });
+        MigrationJob job = startedJob(MigrationProvider.NOTION, MigrationJobMode.DRY_RUN);
         MigrationItem item = enqueue(job, "content-10001");
 
         worker.drain(job.getId(), 20, () -> T0);

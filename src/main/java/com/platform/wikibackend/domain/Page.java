@@ -144,6 +144,28 @@ public class Page {
         return p;
     }
 
+    /**
+     * 외부 위키에서 옮겨온 문서(W29).
+     *
+     * `of`와 갈라놓은 이유는 시각 때문이다. 일반 생성은 "지금"이 곧 생성 시각이지만, 이관은 원본의
+     * 생성·수정 시각을 그대로 들고 와야 사용자가 보는 "마지막 수정일"이 거짓말을 하지 않는다.
+     * 다만 @CreationTimestamp·@UpdateTimestamp가 INSERT 시점에 덮어쓰므로, 실제 보존은 저장 뒤
+     * PageRepository.overwriteTimestamps가 한 번 더 눌러 완성한다 — 이 팩토리만으로는 부족하다.
+     */
+    public static Page imported(Long spaceId, Long parentId, String title, String content, Long authorId,
+                                Instant createdAt, Instant updatedAt) {
+        Page p = of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
+        p.createdAt = createdAt;
+        p.updatedAt = updatedAt;
+        return p;
+    }
+
+    /** 재이관으로 원본이 바뀐 문서를 갱신한다 — 수정 시각도 원본 것으로 되돌린다. */
+    public void reimport(String title, String content, Long editorId, Instant updatedAt) {
+        edit(title, content, editorId);
+        this.updatedAt = updatedAt;
+    }
+
     /** 저장 = 새 버전. 호출부(서비스)가 expectedVersion 검사 후 호출한다. */
     public void edit(String title, String content, Long editorId) {
         this.title = title;

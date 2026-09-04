@@ -79,5 +79,10 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter'
     testRuntimeOnly 'com.h2database:h2'
 }
-tasks.named('test') { useJUnitPlatform() }
+tasks.named('test') {
+    useJUnitPlatform()
+    // 골든 파일 재생성 스위치를 테스트 JVM까지 넘긴다: ./gradlew test -Dgolden.write=true
+    // (Gradle은 데몬의 시스템 프로퍼티를 테스트 JVM에 자동으로 전달하지 않는다)
+    systemProperty 'golden.write', System.getProperty('golden.write', 'false')
+}
 tasks.named('bootJar') { archiveFileName = 'app.jar' }

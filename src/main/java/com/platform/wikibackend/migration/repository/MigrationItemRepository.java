@@ -69,6 +69,23 @@ public interface MigrationItemRepository extends JpaRepository<MigrationItem, Lo
     List<MigrationItem> findByStatusAndLeaseExpiresAtLessThanEqualOrderByIdAsc(
             MigrationItemStatus status, Instant cutoff, Pageable pageable);
 
+    /**
+     * 실패 항목 표(W29). status·stage는 둘 다 선택이라 null이면 그 조건을 무시한다 —
+     * 필터 조합마다 파생 쿼리를 하나씩 두면 네 벌이 되고, 하나만 고쳐도 나머지가 어긋난다.
+     */
+    @Query("""
+            select i from MigrationItem i
+             where i.jobId = :jobId
+               and (:status is null or i.status = :status)
+               and (:stage is null or i.stage = :stage)
+             order by i.id asc
+            """)
+    org.springframework.data.domain.Page<MigrationItem> findFiltered(
+            @Param("jobId") Long jobId,
+            @Param("status") MigrationItemStatus status,
+            @Param("stage") com.platform.wikibackend.migration.model.MigrationStage stage,
+            Pageable pageable);
+
     @Query("""
             select new com.platform.wikibackend.migration.report.MigrationStatusCount(i.status, count(i))
               from MigrationItem i

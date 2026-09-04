@@ -35,6 +35,21 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     @Query("select p.viewCount from Page p where p.id = :id")
     Long findViewCount(@Param("id") Long id);
 
+    /**
+     * 이관 문서의 원본 시각 보존(W29).
+     *
+     * @CreationTimestamp·@UpdateTimestamp는 엔티티에 값을 넣어두어도 INSERT/UPDATE 시점에 "지금"으로
+     * 덮어쓴다(그게 그 애너테이션의 일이다). 그 두 컬럼만 애너테이션에서 떼어내면 일반 저장 경로
+     * 전부가 시각을 손으로 챙겨야 하므로, 이관이라는 예외 경로만 저장 뒤 한 번 더 눌러 되돌린다.
+     * clearAutomatically: 같은 트랜잭션에 남은 엔티티가 옛 시각을 들고 있지 않게.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "update page set created_at = :createdAt, updated_at = :updatedAt where id = :id",
+            nativeQuery = true)
+    int overwriteTimestamps(@Param("id") Long id,
+                            @Param("createdAt") java.time.Instant createdAt,
+                            @Param("updatedAt") java.time.Instant updatedAt);
+
     @Query("""
             select coalesce(max(p.sortOrder), 0) from Page p
              where p.spaceId = :spaceId

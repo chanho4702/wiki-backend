@@ -15,6 +15,8 @@ import com.platform.wikibackend.migration.model.MigrationProvider;
 import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
 import com.platform.wikibackend.migration.repository.MigrationItemRepository;
 import com.platform.wikibackend.migration.repository.MigrationJobRepository;
+import com.platform.wikibackend.migration.repository.MigrationPayloadRepository;
+import com.platform.wikibackend.migration.repository.MigrationSourceRepository;
 import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
@@ -65,6 +67,8 @@ class FlywaySchemaValidationTest {
     @Autowired MigrationJobRepository migrationJobs;
     @Autowired MigrationItemRepository migrationItems;
     @Autowired MigrationIssueRepository migrationIssues;
+    @Autowired MigrationSourceRepository migrationSources;
+    @Autowired MigrationPayloadRepository migrationPayloads;
 
     /**
      * 컨텍스트가 떴다는 것 자체가 "마이그레이션 결과 스키마 == 엔티티 매핑"의 증거다
@@ -118,6 +122,35 @@ class FlywaySchemaValidationTest {
                 .extracting(MigrationItem::getId)
                 .isEqualTo(item.getId());
         assertThat(migrationIssues.findByJobIdOrderByIdAsc(job.getId())).hasSize(1);
+    }
+
+    /**
+     * V34 원본·산출물 — job cascade와 payload의 (item, kind) 유니크는 실제 Postgres에서만 확인된다.
+     * H2 스키마(create-drop)에는 FK도 CHECK도 없다.
+     */
+    @Test
+    void V34_원본과_산출물은_job_삭제를_cascade로_따라간다() {
+        Space space = spaces.save(Space.of("v34", "이관", null, 1L));
+        MigrationJob job = migrationJobs.saveAndFlush(MigrationJob.create(
+                MigrationProvider.CONFLUENCE_DC, "wiki.example.com", space.getId(), 1L,
+                MigrationJobMode.IMPORT));
+        migrationSources.saveAndFlush(com.platform.wikibackend.migration.model.MigrationSource.of(
+                job.getId(), "https://wiki.example.com", "ENG", "pat-token"));
+        MigrationItem item = migrationItems.saveAndFlush(MigrationItem.pending(
+                job.getId(), "10001", "27", "f".repeat(64), "dc:content/10001"));
+        migrationPayloads.saveAndFlush(com.platform.wikibackend.migration.model.MigrationPayload.of(
+                item.getId(), com.platform.wikibackend.migration.model.MigrationPayloadKind.SNAPSHOT,
+                "{\"snapshotVersion\":1}"));
+
+        assertThat(migrationSources.findById(job.getId())).isPresent();
+        assertThat(migrationPayloads.findByItemIdAndKind(item.getId(),
+                com.platform.wikibackend.migration.model.MigrationPayloadKind.SNAPSHOT)).isPresent();
+
+        migrationJobs.deleteById(job.getId());
+        migrationJobs.flush();
+
+        assertThat(migrationSources.findById(job.getId())).isEmpty();
+        assertThat(migrationPayloads.count()).isZero();
     }
 
     /** V8 댓글 — page cascade와 답글 cascade는 실제 Postgres FK에서만 확인된다. */
