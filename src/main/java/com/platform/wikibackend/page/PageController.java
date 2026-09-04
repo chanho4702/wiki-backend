@@ -82,6 +82,25 @@ public class PageController {
         return java.util.Map.of("views", pages.recordView(userId(jwt), id));
     }
 
+    /** 소유자 지정·해제(W27-5) — 본문 {"ownerId": 3} 또는 {"ownerId": null}. EDIT 권한. */
+    @PutMapping("/api/wiki/pages/{id}/owner")
+    public PageResponse setOwner(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                                 @RequestBody com.platform.wikibackend.page.dto.PageOwnerRequest req) {
+        return pages.setOwner(userId(jwt), id, req.ownerId());
+    }
+
+    /** 검증(W27-5) — 본문 {"verifiedUntil": "2026-12-03"} 또는 {} (기본 90일). EDIT 권한. */
+    @PutMapping("/api/wiki/pages/{id}/verification")
+    public PageResponse verify(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+                               @RequestBody(required = false) com.platform.wikibackend.page.dto.PageVerificationRequest req) {
+        return pages.verify(userId(jwt), id, req == null ? null : req.verifiedUntil());
+    }
+
+    @DeleteMapping("/api/wiki/pages/{id}/verification")
+    public PageResponse unverify(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return pages.unverify(userId(jwt), id);
+    }
+
     @PostMapping("/api/wiki/pages/{id}/publish")
     public PageResponse publish(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return pages.publish(userId(jwt), id);

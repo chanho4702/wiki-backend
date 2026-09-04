@@ -91,6 +91,9 @@ public class NotificationPref {
             case PAGE_UPDATED -> onPageUpdated;
             case COMMENT -> onComment;
             case SHARED -> onShared;
+            // 새 문서 게시(W27-4)는 "문서 업데이트" 스위치를 함께 쓴다. 알림 종류마다 스위치를
+            // 늘리면 설정 화면이 켜고 끌 것을 고르는 화면이 아니라 목록이 된다.
+            case PAGE_PUBLISHED -> onPageUpdated;
         };
     }
 

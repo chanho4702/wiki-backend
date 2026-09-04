@@ -129,6 +129,7 @@ public class EmailNotifier {
             case PAGE_UPDATED -> "문서 업데이트";
             case COMMENT -> "새 댓글";
             case SHARED -> "문서 공유";
+            case PAGE_PUBLISHED -> "새 문서";
         };
     }
 
@@ -139,6 +140,7 @@ public class EmailNotifier {
             case PAGE_UPDATED -> "'" + title + "' 문서가 업데이트되었습니다";
             case COMMENT -> "'" + title + "' 문서에 새 댓글이 달렸습니다";
             case SHARED -> actor + "님이 '" + title + "' 문서를 공유했습니다";
+            case PAGE_PUBLISHED -> actor + "님이 새 문서 '" + title + "'을 게시했습니다";
         };
         StringBuilder body = new StringBuilder();
         body.append(subject).append("\n\n");

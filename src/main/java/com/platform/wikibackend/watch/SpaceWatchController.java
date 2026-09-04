@@ -1,0 +1,50 @@
+package com.platform.wikibackend.watch;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+import static com.platform.wikibackend.space.SpaceController.userId;
+
+/**
+ * 스페이스 구독(W27-4). 응답 형태는 페이지 구독과 같다 — 화면이 같은 토글로 다룬다.
+ *
+ * 켜기는 POST와 PUT 둘 다 받는다. 구독은 멱등한 상태 설정이라 PUT이 자연스럽지만, 페이지 구독이
+ * 이미 POST로 나가 있어 프론트가 한 코드로 두 자원을 다룰 수 있게 둘 다 열어 둔다.
+ */
+@RestController
+@RequestMapping("/api/wiki/spaces/{spaceId}/watch")
+@RequiredArgsConstructor
+public class SpaceWatchController {
+
+    private final SpaceWatchService watches;
+
+    @GetMapping
+    public Map<String, Boolean> status(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+        return Map.of("watching", watches.isWatching(userId(jwt), spaceId));
+    }
+
+    @PutMapping
+    public Map<String, Boolean> watch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+        return Map.of("watching", watches.watch(userId(jwt), spaceId));
+    }
+
+    @PostMapping
+    public Map<String, Boolean> watchViaPost(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+        return watch(jwt, spaceId);
+    }
+
+    @DeleteMapping
+    public Map<String, Boolean> unwatch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+        return Map.of("watching", watches.unwatch(userId(jwt), spaceId));
+    }
+}

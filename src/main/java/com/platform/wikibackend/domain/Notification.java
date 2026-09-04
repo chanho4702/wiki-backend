@@ -15,7 +15,8 @@ import java.time.Instant;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Notification {
 
-    public enum Type { MENTIONED, PAGE_UPDATED, COMMENT, SHARED }
+    /** PAGE_PUBLISHED(W27-4)는 "새 문서가 올라왔다" — 스페이스 구독이 생기며 의미가 붙은 사건이다. */
+    public enum Type { MENTIONED, PAGE_UPDATED, COMMENT, SHARED, PAGE_PUBLISHED }
 
     public static final int MAX_NOTE = 300;
 

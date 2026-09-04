@@ -16,6 +16,11 @@ public enum AuditAction {
     PAGE_ARCHIVED,
     PAGE_UNARCHIVED,
     PAGE_RESTRICTIONS_CHANGED,
+    // 소유자·검증(W27-5)은 되돌리기 어렵지는 않지만 "누가 이 문서를 맞다고 했나"의 근거다 —
+    // 그 판단의 주체를 남기지 않으면 배지가 아무 말도 하지 않는 장식이 된다.
+    PAGE_OWNER_CHANGED,
+    PAGE_VERIFIED,
+    PAGE_UNVERIFIED,
     ATTACHMENT_DELETED,
     SPACE_UPDATED,
     SPACE_DELETED,

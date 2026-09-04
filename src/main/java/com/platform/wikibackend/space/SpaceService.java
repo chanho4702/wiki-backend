@@ -41,6 +41,13 @@ public class SpaceService {
     private final AttachmentStorageRouter storage;
     private final com.platform.wikibackend.audit.AuditService audit;
     private final com.platform.wikibackend.repository.PageTaskRepository taskRepository;
+    /*
+     * 스페이스 구독(V32)은 PG에서 FK cascade로 함께 사라지지만, H2 테스트 환경엔 FK가 없어
+     * 고아 행이 남는다. 같은 id가 재사용되면 예전 구독자에게 남의 스페이스 알림이 가므로
+     * 리포지토리를 직접 들고 지운다(SpaceWatchService를 주입하면 그쪽이 SpaceService를 다시
+     * 부르고 있어 순환이 된다).
+     */
+    private final com.platform.wikibackend.repository.SpaceWatchRepository spaceWatches;
 
     @Transactional(readOnly = true)
     public List<SpaceResponse> listAccessible(long userId) {
@@ -122,6 +129,7 @@ public class SpaceService {
         // 이어지는 자식 개별 DELETE가 0행 → Hibernate StaleStateException(500)을 낸다.
         // 단일 bulk DELETE(deleteAllInBatch)는 row count를 기대하지 않아 cascade와 충돌하지 않는다.
         pages.deleteAllInBatch(all);
+        spaceWatches.deleteBySpaceId(spaceId); // 구독 원장도 스페이스와 함께 사라진다(V32)
 
         // 삭제 기록은 스페이스보다 오래 남는다(V30) — 전역 관리자의 "스페이스 삭제 기록"이 읽는다.
         // 같은 트랜잭션이라 삭제가 롤백되면 기록도 함께 사라진다.

@@ -88,6 +88,13 @@ public class PageService {
         taskSync.sync(saved); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
         labelService.reindexLinks(saved); // 백링크 그래프(V14)는 본문의 파생물 — 저장과 같은 트랜잭션에서 갱신
         watches.autoWatch(saved.getId(), userId); // 만든 문서는 자동 구독(W21-4)
+        // 곧바로 게시된 문서는 그 순간이 곧 "새 문서 게시"다 — 초안으로 만들었다가 게시하는
+        // 경로(publish)만 알리면 대부분의 문서가 스페이스 구독자에게 조용히 지나간다(W27-4).
+        // 폴더는 읽을 내용이 없으므로 제외한다.
+        if (saved.getStatus() == PageStatus.PUBLISHED
+                && saved.getType() != com.platform.wikibackend.domain.PageType.FOLDER) {
+            notificationService.onPagePublished(userId, saved);
+        }
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
         return PageResponse.from(saved);
     }
@@ -512,7 +519,56 @@ public class PageService {
         if (p.getStatus() != PageStatus.PUBLISHED) {
             p.publish();
             events.afterCommit(WikiEvents.pageUpdated(userId, p));
+            notificationService.onPagePublished(userId, p); // 스페이스 구독자가 기다리던 사건(W27-4)
         }
+        return PageResponse.from(p);
+    }
+
+    /**
+     * 소유자 지정·해제(W27-5) — 문서의 기본 책임자 표시다. 권한과는 무관하다(권한은 V12 제한).
+     *
+     * 메타데이터라 version·리비전을 올리지 않는다(아이콘·이동과 같은 취급). 대신 감사 로그에는
+     * 남긴다 — "이 문서 담당이 언제 누구에서 누구로 바뀌었나"는 나중에 반드시 물어보게 된다.
+     */
+    public PageResponse setOwner(long userId, long pageId, Long ownerId) {
+        if (ownerId != null && ownerId <= 0) throw new IllegalArgumentException("소유자 id가 올바르지 않습니다");
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
+        Long before = p.getOwnerId();
+        p.changeOwner(ownerId);
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_OWNER_CHANGED, p,
+                (before == null ? "없음" : String.valueOf(before)) + " → "
+                        + (ownerId == null ? "없음" : String.valueOf(ownerId)));
+        return PageResponse.from(p);
+    }
+
+    /** 검증 기본 유효기간 — 분기 한 번. 이보다 짧으면 갱신이 일이 되고, 길면 배지가 무의미해진다. */
+    public static final int VERIFICATION_DAYS = 90;
+
+    /**
+     * 검증(W27-5) — 사람이 "지금 읽어봤고 맞다"를 누르는 것이다. 만료일이 지나도 문서가 숨거나
+     * 잠기지 않는다: 만료 판정은 읽는 쪽이 하고, 서버는 사람이 누른 사실만 저장한다.
+     */
+    public PageResponse verify(long userId, long pageId, java.time.LocalDate until) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
+        java.time.LocalDate deadline = until == null
+                ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(VERIFICATION_DAYS)
+                : until;
+        p.verify(userId, deadline.atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_VERIFIED, p,
+                "유효기간 " + deadline);
+        return PageResponse.from(p);
+    }
+
+    public PageResponse unverify(long userId, long pageId) {
+        Page p = getOwned(pageId);
+        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, p);
+        p.unverify();
+        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_UNVERIFIED, p, null);
         return PageResponse.from(p);
     }
 

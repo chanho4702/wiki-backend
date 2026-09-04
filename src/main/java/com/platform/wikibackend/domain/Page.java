@@ -102,6 +102,23 @@ public class Page {
     @Column(name = "archived_root", nullable = false)
     private boolean archivedRoot;
 
+    /**
+     * 문서 소유자(V33) — 기본 책임자 표시일 뿐 권한과 무관하다. 기본값 없음(created_by를 복사하지
+     * 않는다): "아무도 정하지 않았다"와 "만든 사람이 담당이다"는 다른 사실이다.
+     */
+    @Column(name = "owner_id")
+    private Long ownerId;
+
+    /** 검증(V33) — 사람이 "읽어봤고 맞다"를 누른 시각·주체·유효기간. 만료 판정은 읽는 쪽이 한다. */
+    @Column(name = "verified_at")
+    private Instant verifiedAt;
+
+    @Column(name = "verified_by")
+    private Long verifiedBy;
+
+    @Column(name = "verified_until")
+    private Instant verifiedUntil;
+
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
         return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
     }
@@ -219,5 +236,23 @@ public class Page {
      */
     public void publish() {
         this.status = PageStatus.PUBLISHED;
+    }
+
+    /** 소유자 지정(null = 해제). 메타데이터라 version·리비전을 올리지 않는다(changeIcon과 같은 원칙). */
+    public void changeOwner(Long ownerId) {
+        this.ownerId = ownerId;
+    }
+
+    /** 검증 도장. 다시 누르면 시각·주체·유효기간이 통째로 새로 찍힌다(누적 이력은 감사 로그가 가진다). */
+    public void verify(Long actorId, Instant until) {
+        this.verifiedAt = Instant.now();
+        this.verifiedBy = actorId;
+        this.verifiedUntil = until;
+    }
+
+    public void unverify() {
+        this.verifiedAt = null;
+        this.verifiedBy = null;
+        this.verifiedUntil = null;
     }
 }

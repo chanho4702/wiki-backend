@@ -53,6 +53,7 @@ public class NotificationService {
     private final PermissionClient permissions;
     private final EffectivePermissionService effective;
     private final com.platform.wikibackend.watch.WatchService watches;
+    private final com.platform.wikibackend.watch.SpaceWatchService spaceWatches;
     private final EmailNotifier email;
 
     static Set<Long> mentionIds(String body) {
@@ -100,16 +101,46 @@ public class NotificationService {
     }
 
     /**
-     * 알림 대상 = 구독자(V15 page_watch) + 본문에 멘션된 사용자.
+     * 알림 대상 = 페이지 구독자(V15) ∪ 스페이스 구독자(V32) ∪ 본문에 멘션된 사용자.
      *
      * W21-4 이전에는 "작성자 + 리비전을 남긴 편집자"를 코드로 계산했다. 그 방식은 끌 수가 없어
      * (한 번 고친 문서의 알림을 영영 받는다) 구독 표로 옮겼다. 기존 사용자는 V15 백필로 승계된다.
      * 멘션은 구독과 무관하게 항상 받는다 — 나를 부른 것은 문서 구독 여부와 다른 사건이다.
+     *
+     * 스페이스 구독자(W27-4)는 합집합으로 더한다 — 두 원장에 다 있어도 Set이라 한 번만 간다.
+     * 페이지 제한(V12)에 걸려 못 보는 사람은 deliver의 수신자별 VIEW 판정에서 빠진다.
      */
     private Set<Long> interestedIn(Page page, Set<Long> currentMentions) {
-        Set<Long> users = new HashSet<>(currentMentions);
-        users.addAll(watches.watcherIds(page.getId()));
+        Set<Long> users = subscribers(page);
+        users.addAll(currentMentions);
         return users;
+    }
+
+    /** 구독자만 — 페이지 구독자 ∪ 스페이스 구독자. 멘션은 포함하지 않는다. */
+    private Set<Long> subscribers(Page page) {
+        Set<Long> users = new HashSet<>(watches.watcherIds(page.getId()));
+        users.addAll(spaceWatches.watcherIds(page.getSpaceId()));
+        return users;
+    }
+
+    /**
+     * 새 문서 게시(W27-4) — 스페이스를 구독한 사람이 기다리던 사건이다. 초안이 게시로 넘어갈 때와
+     * 처음부터 게시 상태로 만들어질 때 모두 한 번 온다(같은 문서에 두 번 가지 않는다 —
+     * 게시는 멱등하고 호출부가 상태 전이에서만 부른다).
+     *
+     * 페이지 구독자도 함께 받는다. 방금 만들어진 문서의 구독자는 사실상 작성자뿐이고 그는
+     * 행위자로 제외되지만, 복제·이동으로 이미 구독자가 붙은 초안이 게시되는 경우가 있다.
+     *
+     * 대상은 **구독자만**이다 — 본문에 멘션된 사람은 넣지 않는다. 문서 생성은 예전부터 멘션
+     * 알림의 트리거가 아니었고(첫 저장의 멘션은 MENTIONED를 만들지 않는다), 여기서 게시로
+     * 대신 보내면 그 결정을 뒷문으로 뒤집는 셈이 된다.
+     */
+    public void onPagePublished(long actorId, Page page) {
+        Set<Long> interested = subscribers(page);
+        interested.remove(actorId); // 자기가 게시한 문서를 자기 알림함에서 다시 볼 이유가 없다
+        for (long userId : interested) {
+            deliver(userId, Notification.Type.PAGE_PUBLISHED, page, actorId);
+        }
     }
 
     /**
