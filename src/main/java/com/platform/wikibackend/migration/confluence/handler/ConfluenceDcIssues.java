@@ -45,9 +45,29 @@ public final class ConfluenceDcIssues {
     /** 원본 스냅샷을 IR로 옮기지 못했다(잘린 XHTML·알 수 없는 구조). */
     public static final String SNAPSHOT_INVALID = "SNAPSHOT_INVALID";
 
+    /**
+     * 원본의 인라인 댓글을 페이지 댓글로 내렸다(M3, 기획 P5). 원본 앵커는 원본이 렌더한 본문
+     * 기준이라 우리 본문에서 같은 구간을 다시 찾을 수 없다 — 대신 인용을 본문 앞에 남긴다.
+     */
+    public static final String INLINE_COMMENT_DEMOTED = "INLINE_COMMENT_DEMOTED";
+
+    /** 댓글 본문을 우리 포맷으로 옮기지 못해 그 댓글만 건너뛰었다. */
+    public static final String COMMENT_NOT_MIGRATED = "COMMENT_NOT_MIGRATED";
+
+    /**
+     * 원본의 답글의 답글을 최상위 답글로 폈다. 우리 댓글은 중첩이 1단이고, 깊이를 살리려고
+     * 대화를 쪼개는 것보다 한 단으로 눕히는 편이 읽힌다.
+     */
+    public static final String COMMENT_REPLY_FLATTENED = "COMMENT_REPLY_FLATTENED";
+
+    /** 지난 버전 하나가 상한을 넘거나 원본에서 사라져 이력에 넣지 못했다(M3 §5.3). */
+    public static final String HISTORY_VERSION_SKIPPED = "HISTORY_VERSION_SKIPPED";
+
     /** 대조 실패 — 옮긴 결과가 원본과 다르다. */
     public static final String VERIFY_PAGE_MISSING = "VERIFY_PAGE_MISSING";
     public static final String VERIFY_TITLE_MISMATCH = "VERIFY_TITLE_MISMATCH";
+    /** 블로그 글이 일반 문서로(또는 그 반대로) 들어갔다 — 트리와 블로그 목록 중 한쪽에서 사라진다. */
+    public static final String VERIFY_TYPE_MISMATCH = "VERIFY_TYPE_MISMATCH";
     public static final String VERIFY_BODY_EMPTY = "VERIFY_BODY_EMPTY";
     public static final String VERIFY_LABEL_MISMATCH = "VERIFY_LABEL_MISMATCH";
     public static final String VERIFY_MARKDOWN_MISSING = "VERIFY_MARKDOWN_MISSING";

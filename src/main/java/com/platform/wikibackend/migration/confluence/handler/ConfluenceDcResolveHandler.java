@@ -3,8 +3,11 @@ package com.platform.wikibackend.migration.confluence.handler;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.migration.MigrationPayloadStore;
 import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
+import com.platform.wikibackend.migration.confluence.comment.MigrationCommentImporter;
+import com.platform.wikibackend.migration.confluence.history.MigrationHistoryPayload;
 import com.platform.wikibackend.migration.confluence.link.MigrationLinkResolver;
 import com.platform.wikibackend.migration.confluence.link.MigrationLinkRewriter;
 import com.platform.wikibackend.migration.confluence.media.MigrationAttachmentImporter;
@@ -50,6 +53,11 @@ import java.util.Optional;
  * 2. **첨부 등록** — MEDIA_COPY가 받아 둔 파일을 이 문서의 첨부로 만들고, 본문 참조를 그 URL로 바꾼다.
  *    페이지가 있어야 첨부를 만들 수 있어 순서가 "문서 → 첨부 → 본문 정리"가 된다.
  * 3. **제한 적용** — 원본의 보기·편집 제한을 옮긴다. 대조 실패는 공개가 아니라 잠금이다(fail-closed).
+ *
+ * M3에서 다시 셋이 늘었다.
+ * 4. **블로그 글** — 원본 type이 blogpost면 우리 BLOG로 쓴다. 부모도 트리 순번도 없다.
+ * 5. **지난 버전** — EXTRACT가 받아 둔 이력을 리비전 1..k로 깔고 현재본을 k+1로 둔다(최초 이관만).
+ * 6. **댓글** — 문서·첨부·제한이 자리를 잡은 뒤에 단다. 재이관은 이미 단 댓글을 건너뛴다.
  */
 @Component
 @RequiredArgsConstructor
@@ -61,6 +69,7 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
     private final MigrationLinkRewriter linkRewriter;
     private final MigrationAttachmentImporter attachmentImporter;
     private final MigrationRestrictionApplier restrictionApplier;
+    private final MigrationCommentImporter commentImporter;
     private final MigrationObjectMappingWriter objectMappings;
     private final MigrationObjectMappingRepository mappings;
     private final MigrationJobRepository jobs;
@@ -119,8 +128,8 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
                 linkRewriter.rewriteSourceLinks(rendered.markdown(), linkContext);
         issues.addAll(linked.issues());
 
-        ImportedPageWriter.ImportedPage page = toImportedPage(work, job, snapshot, linked.markdown(),
-                issues);
+        ImportedPageWriter.ImportedPage page = toImportedPage(work, job, source, snapshot,
+                linked.markdown(), issues);
         long pageId;
         if (existing.isPresent() && existing.get().getTargetPageId() != null
                 && pages.existsById(existing.get().getTargetPageId())) {
@@ -137,6 +146,9 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
 
         issues.addAll(attachBody(work, job, pageId, linked.markdown()));
         issues.addAll(restrictionApplier.apply(snapshot, pageId, job.getRequestedBy()));
+        // 댓글은 문서·첨부·제한이 모두 자리를 잡은 뒤에 단다(M3 §5.2). 제한을 먼저 걸어야
+        // 옮긴 대화가 원본과 같은 사람들에게만 보인다.
+        issues.addAll(commentImporter.importComments(work, pageId, job.getRequestedBy()));
 
         // object map은 여기서 바로 갱신한다. worker는 DONE에 닿을 때 한 번 더 부르는데(멱등),
         // 그 사이의 VERIFY가 실패해 재시도되면 이 항목의 자식들이 부모를 못 찾는다.
@@ -169,14 +181,17 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
     }
 
     private ImportedPageWriter.ImportedPage toImportedPage(MigrationStageWork work, MigrationJob job,
-                                                           JsonNode snapshot, String markdown,
+                                                           MigrationSource source, JsonNode snapshot,
+                                                           String markdown,
                                                            List<MigrationStageIssue> issues) {
-        Long parentId = resolveParent(work, snapshot, issues);
+        PageType type = pageTypeOf(snapshot);
+        // 블로그 글은 트리 밖에 산다(M3 §5.1) — 부모를 찾을 필요도, 둘 자리도 없다.
+        Long parentId = type == PageType.BLOG ? null : resolveParent(work, snapshot, issues);
         JsonNode createdBy = snapshot.path("history").path("createdBy");
         String displayName = createdBy.path("displayName").asText("");
         // 이메일로 우리 사용자를 찾는 창구가 아직 없다(org proto 0.14.0에 조회 API가 없다).
         // 계정을 새로 만들지 않는 것이 이 모듈의 전제이므로(기획 §2 제외), 잡 요청자를 작성자로 두고
-        // 원본 이름은 리비전 편집자 이름으로 남긴다.
+        // 원본 이름은 문서의 imported_author_name과 리비전 편집자 이름으로 남긴다(M3 §5.4).
         issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.AUTHOR_UNMAPPED,
                 "user:" + (displayName.isBlank() ? "unknown" : displayName)));
 
@@ -191,7 +206,47 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
         Instant updatedAt = parseInstant(snapshot.path("version").path("when").asText(""));
         return new ImportedPageWriter.ImportedPage(job.getTargetSpaceId(), parentId,
                 work.externalObjectId(), snapshot.path("title").asText(""), markdown,
-                job.getRequestedBy(), displayName, createdAt, updatedAt, labels, work.siblingOrder());
+                job.getRequestedBy(), displayName, false, sourceUrlOf(source, work),
+                createdAt, updatedAt, labels, work.siblingOrder(), type,
+                importedHistory(work));
+    }
+
+    /** 원본이 블로그 글이면 BLOG. 그 밖은 전부 일반 문서다(폴더는 원본에 없다). */
+    private static PageType pageTypeOf(JsonNode snapshot) {
+        return "blogpost".equalsIgnoreCase(snapshot.path("type").asText(""))
+                ? PageType.BLOG
+                : PageType.PAGE;
+    }
+
+    /**
+     * 원본 문서로 가는 주소(M3 §5.4). 원본 응답의 `_links`를 따라가지 않고 고정 패턴으로 만든다 —
+     * 화면의 링크지만 우리가 만든 주소만 내보낸다는 규칙은 여기서도 같다.
+     */
+    private static String sourceUrlOf(MigrationSource source, MigrationStageWork work) {
+        if (source == null || source.getBaseUrl() == null || source.getBaseUrl().isBlank()) {
+            return null;
+        }
+        return source.getBaseUrl() + "/pages/viewpage.action?pageId=" + work.externalObjectId();
+    }
+
+    /** EXTRACT가 받아 둔 지난 버전(M3 §5.3). 오래된 것부터 그대로 넘긴다. */
+    private List<ImportedPageWriter.ImportedRevision> importedHistory(MigrationStageWork work) {
+        return payloads.read(work.itemId(), MigrationPayloadKind.HISTORY)
+                .map(payload -> {
+                    MigrationHistoryPayload history;
+                    try {
+                        history = objectMapper.readValue(payload.body(), MigrationHistoryPayload.class);
+                    } catch (JsonProcessingException exception) {
+                        // 형식을 못 읽으면 이력 없이 간다 — 현재본을 못 옮길 이유는 아니다.
+                        return List.<ImportedPageWriter.ImportedRevision>of();
+                    }
+                    return history.revisions().stream()
+                            .map(entry -> new ImportedPageWriter.ImportedRevision(entry.title(),
+                                    entry.markdown(), entry.editorName(), entry.message(),
+                                    parseInstantOrNull(entry.when())))
+                            .toList();
+                })
+                .orElseGet(List::of);
     }
 
     /**
@@ -223,13 +278,19 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
 
     /** 원본 시각을 못 읽으면 지금으로 둔다 — 시각 하나 때문에 문서를 통째로 못 옮기게 하지 않는다. */
     private Instant parseInstant(String value) {
+        Instant parsed = parseInstantOrNull(value);
+        return parsed == null ? Instant.now() : parsed;
+    }
+
+    /** 리비전 시각은 "모른다"를 그대로 둔다 — 지금으로 채우면 옛 이력이 오늘 저장된 것처럼 보인다. */
+    private static Instant parseInstantOrNull(String value) {
         if (value == null || value.isBlank()) {
-            return Instant.now();
+            return null;
         }
         try {
             return java.time.OffsetDateTime.parse(value).toInstant();
         } catch (DateTimeParseException exception) {
-            return Instant.now();
+            return null;
         }
     }
 

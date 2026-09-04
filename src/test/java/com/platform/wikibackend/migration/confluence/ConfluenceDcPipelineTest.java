@@ -56,6 +56,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "platform.wiki.migration.dc.page-size=2",
         // 가짜 첨부는 수십 바이트다. 상한을 1KB로 낮춰 "크기 초과" 경로를 실제 파일 없이 태운다.
         "platform.wiki.migration.dc.max-attachment-bytes=1024",
+        // 이력 이관(M3)은 여기서 끈다. 켜면 버전마다 원본 왕복이 한 번씩 늘어, 지난 버전을
+        // 두지 않은 이 시나리오들에서 없는 버전을 찾는 404가 문서마다 열 번씩 쌓인다.
+        // 이력 자체는 ConfluenceDcM3PipelineTest가 켜고 확인한다.
+        "platform.wiki.migration.dc.history-versions=0",
 })
 @ActiveProfiles("test")
 class ConfluenceDcPipelineTest {

@@ -119,6 +119,18 @@ public class Page {
     @Column(name = "verified_until")
     private Instant verifiedUntil;
 
+    /**
+     * 이관 원본의 작성자 이름(V36) — 우리 계정으로 **대조하지 못했을 때만** 값이 있다.
+     * created_by를 덮어쓰지 않는 이유: 그 컬럼은 "우리 쪽에서 누구 책임인가"이고, 그건 이관
+     * 담당자가 맞다. 화면은 이 값이 있으면 작성자 자리에 "이관됨 · {원본 이름}"을 보여준다.
+     */
+    @Column(name = "imported_author_name", length = 255)
+    private String importedAuthorName;
+
+    /** 원본 문서 주소(V36) — 이름만으로는 누구인지 확인할 길이 없어 원본으로 가는 길을 함께 남긴다. */
+    @Column(name = "imported_source_url", length = 1024)
+    private String importedSourceUrl;
+
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
         return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
     }
@@ -154,10 +166,40 @@ public class Page {
      */
     public static Page imported(Long spaceId, Long parentId, String title, String content, Long authorId,
                                 Instant createdAt, Instant updatedAt) {
-        Page p = of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
+        return imported(spaceId, parentId, title, content, authorId, createdAt, updatedAt,
+                PageType.PAGE, 1);
+    }
+
+    /**
+     * 타입과 시작 버전을 지정해 옮겨온 문서(W29 M3).
+     *
+     * type: 원본이 블로그 글이면 BLOG다 — 트리에 넣으면 날짜순으로 읽히는 글이 폴더 밑에 박힌다.
+     * version: 원본 이력을 함께 옮길 때 그 개수 + 1이다. 리비전을 1..k로 깔고 현재본을 k+1로
+     * 두어야 "모든 버전이 리비전에 있다" 불변식이 이관 문서에서도 성립한다.
+     */
+    public static Page imported(Long spaceId, Long parentId, String title, String content, Long authorId,
+                                Instant createdAt, Instant updatedAt, PageType type, int version) {
+        Page p = of(spaceId, parentId, title, content, authorId,
+                type == null ? PageType.PAGE : type, PageStatus.PUBLISHED);
         p.createdAt = createdAt;
         p.updatedAt = updatedAt;
+        p.version = version < 1 ? 1 : version;
         return p;
+    }
+
+    /**
+     * 원본 작성자 표시(V36) — 우리 계정으로 대조하지 못한 문서에만 값이 남는다.
+     * 대조에 성공했으면 둘 다 null로 눌러 화면이 평소대로 우리 사용자를 보여주게 한다.
+     */
+    public void markImportedAuthor(String authorName, String sourceUrl) {
+        this.importedAuthorName = authorName == null || authorName.isBlank() ? null
+                : truncate(authorName.trim(), 255);
+        this.importedSourceUrl = sourceUrl == null || sourceUrl.isBlank() ? null
+                : truncate(sourceUrl.trim(), 1024);
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     /** 재이관으로 원본이 바뀐 문서를 갱신한다 — 수정 시각도 원본 것으로 되돌린다. */

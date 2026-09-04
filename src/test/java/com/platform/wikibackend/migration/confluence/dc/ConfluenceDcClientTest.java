@@ -34,7 +34,7 @@ class ConfluenceDcClientTest {
     private final List<String> receivedAuthorization = new ArrayList<>();
 
     private final ConfluenceDcProperties properties = new ConfluenceDcProperties(
-            Duration.ofSeconds(2), Duration.ofSeconds(2), 5000, 2, 2, 1024L);
+            Duration.ofSeconds(2), Duration.ofSeconds(2), 5000, 2, 2, 1024L, 3, 2048L, 2);
     private final ConfluenceDcClient client = new ConfluenceDcClient(new ObjectMapper(), properties);
 
     @BeforeEach

@@ -3,6 +3,7 @@ package com.platform.wikibackend.migration.confluence;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageLabel;
 import com.platform.wikibackend.domain.PageRevision;
+import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.label.LabelService;
@@ -64,11 +65,18 @@ public class ImportedPageWriter {
         List<MigrationStageIssue> issues = new ArrayList<>();
         String title = truncateTitle(source.title(), source.externalObjectId(), issues);
 
+        // 지난 버전을 함께 옮기면 문서는 k+1번째 버전으로 태어난다(M3 §5.3) — 리비전 1..k가
+        // 원본 이력이고 k+1이 현재본이다. 이력은 **최초 이관에만** 쌓는다: 재이관에서 다시 깔면
+        // 그 사이 사람이 손댄 리비전과 번호가 엉킨다.
+        List<ImportedRevision> history = source.history();
         Page page = pages.save(Page.imported(source.spaceId(), source.parentId(), title,
-                source.markdown(), source.authorId(), source.createdAt(), source.updatedAt()));
+                source.markdown(), source.authorId(), source.createdAt(), source.updatedAt(),
+                source.type(), history.size() + 1));
+        applyImportedAuthor(page, source);
         page.resequence(sortOrderOf(source));
         pages.flush();
 
+        writeHistory(page, source, title);
         writeRevision(page, source, null);
         replaceLabels(page.getId(), source.labels(), source.authorId());
         tasks.sync(page);
@@ -89,6 +97,7 @@ public class ImportedPageWriter {
         Page page = pages.findById(pageId).orElseThrow();
 
         page.reimport(title, source.markdown(), source.authorId(), source.updatedAt());
+        applyImportedAuthor(page, source);
         if (source.siblingOrder() != null) {
             // 원본에서 순서만 바뀐 경우다. movePage가 아니라 sortOrder만 눌러 준다 —
             // 이동 경로는 부모 재계산·권한 검사까지 도는데 여기서는 부모가 그대로다.
@@ -171,6 +180,39 @@ public class ImportedPageWriter {
      * 대조되지 않은 사람도 이력에서는 자기 이름으로 남는다 — id로만 남기면 전부 이관 담당자가 쓴
      * 것처럼 보인다.
      */
+    /**
+     * 원본 작성자를 우리 계정으로 **대조하지 못했을 때만** 이름·원본 주소를 남긴다(M3 §5.4).
+     * 대조에 성공한 문서는 두 값을 비워 화면이 평소대로 우리 사용자를 보여주게 한다 — 한 번
+     * 채워 둔 값이 남아 있으면 나중에 대조가 되어도 계속 "이관됨"으로 보인다.
+     */
+    private void applyImportedAuthor(Page page, ImportedPage source) {
+        if (source.authorMapped()) {
+            page.markImportedAuthor(null, null);
+            return;
+        }
+        page.markImportedAuthor(source.authorDisplayName(), source.sourceUrl());
+    }
+
+    /**
+     * 원본의 지난 버전을 리비전 1..k로 깐다. 오래된 것부터라 이력을 위에서 아래로 읽으면 원본과
+     * 같은 순서가 된다. 편집자는 이름 스냅샷(V28)으로만 남는다 — 계정을 새로 만들지 않는다.
+     */
+    private void writeHistory(Page page, ImportedPage source, String currentTitle) {
+        int version = 1;
+        for (ImportedRevision revision : source.history()) {
+            String title = revision.title() == null || revision.title().isBlank()
+                    ? currentTitle
+                    : truncateTitle(revision.title(), source.externalObjectId(), new ArrayList<>());
+            PageRevision row = revisions.save(PageRevision.imported(page.getId(), version++, title,
+                    revision.markdown(), source.authorId(), revision.editorName(),
+                    revision.changeNote()));
+            revisions.flush();
+            if (revision.savedAt() != null) {
+                revisions.overwriteCreatedAt(row.getId(), revision.savedAt());
+            }
+        }
+    }
+
     private void writeRevision(Page page, ImportedPage source, String changeNote) {
         PageRevision revision = PageRevision.snapshotOf(page, changeNote)
                 .withEditorName(source.authorDisplayName());
@@ -216,12 +258,26 @@ public class ImportedPageWriter {
      */
     public record ImportedPage(long spaceId, Long parentId, String externalObjectId, String title,
                                String markdown, long authorId, String authorDisplayName,
+                               /** 원본 작성자를 우리 계정으로 찾았는가. 못 찾았으면 이름·원본 주소를 문서에 남긴다(M3). */
+                               boolean authorMapped,
+                               String sourceUrl,
                                Instant createdAt, Instant updatedAt, List<String> labels,
-                               Integer siblingOrder) {
+                               Integer siblingOrder,
+                               /** 원본이 블로그 글이면 BLOG(M3 §5.1). 트리에 넣으면 날짜순 글이 폴더 밑에 박힌다. */
+                               PageType type,
+                               /** 함께 옮길 지난 버전. 오래된 것부터다. 비어 있으면 현재본만 남는다. */
+                               List<ImportedRevision> history) {
 
         public ImportedPage {
             labels = labels == null ? List.of() : List.copyOf(labels);
+            history = history == null ? List.of() : List.copyOf(history);
+            type = type == null ? PageType.PAGE : type;
         }
+    }
+
+    /** 원본의 지난 버전 하나. 리비전 번호는 writer가 1부터 다시 매긴다. */
+    public record ImportedRevision(String title, String markdown, String editorName, String changeNote,
+                                   Instant savedAt) {
     }
 
     public record ImportResult(long pageId, List<MigrationStageIssue> issues) {

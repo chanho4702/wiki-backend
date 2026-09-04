@@ -89,6 +89,23 @@ public class PageComment {
         return comment;
     }
 
+    /**
+     * 외부 위키에서 옮겨온 댓글(W29 M3 §5.2).
+     *
+     * 원본 댓글은 전부 **페이지 댓글**로 들어온다 — 원본의 인라인 댓글은 앵커가 원본 렌더 기준이라
+     * 우리 본문에서 같은 구간을 다시 찾을 방법이 없다. 대신 인용을 본문 앞에 붙여 옮긴다.
+     *
+     * createdAt은 여기서 넣어도 @CreationTimestamp가 INSERT에서 "지금"으로 덮어쓴다 —
+     * 실제 보존은 저장 뒤 {@code PageCommentRepository.overwriteCreatedAt}이 완성한다.
+     */
+    public static PageComment imported(Long pageId, Long parentId, Long authorId, String authorName,
+                                       String body, Instant createdAt) {
+        PageComment comment = of(pageId, parentId, authorId, authorName, body);
+        comment.createdAt = createdAt;
+        comment.updatedAt = createdAt;
+        return comment;
+    }
+
     /** 인라인 댓글 — 앵커는 만들 때 정해지고 이후 바뀌지 않는다(본문이 바뀌면 못 찾을 뿐). */
     public static PageComment inlineOf(Long pageId, Long authorId, String authorName, String body,
                                        String anchorQuote, int anchorOccurrence) {

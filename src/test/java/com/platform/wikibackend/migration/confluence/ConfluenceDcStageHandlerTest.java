@@ -49,7 +49,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 파이프라인 테스트가 "잘 되는 경우"를 통째로 보는 반면, 여기서는 어긋난 입력에 handler가 무엇을
  * 하는지를 본다 — 조용히 넘어가면 안 되는 것들이라 대부분 경고 코드 하나를 확인하는 형태다.
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        // 이력 이관(M3)은 끈다. 가짜 원본은 현재 버전만 들고 있어, 켜면 EXTRACT가 없는 지난 버전을
+        // 열 번 찾다가 경고를 그만큼 쌓는다 — 여기서 보려는 것은 그 경고가 아니다.
+        "platform.wiki.migration.dc.history-versions=0",
+})
 @ActiveProfiles("test")
 class ConfluenceDcStageHandlerTest {
 

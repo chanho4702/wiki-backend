@@ -69,10 +69,22 @@ public class ConfluenceDcClient {
      * 정하게 두면 검증한 baseUrl 밖으로 끌려갈 수 있다.
      */
     public ConfluenceContentPage listPages(ConfluenceDcCredentials credentials, int start) {
+        return listContent(credentials, "page", start);
+    }
+
+    /**
+     * 블로그 글 한 묶음(M3 §5.1). 페이지와 같은 목록 API를 type만 바꿔 부른다 — 블로그 글은
+     * 트리 밖에 살아 ancestors가 늘 비어 있고, 그래서 형제 순서도 물어볼 곳이 없다.
+     */
+    public ConfluenceContentPage listBlogPosts(ConfluenceDcCredentials credentials, int start) {
+        return listContent(credentials, "blogpost", start);
+    }
+
+    private ConfluenceContentPage listContent(ConfluenceDcCredentials credentials, String type, int start) {
         int limit = properties.pageSize();
         JsonNode response = get(credentials, "/rest/api/content"
                 + "?spaceKey=" + encode(credentials.spaceKey())
-                + "&type=page&status=current&expand=version,ancestors"
+                + "&type=" + type + "&status=current&expand=version,ancestors"
                 + "&start=" + start + "&limit=" + limit);
         JsonNode results = response.path("results");
         if (!results.isArray()) {
@@ -121,6 +133,34 @@ public class ConfluenceDcClient {
         int limit = properties.childPageSize();
         return toPage(get(credentials, "/rest/api/content/" + encode(parentId)
                 + "/child/page?expand=version&start=" + start + "&limit=" + limit), limit);
+    }
+
+    /**
+     * 한 문서의 댓글 한 묶음(M3 §5.2). `children.comment`를 content 응답에 얹지 않고 전용
+     * 엔드포인트를 부르는 이유는 **페이지네이션** 때문이다 — expand로 딸려 오는 목록은 사이트가
+     * 정한 수에서 조용히 잘리고, 그 사실이 응답 어디에도 남지 않는다.
+     *
+     * inlineProperties가 있으면 원본에서 본문 구간에 붙은 댓글이다. 우리는 그 앵커를 다시 찾을 수
+     * 없어(원본 렌더 기준이다) 페이지 댓글로 강등하되, 인용문은 여기서 받아 본문 앞에 남긴다.
+     */
+    public JsonNode listComments(ConfluenceDcCredentials credentials, String contentId, int start) {
+        int limit = properties.commentPageSize();
+        return get(credentials, "/rest/api/content/" + encode(contentId)
+                + "/child/comment?expand=body.storage,history,ancestors"
+                + ",extensions.location,extensions.inlineProperties"
+                + "&start=" + start + "&limit=" + limit);
+    }
+
+    /**
+     * 지난 버전 하나의 본문(M3 §5.3).
+     *
+     * 버전 목록 API를 따로 부르지 않는다 — DC의 `/history`는 최신과 직전 한 건만 알려주고
+     * 전체 목록을 주지 않는다. 현재 버전 번호에서 아래로 세는 것이 실제로 가능한 유일한 방법이다.
+     */
+    public JsonNode historicalContent(ConfluenceDcCredentials credentials, String contentId, int version) {
+        return get(credentials, "/rest/api/content/" + encode(contentId)
+                + "?status=historical&version=" + version
+                + "&expand=body.storage,version,history");
     }
 
     /** 스페이스 최상단 페이지 — 루트의 형제 순서다. */

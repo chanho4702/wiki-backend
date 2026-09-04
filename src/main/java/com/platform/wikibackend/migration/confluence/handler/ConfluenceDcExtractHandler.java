@@ -4,10 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.platform.wikibackend.migration.MigrationPayloadStore;
+import com.platform.wikibackend.migration.confluence.ConfluenceFragmentConverter;
 import com.platform.wikibackend.migration.confluence.ConfluenceStorageNormalizer;
 import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
+import com.platform.wikibackend.migration.confluence.comment.MigrationCommentExtractor;
 import com.platform.wikibackend.migration.confluence.dc.ConfluenceDcClient;
 import com.platform.wikibackend.migration.confluence.dc.ConfluenceDcCredentials;
+import com.platform.wikibackend.migration.confluence.history.MigrationHistoryExtractor;
 import com.platform.wikibackend.migration.model.MigrationPayloadKind;
 import com.platform.wikibackend.migration.model.MigrationProvider;
 import com.platform.wikibackend.migration.model.MigrationSource;
@@ -21,6 +24,7 @@ import com.platform.wikibackend.migration.worker.MigrationStageWork;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +45,8 @@ public class ConfluenceDcExtractHandler implements MigrationStageHandler {
     private final ConfluenceDcClient client;
     private final MigrationSourceRepository sources;
     private final MigrationPayloadStore payloads;
+    private final MigrationCommentExtractor comments;
+    private final MigrationHistoryExtractor history;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -74,6 +80,16 @@ public class ConfluenceDcExtractHandler implements MigrationStageHandler {
             issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.SOURCE_VERSION_DRIFT,
                     "page:" + work.externalObjectId()));
         }
+
+        // 댓글과 지난 버전도 여기서 받는다(M3). 본문과 같은 왕복에 묶을 수 없어(둘 다 별도 API)
+        // 단계를 늘리는 대신 이 단계에 붙였다 — 실패해도 이미 받은 스냅샷은 남으므로 재시도가
+        // 본문을 다시 긁지는 않는다. dry-run도 같은 값을 받아, 무엇을 잃을지 미리 보고한다.
+        ConfluenceFragmentConverter.Fragment fragment = new ConfluenceFragmentConverter.Fragment(
+                work.sourceInstanceId(), Instant.now(), work.sourceChecksum(), work.payloadRef(),
+                source.getSpaceKey(), source.getBaseUrl());
+        issues.addAll(comments.extract(work, credentials, fragment));
+        issues.addAll(history.extract(work, credentials, fragment,
+                content.path("version").path("number").asInt(1)));
         return MigrationStageOutcome.ok(issues);
     }
 

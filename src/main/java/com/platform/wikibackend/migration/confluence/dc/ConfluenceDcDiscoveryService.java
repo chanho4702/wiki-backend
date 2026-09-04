@@ -28,7 +28,7 @@ import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 /**
- * 원본 스페이스의 페이지를 훑어 job의 처리 대기열에 담는다.
+ * 원본 스페이스의 페이지와 블로그 글을 훑어 job의 처리 대기열에 담는다.
  *
  * 담는 순서가 중요하다. RESOLVE에서 부모의 대상 페이지 id를 object map에서 찾는데, 부모가 아직
  * 안 만들어졌으면 문서가 루트로 떨어진다(WARNING PARENT_NOT_FOUND). 그래서 조상 깊이 오름차순으로
@@ -81,21 +81,39 @@ public class ConfluenceDcDiscoveryService {
         return new MigrationDiscoverResponse(discovered.size(), enqueued, skipped);
     }
 
+    /**
+     * 페이지와 블로그 글을 모두 담는다(M3 §5.1). 블로그를 뒤에 붙이는 이유는 상한에 닿았을 때
+     * 트리부터 지키기 위해서다 — 부모를 못 담으면 그 아래 문서가 전부 루트로 떨어진다.
+     */
     private List<ConfluenceContentSummary> fetchAll(ConfluenceDcCredentials credentials) {
         List<ConfluenceContentSummary> all = new ArrayList<>();
+        if (!collect(all, start -> client.listPages(credentials, start))) {
+            return all;
+        }
+        collect(all, start -> client.listBlogPosts(credentials, start));
+        return all;
+    }
+
+    /** @return 상한에 닿지 않았으면 true(다음 종류를 더 담아도 된다) */
+    private boolean collect(List<ConfluenceContentSummary> all,
+                            IntFunction<ConfluenceContentPage> fetch) {
         int start = 0;
         while (true) {
-            ConfluenceContentPage page = client.listPages(credentials, start);
+            ConfluenceContentPage page = fetch.apply(start);
             all.addAll(page.results());
             if (all.size() >= properties.maxPages()) {
                 // 상한에서 자른다. 소리 없이 절반만 옮기는 것보다, 상한에 닿았다는 사실이 로그에
                 // 남고 관리자가 상한을 올리거나 스페이스를 쪼개는 편이 낫다.
-                log.warn("원본 페이지가 상한({})을 넘어 잘랐다 — platform.wiki.migration.dc.max-pages",
+                log.warn("원본 문서가 상한({})을 넘어 잘랐다 — platform.wiki.migration.dc.max-pages",
                         properties.maxPages());
-                return new ArrayList<>(all.subList(0, properties.maxPages()));
+                List<ConfluenceContentSummary> capped =
+                        new ArrayList<>(all.subList(0, properties.maxPages()));
+                all.clear();
+                all.addAll(capped);
+                return false;
             }
             if (!page.hasMore() || page.results().isEmpty()) {
-                return all;
+                return true;
             }
             start += page.results().size();
         }

@@ -99,6 +99,30 @@ public class PageRevision {
         return this;
     }
 
+    /**
+     * 원본 위키의 **지난 버전**을 그대로 리비전으로 눕힌다(W29 M3 §5.3).
+     *
+     * {@link #snapshotOf}를 쓸 수 없는 이유는 그 팩토리가 "지금의 페이지"를 찍기 때문이다 —
+     * 이력은 페이지가 한 번도 가진 적 없는 옛 제목·본문·시각을 담아야 하고, 버전 번호도
+     * 현재값이 아니라 1..k로 우리가 정한다. editedBy는 이관 담당자이고, 원본 편집자는
+     * 이름 스냅샷(V28)으로만 남는다 — 계정을 새로 만들지 않는 것이 이 모듈의 전제다.
+     */
+    public static PageRevision imported(Long pageId, int version, String title, String content,
+                                        Long editedBy, String editorName, String changeNote) {
+        PageRevision r = new PageRevision();
+        r.pageId = pageId;
+        r.version = version;
+        r.title = title;
+        if (RevisionContent.shouldCompress(content)) {
+            r.contentGzip = RevisionContent.compress(content);
+        } else {
+            r.contentText = content;
+        }
+        r.editedBy = editedBy;
+        r.changeNote = normalizeNote(changeNote);
+        return r.withEditorName(editorName);
+    }
+
     /** 변경 요약과 함께 스냅샷 — 사용자가 저장 시 남긴 한 줄이 있을 때. */
     public static PageRevision snapshotOf(Page page, String changeNote) {
         PageRevision r = new PageRevision();

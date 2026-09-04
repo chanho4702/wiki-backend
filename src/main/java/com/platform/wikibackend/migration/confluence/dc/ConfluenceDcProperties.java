@@ -22,7 +22,17 @@ public record ConfluenceDcProperties(
         @Value("${platform.wiki.migration.dc.max-pages:5000}") int maxPages,
         @Value("${platform.wiki.migration.dc.page-size:100}") int pageSize,
         @Value("${platform.wiki.migration.dc.child-page-size:200}") int childPageSize,
-        @Value("${platform.wiki.migration.dc.max-attachment-bytes:104857600}") long maxAttachmentBytes) {
+        @Value("${platform.wiki.migration.dc.max-attachment-bytes:104857600}") long maxAttachmentBytes,
+        /**
+         * 함께 옮길 지난 버전 수(M3, 기획 P3 기본 10). 0이면 현재본만 옮긴다.
+         * 버전 하나가 원본 왕복 한 번이라, 500페이지 × 10버전이면 5000번을 더 부른다 —
+         * 올릴 때는 원본 사이트가 감당할 수 있는지부터 본다.
+         */
+        @Value("${platform.wiki.migration.dc.history-versions:10}") int historyVersions,
+        /** 지난 버전 본문 하나의 상한. 넘으면 그 버전만 건너뛴다(HISTORY_VERSION_SKIPPED). */
+        @Value("${platform.wiki.migration.dc.max-history-version-bytes:2097152}") long maxHistoryVersionBytes,
+        /** 댓글 목록 한 묶음 크기. 페이지 목록과 같은 DC limit 상한을 받는다. */
+        @Value("${platform.wiki.migration.dc.comment-page-size:100}") int commentPageSize) {
 
     public ConfluenceDcProperties {
         if (maxPages < 1) {
@@ -39,6 +49,16 @@ public record ConfluenceDcProperties(
         }
         if (maxAttachmentBytes < 1) {
             throw new IllegalArgumentException("maxAttachmentBytes must be positive");
+        }
+        if (historyVersions < 0) {
+            throw new IllegalArgumentException("historyVersions must not be negative");
+        }
+        if (maxHistoryVersionBytes < 1) {
+            throw new IllegalArgumentException("maxHistoryVersionBytes must be positive");
+        }
+        if (commentPageSize < 1 || commentPageSize > 200) {
+            // 댓글 목록도 같은 상한을 받는다 — 넘겨 보내면 조용히 잘려 뒷부분 댓글이 사라진다.
+            throw new IllegalArgumentException("commentPageSize must be between 1 and 200");
         }
         if (connectTimeout.isZero() || connectTimeout.isNegative()
                 || readTimeout.isZero() || readTimeout.isNegative()) {

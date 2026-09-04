@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.wikibackend.domain.Page;
+import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.migration.MigrationPayloadStore;
 import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
 import com.platform.wikibackend.migration.model.MigrationPayloadKind;
@@ -80,6 +81,14 @@ public class ConfluenceDcVerifyHandler implements MigrationStageHandler {
                 : expectedTitle;
         if (!comparableTitle.trim().equals(actualTitle)) {
             issues.add(MigrationStageIssue.error(ConfluenceDcIssues.VERIFY_TITLE_MISMATCH, reference));
+        }
+        // 블로그 글이 일반 문서로 들어가면 블로그 목록에서 사라지고, 반대면 트리에서 사라진다(M3 §5.1).
+        // 어느 쪽이든 "옮겼는데 안 보인다"가 되므로 대조 대상이다.
+        PageType expectedType = "blogpost".equalsIgnoreCase(content.path("type").asText(""))
+                ? PageType.BLOG
+                : PageType.PAGE;
+        if (page.get().getType() != expectedType) {
+            issues.add(MigrationStageIssue.error(ConfluenceDcIssues.VERIFY_TYPE_MISMATCH, reference));
         }
         if (page.get().getContent() == null || page.get().getContent().isBlank()) {
             // 원본이 빈 문서였다면 정상이다. 원본에 본문이 있었는데 비었으면 변환이 통째로 날아간 것이다.

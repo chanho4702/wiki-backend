@@ -49,6 +49,14 @@ public class MigrationObjectMapping {
     @Column(name = "target_page_id")
     private Long targetPageId;
 
+    /**
+     * 이관한 댓글의 대상(V36). target_page_id를 재활용하지 않는 이유는 그 컬럼이 page(id) FK라
+     * 댓글 id를 거부하기 때문이다. 댓글 행은 target_page_id가 NULL이고, 링크 정리 pass는 그 조건으로
+     * 이미 건너뛴다 — 순회에 섞이지 않는다.
+     */
+    @Column(name = "target_comment_id")
+    private Long targetCommentId;
+
     @Column(name = "last_job_id")
     private Long lastJobId;
 
@@ -76,9 +84,30 @@ public class MigrationObjectMapping {
         return mapping;
     }
 
+    /**
+     * 이관한 댓글 한 건의 매핑(M3). externalObjectId는 {@code comment:{원본 id}}라 같은 원본의
+     * 페이지 매핑과 키가 겹치지 않는다.
+     */
+    public static MigrationObjectMapping createComment(MigrationProvider provider, String sourceInstanceId,
+                                                       String externalObjectId, String sourceChecksum,
+                                                       Long targetCommentId, Long lastJobId) {
+        MigrationObjectMapping mapping = new MigrationObjectMapping();
+        mapping.provider = MigrationSourceKey.require(provider, "provider");
+        mapping.sourceInstanceId = MigrationSourceKey.requireText(sourceInstanceId, "sourceInstanceId", 255);
+        mapping.externalObjectId = MigrationSourceKey.requireText(externalObjectId, "externalObjectId", 512);
+        mapping.sourceKey = MigrationSourceKey.object(provider, sourceInstanceId, externalObjectId);
+        mapping.updateComment(sourceChecksum, targetCommentId, lastJobId);
+        return mapping;
+    }
+
     public static String sourceKeyFor(MigrationProvider provider, String sourceInstanceId,
                                       String externalObjectId) {
         return MigrationSourceKey.object(provider, sourceInstanceId, externalObjectId);
+    }
+
+    /** 댓글 매핑의 외부 키 — 페이지 id와 같은 숫자를 써도 겹치지 않게 접두어를 붙인다. */
+    public static String commentObjectId(String sourceCommentId) {
+        return "comment:" + sourceCommentId;
     }
 
     public void update(String sourceVersion, String sourceChecksum, Long targetPageId, Long lastJobId) {
@@ -86,6 +115,12 @@ public class MigrationObjectMapping {
                 : MigrationSourceKey.requireText(sourceVersion, "sourceVersion", 100);
         this.sourceChecksum = MigrationSourceKey.requireChecksum(sourceChecksum);
         this.targetPageId = MigrationSourceKey.require(targetPageId, "targetPageId");
+        this.lastJobId = MigrationSourceKey.require(lastJobId, "lastJobId");
+    }
+
+    public void updateComment(String sourceChecksum, Long targetCommentId, Long lastJobId) {
+        this.sourceChecksum = MigrationSourceKey.requireChecksum(sourceChecksum);
+        this.targetCommentId = MigrationSourceKey.require(targetCommentId, "targetCommentId");
         this.lastJobId = MigrationSourceKey.require(lastJobId, "lastJobId");
     }
 }

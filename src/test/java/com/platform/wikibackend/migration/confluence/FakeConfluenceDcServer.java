@@ -52,7 +52,29 @@ public class FakeConfluenceDcServer {
     public void updatePage(String id, String title, String storage, int version) {
         PageRow row = rows.get(id);
         rows.put(id, new PageRow(id, title, row.parentId(), storage, version, row.labels(),
-                row.attachments(), row.restrictions()));
+                row.attachments(), row.restrictions(), row.type(), row.comments(), row.history()));
+    }
+
+    /** 블로그 글 — 트리 밖에 살고 목록 API에서 type=blogpost로만 걸린다(M3 §5.1). */
+    public void putBlogPost(String id, String title, String storage, int version) {
+        rows.put(id, new PageRow(id, title, null, storage, version, List.of(), List.of(),
+                FakeRestrictions.none(), "blogpost", List.of(), List.of()));
+    }
+
+    /** 이 문서에 달린 원본 댓글(M3 §5.2). */
+    public void putComments(String pageId, List<FakeComment> comments) {
+        PageRow row = rows.get(pageId);
+        rows.put(pageId, new PageRow(row.id(), row.title(), row.parentId(), row.storage(),
+                row.version(), row.labels(), row.attachments(), row.restrictions(), row.type(),
+                comments, row.history()));
+    }
+
+    /** 이 문서의 지난 버전(M3 §5.3). 번호는 현재 버전보다 작아야 조회된다. */
+    public void putHistory(String pageId, List<FakeVersion> versions) {
+        PageRow row = rows.get(pageId);
+        rows.put(pageId, new PageRow(row.id(), row.title(), row.parentId(), row.storage(),
+                row.version(), row.labels(), row.attachments(), row.restrictions(), row.type(),
+                row.comments(), versions));
     }
 
     /** 발견 뒤 원본에서 사라진 상황 — 404가 데드레터로 가는지 보려고 쓴다. */
@@ -65,7 +87,7 @@ public class FakeConfluenceDcServer {
                         List<String> labels, List<FakeAttachment> attachments,
                         FakeRestrictions restrictions) {
         rows.put(id, new PageRow(id, title, parentId, storage, version, labels, attachments,
-                restrictions));
+                restrictions, "page", List.of(), List.of()));
     }
 
     /** 형제 순서를 바꾼다 — `child/page`가 돌려주는 순서가 곧 원본 정렬이다. */
@@ -106,12 +128,14 @@ public class FakeConfluenceDcServer {
                 <ac:rich-text-body><p>백업이 필요합니다.</p></ac:rich-text-body></ac:structured-macro>\
                 <ac:structured-macro ac:name="jira" ac:schema-version="1">\
                 <ac:parameter ac:name="key">OPS-42</ac:parameter></ac:structured-macro>""",
-                27, List.of("운영", "런북"), List.of(png("topology.png")), FakeRestrictions.none()));
+                27, List.of("운영", "런북"), List.of(png("topology.png")), FakeRestrictions.none(),
+                "page", List.of(), List.of()));
         rows.put("10002", new PageRow("10002", "장애 대응 절차", "10001",
-                "<p>먼저 담당자를 호출합니다.</p>", 3, List.of(), List.of(), FakeRestrictions.none()));
+                "<p>먼저 담당자를 호출합니다.</p>", 3, List.of(), List.of(), FakeRestrictions.none(),
+                "page", List.of(), List.of()));
         rows.put("10003", new PageRow("10003", "복구 체크리스트", "10002",
                 "<ul><li>백업 확인</li><li>담당자 확인</li></ul>", 1, List.of(), List.of(),
-                FakeRestrictions.none()));
+                FakeRestrictions.none(), "page", List.of(), List.of()));
     }
 
     private void handleSpace(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
@@ -133,6 +157,13 @@ public class FakeConfluenceDcServer {
             respond(exchange, 200, summaries(childrenOf(id)));
             return;
         }
+        if (path.endsWith("/child/comment")) {
+            String id = URLDecoder.decode(path.substring("/rest/api/content/".length(),
+                    path.length() - "/child/comment".length()), StandardCharsets.UTF_8);
+            PageRow row = rows.get(id);
+            respond(exchange, 200, comments(id, row == null ? List.of() : row.comments()));
+            return;
+        }
         if (path.startsWith("/rest/api/content/")) {
             String id = URLDecoder.decode(path.substring("/rest/api/content/".length()),
                     StandardCharsets.UTF_8);
@@ -141,13 +172,25 @@ public class FakeConfluenceDcServer {
                 respond(exchange, 404, "{}");
                 return;
             }
+            Map<String, String> detailQuery = queryOf(exchange.getRequestURI().getRawQuery());
+            if ("historical".equals(detailQuery.get("status"))) {
+                // 지난 버전 조회 — 없는 번호는 실기와 같이 404다(관리자가 지운 버전).
+                int number = Integer.parseInt(detailQuery.getOrDefault("version", "0"));
+                FakeVersion found = row.history().stream()
+                        .filter(v -> v.number() == number).findFirst().orElse(null);
+                respond(exchange, found == null ? 404 : 200,
+                        found == null ? "{}" : historicalDetail(row, found));
+                return;
+            }
             respond(exchange, 200, detail(row));
             return;
         }
         Map<String, String> query = queryOf(exchange.getRequestURI().getRawQuery());
         int start = Integer.parseInt(query.getOrDefault("start", "0"));
         int limit = Integer.parseInt(query.getOrDefault("limit", "100"));
-        List<PageRow> all = new ArrayList<>(rows.values());
+        String type = query.getOrDefault("type", "page");
+        List<PageRow> all = rows.values().stream().filter(row -> row.type().equals(type))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         List<PageRow> window = start >= all.size()
                 ? List.of()
                 : all.subList(start, Math.min(start + limit, all.size()));
@@ -190,14 +233,58 @@ public class FakeConfluenceDcServer {
         respond(exchange, 404, "{}");
     }
 
+    /** 자식 목록은 트리 이야기다 — 블로그 글은 부모가 없어도 여기 끼지 않는다. */
     private List<PageRow> childrenOf(String parentId) {
         List<PageRow> children = new ArrayList<>();
         for (PageRow row : rows.values()) {
+            if (!"page".equals(row.type())) {
+                continue;
+            }
             if (parentId == null ? row.parentId() == null : parentId.equals(row.parentId())) {
                 children.add(row);
             }
         }
         return children;
+    }
+
+    /** `/child/comment` — 답글은 ancestors가 [문서, 부모 댓글]이다(실기와 같은 모양). */
+    private String comments(String pageId, List<FakeComment> comments) {
+        StringBuilder results = new StringBuilder();
+        for (FakeComment comment : comments) {
+            if (!results.isEmpty()) {
+                results.append(',');
+            }
+            StringBuilder ancestors = new StringBuilder("{\"id\":\"").append(pageId).append("\"}");
+            if (comment.parentId() != null) {
+                ancestors.append(",{\"id\":\"").append(comment.parentId()).append("\"}");
+            }
+            String extensions = comment.inlineSelection() == null
+                    ? "{\"location\":\"footer\"}"
+                    : "{\"location\":\"inline\",\"inlineProperties\":{\"originalSelection\":\""
+                            + escape(comment.inlineSelection()) + "\"}}";
+            results.append("{\"id\":\"").append(comment.id()).append("\",\"type\":\"comment\",")
+                    .append("\"ancestors\":[").append(ancestors).append("],")
+                    .append("\"extensions\":").append(extensions).append(',')
+                    .append("\"history\":{\"createdDate\":\"").append(comment.createdDate())
+                    .append("\",\"createdBy\":{\"username\":\"").append(escape(comment.author()))
+                    .append("\",\"displayName\":\"").append(escape(comment.author()))
+                    .append("\",\"email\":\"").append(escape(comment.author())).append("@example.com\"}},")
+                    .append("\"body\":{\"storage\":{\"value\":\"").append(escape(comment.storage()))
+                    .append("\",\"representation\":\"storage\"}}}");
+        }
+        return "{\"results\":[" + results + "],\"size\":" + comments.size() + "}";
+    }
+
+    /** `?status=historical&version=N` — 그 시점의 제목·본문·편집자·요약. */
+    private String historicalDetail(PageRow row, FakeVersion version) {
+        return "{\"id\":\"" + row.id() + "\",\"type\":\"" + row.type() + "\",\"status\":\"historical\","
+                + "\"title\":\"" + escape(version.title()) + "\","
+                + "\"space\":{\"key\":\"ENG\",\"name\":\"Engineering\"},"
+                + "\"version\":{\"number\":" + version.number() + ",\"when\":\"" + version.when()
+                + "\",\"message\":\"" + escape(version.message())
+                + "\",\"by\":{\"displayName\":\"" + escape(version.editorName()) + "\"}},"
+                + "\"body\":{\"storage\":{\"value\":\"" + escape(version.storage())
+                + "\",\"representation\":\"storage\"}}}";
     }
 
     private String summaries(List<PageRow> children) {
@@ -212,7 +299,7 @@ public class FakeConfluenceDcServer {
     }
 
     private String summary(PageRow row) {
-        return "{\"id\":\"" + row.id() + "\",\"type\":\"page\",\"status\":\"current\",\"title\":\""
+        return "{\"id\":\"" + row.id() + "\",\"type\":\"" + row.type() + "\",\"status\":\"current\",\"title\":\""
                 + escape(row.title()) + "\",\"version\":{\"number\":" + row.version()
                 + "},\"ancestors\":[" + ancestors(row) + "]}";
     }
@@ -236,8 +323,8 @@ public class FakeConfluenceDcServer {
                     .append("},\"extensions\":{\"mediaType\":\"").append(file.mediaType())
                     .append("\",\"fileSize\":").append(file.declaredSize()).append("}}");
         }
-        return "{\"id\":\"" + row.id() + "\",\"type\":\"page\",\"status\":\"current\",\"title\":\""
-                + escape(row.title()) + "\","
+        return "{\"id\":\"" + row.id() + "\",\"type\":\"" + row.type() + "\",\"status\":\"current\","
+                + "\"title\":\"" + escape(row.title()) + "\","
                 + "\"space\":{\"key\":\"ENG\",\"name\":\"Engineering\"},"
                 + "\"version\":{\"number\":" + row.version() + ",\"when\":\"2026-08-17T00:00:00Z\"},"
                 + "\"ancestors\":[" + ancestors(row) + "],"
@@ -344,8 +431,36 @@ public class FakeConfluenceDcServer {
         }
     }
 
+    /**
+     * 원본 댓글 한 건. inlineSelection이 있으면 본문 구간에 붙은 댓글이고, 없으면 페이지 댓글이다.
+     * parentId가 있으면 그 댓글의 답글이다(답글의 답글도 이 방식으로 만들 수 있다).
+     */
+    public record FakeComment(String id, String parentId, String storage, String author,
+                              String createdDate, String inlineSelection) {
+
+        public static FakeComment footer(String id, String storage, String author, String createdDate) {
+            return new FakeComment(id, null, storage, author, createdDate, null);
+        }
+
+        public static FakeComment reply(String id, String parentId, String storage, String author,
+                                        String createdDate) {
+            return new FakeComment(id, parentId, storage, author, createdDate, null);
+        }
+
+        public static FakeComment inline(String id, String storage, String author, String createdDate,
+                                         String selection) {
+            return new FakeComment(id, null, storage, author, createdDate, selection);
+        }
+    }
+
+    /** 원본의 지난 버전 한 건. */
+    public record FakeVersion(int number, String title, String storage, String when, String editorName,
+                              String message) {
+    }
+
     private record PageRow(String id, String title, String parentId, String storage, int version,
                            List<String> labels, List<FakeAttachment> attachments,
-                           FakeRestrictions restrictions) {
+                           FakeRestrictions restrictions, String type, List<FakeComment> comments,
+                           List<FakeVersion> history) {
     }
 }

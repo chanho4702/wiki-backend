@@ -33,4 +33,24 @@ public class MigrationObjectMappingWriter {
                         () -> mappings.saveAndFlush(MigrationObjectMapping.create(provider, sourceInstanceId,
                                 externalObjectId, sourceVersion, sourceChecksum, targetPageId, jobId)));
     }
+
+    /**
+     * 이관한 댓글 하나의 매핑(M3). 페이지와 같은 이유로 별도 트랜잭션이다 — 이 행 하나가
+     * 제약에 걸려도 이미 만들어진 댓글까지 되돌아가면 재실행이 같은 댓글을 또 단다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void upsertComment(MigrationProvider provider, String sourceInstanceId,
+                              String sourceCommentId, String sourceChecksum, Long targetCommentId,
+                              Long jobId) {
+        String externalObjectId = MigrationObjectMapping.commentObjectId(sourceCommentId);
+        String sourceKey = MigrationObjectMapping.sourceKeyFor(provider, sourceInstanceId, externalObjectId);
+        mappings.findBySourceKey(sourceKey)
+                .ifPresentOrElse(
+                        existing -> {
+                            existing.updateComment(sourceChecksum, targetCommentId, jobId);
+                            mappings.save(existing);
+                        },
+                        () -> mappings.saveAndFlush(MigrationObjectMapping.createComment(provider,
+                                sourceInstanceId, externalObjectId, sourceChecksum, targetCommentId, jobId)));
+    }
 }

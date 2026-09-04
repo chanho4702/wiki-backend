@@ -92,6 +92,33 @@ public class CommentService {
         return CommentResponse.from(saved);
     }
 
+    /**
+     * 이관 전용 내부 경로(W29 M3 §5.2) — 원본 댓글을 그대로 옮겨 적는다.
+     *
+     * {@link #create}를 부르지 않는 이유는 {@code ImportedPageWriter}와 같다.
+     * 1. **알림을 쏘지 않는다** — 댓글 3000건을 옮기면 구독자에게 3000통이 간다. 이관은
+     *    "새 댓글이 달렸다"는 사건이 아니라 데이터 이전이다.
+     * 2. **자동 구독하지 않는다** — 이관 담당자가 옮긴 문서 전부의 대화를 구독하게 되면 안 된다.
+     * 3. **권한을 다시 묻지 않는다** — 잡 요청자는 이미 대상 스페이스 ADMIN이고, 문서 제한은
+     *    같은 RESOLVE에서 방금 적용된 것이라 여기서 되물으면 자기가 건 자물쇠에 자기가 걸린다.
+     * 4. **시각을 원본 것으로 되돌린다** — 저장 뒤 created_at을 한 번 더 눌러야 한다.
+     *
+     * 작성자 id는 잡 요청자이고 이름은 원본 표시 이름이다(기획 P2) — 계정을 새로 만들지 않는 것이
+     * 이 모듈의 전제이고, 이름 스냅샷 컬럼이 이미 그 자리를 갖고 있다.
+     *
+     * @return 만들어진 댓글 id
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public long createImported(long pageId, Long parentId, long authorId, String authorName,
+                               String body, Instant createdAt) {
+        PageComment saved = comments.saveAndFlush(PageComment.imported(pageId, parentId, authorId,
+                normalizeAuthorName(authorName, authorId), body, createdAt));
+        if (createdAt != null) {
+            comments.overwriteCreatedAt(saved.getId(), createdAt);
+        }
+        return saved.getId();
+    }
+
     /** 해결/재개 — 인라인 스레드만 대상이고, VIEW 권한이 있으면 누구나 닫을 수 있다(컨플루언스 규칙). */
     public CommentResponse setResolved(long userId, long commentId, boolean resolved) {
         PageComment comment = requireComment(commentId);
