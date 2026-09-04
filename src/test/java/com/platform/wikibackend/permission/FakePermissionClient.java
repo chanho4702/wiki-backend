@@ -14,6 +14,7 @@ import java.util.Set;
  */
 @Component
 @org.springframework.context.annotation.Primary
+@org.springframework.context.annotation.Profile("!docs")   // docs 프로필은 PublicReadPermissionClient를 그대로 검증한다
 public class FakePermissionClient implements PermissionClient {
 
     private record Key(long userId, long spaceId, WikiAction action) {}

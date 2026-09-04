@@ -117,6 +117,23 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
   collaboration service는 `GETDEL`로 ticket을 원자적으로 한 번만 소비한다. payload 계약은
   `schema/collaboration-ticket-v1.schema.json`이 정본이다.
 
+## 공개 문서 인스턴스(docs 프로필)
+
+같은 이미지를 `SPRING_PROFILES_ACTIVE=docker,docs`로 한 번 더 띄우면 **로그인 없이 읽기만 되는**
+두 번째 인스턴스가 된다(별도 `docsdb`). 팀 위키와 프로세스·DB·이벤트가 전부 분리된다.
+
+- 인증 없음 — `DocsSecurityConfig`가 `SecurityConfig`를 대체하고, `DocsPrincipalFilter`가 모든
+  요청에 합성 주체를 심는다(익명 `sub=0`, 임포터 `sub=1`). 컨트롤러가 예외 없이
+  `jwt.getSubject()`를 파싱하기 때문이다. `sub=0`은 org-service에 없는 ID다.
+- 경로 인가는 기본 거부다: `OPTIONS` · `GET /api/wiki/**` · `POST /graphql`만 열고,
+  `X-Docs-Import-Token`이 맞은 요청에만 `/api/wiki/**` 쓰기를 연다. 나머지는 403
+  (`{"error": "읽기 전용 문서 인스턴스입니다."}`). 조회수 기록은 임포터에게도 닫혀 있다.
+- 권한 판정은 org-service를 부르지 않는다 — `PublicReadPermissionClient`가 VIEW를 항상 허용하고
+  그 위 등급은 임포터에게만 준다. gRPC 채널·Eureka·색인 gRPC·이벤트 발행·스케줄러 5종은 꺼진다.
+- `DOCS_IMPORT_TOKEN`이 비어 있으면 임포트 경로도 닫혀 어떤 경로로도 쓰기가 되지 않는다.
+- 이 인스턴스의 호스트 포트는 루프백에만 연다(임포터 전용). 웹 노출은 nginx `/api/docs/`가 맡고
+  거기서 `X-Docs-Import-Token` 헤더를 제거한다.
+
 ## 마이그레이션 기반
 
 Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을 곧바로 `Page.content`에
@@ -202,6 +219,7 @@ extractor와 media copier는 `MigrationStageHandler`로 이 경계 위에 순차
 | `platform.wiki.migration-worker.retry-backoff[-max]` | `PT30S` / `PT30M` | 지수 백오프 기준·상한 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
+| `DOCS_IMPORT_TOKEN` | 빈 값 | docs 프로필 임포터 토큰. 비면 쓰기 경로 전면 차단 |
 
 ## 테스트와 배포
 

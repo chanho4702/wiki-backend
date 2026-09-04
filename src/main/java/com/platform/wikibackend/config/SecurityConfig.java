@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
@@ -20,8 +21,13 @@ import org.springframework.security.web.SecurityFilterChain;
 /**
  * JWT 디코더(JWKS + issuer/audience 검증)와 roles→ROLE_ 변환기는 common-starter가 준다(S-02).
  * 여기에는 이 서비스만의 것 — 어떤 경로를 열지, org gRPC 채널과 클라이언트 — 만 남긴다.
+ *
+ * `docs` 프로필(공개 문서 인스턴스)에서는 이 구성 전체가 빠지고 {@link DocsSecurityConfig}가
+ * 대신 선다. 필터 체인만 빼지 않는 이유: 거기서는 JWT 디코더도 org gRPC 채널도 존재하지 않아야
+ * 하는데, @ConditionalOnMissingBean은 빈 등록 순서에 기대는 약한 대체라 프로필로 확실히 끊는다.
  */
 @Configuration
+@Profile("!docs")
 public class SecurityConfig {
 
     @Bean

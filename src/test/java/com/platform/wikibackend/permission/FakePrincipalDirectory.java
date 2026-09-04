@@ -11,6 +11,7 @@ import java.util.Set;
 /** 테스트 기본은 양수 ID를 실재로 보고, missing으로 지정한 주체만 거절한다. */
 @Component
 @Primary
+@org.springframework.context.annotation.Profile("!docs")   // docs 프로필은 프로필 전용 빈을 그대로 검증한다
 public class FakePrincipalDirectory implements PrincipalDirectory {
 
     private final Set<RestrictionPrincipal> missing = new HashSet<>();

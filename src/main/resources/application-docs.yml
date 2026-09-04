@@ -1,0 +1,47 @@
+# 공개 문서 인스턴스(docs) — 로그인 없이 읽기만 되는 두 번째 wiki-backend.
+#
+# 팀 위키(`/wiki/`)와 프로세스·DB가 완전히 분리된다: `SPRING_PROFILES_ACTIVE=docker,docs` +
+# 별도 `docsdb`. 이 프로필은 "무엇을 끄는가"가 본체다 — 팀 위키의 색인·알림·권한 연동에
+# 공개 인스턴스가 끼어들면 안 되기 때문이다.
+spring:
+  autoconfigure:
+    # JWT 검증 자동설정을 명시적으로 제외한다.
+    # 설계 문서는 `platform.jwt.issuer/audience`를 비우면 common-starter의 @ConditionalOnProperty가
+    # 알아서 꺼진다고 봤지만, application.yml이 env 기본값(`${PLATFORM_ISSUER:...}`)을 주므로
+    # 그 게이트는 이 프로필에서도 항상 켜진다. docs 체인은 JwtDecoder를 쓰지 않으므로 여기서 끊는다
+    # — 공개 인스턴스에 살아 있는 토큰 검증기를 남겨 두면 "인증이 도는 줄" 오해를 부른다.
+    exclude: com.platform.common.security.PlatformResourceServerAutoConfiguration
+  mail:
+    host: ""   # 공개 인스턴스는 메일을 보내지 않는다(구독자도 없다)
+
+eureka:
+  client:
+    # 게이트웨이 라우팅 대상이 아니다 — nginx가 /api/docs/로 직접 프록시한다.
+    enabled: false
+
+platform:
+  # 색인기(search-service) 콘텐츠 조달 gRPC 서버 — 공개 인스턴스는 색인 대상이 아니다.
+  grpc:
+    enabled: false
+  # 팀 위키의 Redis Streams 색인 스트림에 docs 문서가 섞이면 안 된다.
+  # 발행기를 끄면 EventRelay가 주입받을 EventPublisher가 없어지므로 DocsSecurityConfig가 no-op을 채운다.
+  events:
+    enabled: false
+  wiki:
+    storage:
+      write-backend: local   # 노트에 이미지가 없다 — S3/MinIO를 붙이지 않는다
+    # 스케줄러 5종 정지: 쓰기가 임포터뿐이라 정리할 것이 생기지 않는다.
+    trash:
+      enabled: false
+    revisions:
+      enabled: false
+    attachment-reconciliation:
+      enabled: false
+    migration-worker:
+      enabled: false
+    mail:
+      digest-enabled: false
+  docs:
+    # 임포터 전용 서버 비밀(루프백 포트로만 도달 가능). 비어 있으면 임포트 경로도 닫혀
+    # 이 인스턴스는 어떤 경로로도 쓰기가 되지 않는다.
+    import-token: ${DOCS_IMPORT_TOKEN:}
