@@ -188,9 +188,55 @@ item 수, severity/code별 손실 집계, dead letter 목록이다. `DRY_RUN`은
 VIEW가 아니라 대상 스페이스 ADMIN만 열 수 있다.
 
 현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer,
-Confluence 공통 storage parser, worker 실행기와 job/report API까지 검증한다. 실제 provider
-extractor와 media copier는 `MigrationStageHandler`로 이 경계 위에 순차적으로 붙이며, 기존
-`Page.content` 정본 포맷은 바꾸지 않는다.
+Confluence 공통 storage parser, worker 실행기와 job/report API까지 검증한다. Confluence DC provider는
+extractor·media copier·resolver·verifier가 `MigrationStageHandler`로 붙어 있고(W29 M1~M3, 아래 운영 가이드), Notion은
+아직 normalizer까지다. 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
+
+### 컨플루언스 설치형(Server/DC) 이관 — 운영 가이드 (W29, 2026-09-05)
+
+M1~M3로 파이프라인이 실제로 돈다(EXTRACT → NORMALIZE → MEDIA_COPY → RESOLVE → VERIFY, 잡 마감 뒤 링크 fixup).
+설계 정본은 `wiki-front/docs/superpowers/specs/2026-09-05-confluence-dc-migration-design.md`, 관리 화면은
+wiki-front `/admin/migrations`(전역 관리자). ⚠️ 실기 DC로 실측하기 전이라 지원 버전을 보장하지 않는다 —
+기본 가정은 7.19 LTS~9.x, 개인 액세스 토큰(PAT, 7.9+).
+
+**준비(운영자)**
+1. 원본 DC에서 이관 계정으로 PAT를 발급한다(스페이스 보기 + 첨부 다운로드 권한). 토큰은 잡 생성 요청 본문에만 들어가고
+   응답·화면·로그 어디에도 다시 나오지 않지만, DB `migration_source.auth_token`에는 **평문**으로 저장된다 — DB 접근 통제로
+   보호하고, 이관이 끝나면 원본 쪽에서 토큰을 폐기한다(암호화 저장은 후속 ADR).
+2. wiki-backend가 원본 DC로 **아웃바운드 HTTPS**를 열 수 있어야 한다(게이트웨이·nginx 무관, 워커 프로세스에서 직접 호출).
+   요청은 `base_url` + 고정 경로만 조합하고 원본 응답의 `_links`·리다이렉트를 따라가지 않는다.
+3. 워커를 켠다: `platform.wiki.migration-worker.enabled=true`(기본 꺼짐). 다중 노드면 한 노드만 켜도 되고, 여러 노드가 켜져
+   있으면 lease로 나눠 갖는다. `docs` 프로필(공개 문서 인스턴스)은 마이그레이션 API 자체를 막는다.
+4. 첨부 저장소 용량: 원본 스페이스 첨부 합계만큼(+지난 버전 본문 텍스트). dry-run 보고서의 `ATTACHMENT_PLANNED` 합계로 미리 본다.
+
+**절차(관리자, 화면 기준)**
+1. `/admin/migrations` → 새 잡: DC URL·스페이스 키·PAT 입력 → **연결 확인**(스페이스 이름·페이지 수). 대상은 **빈 스페이스**를 권장한다.
+2. 모드 **dry-run**으로 잡 생성 → **발견**(페이지·블로그 목록을 조상 깊이순으로 등록) → **시작**. 보고서에서 미지원 매크로(`MACRO_OPAQUE`)·
+   미매핑 사용자(`AUTHOR_UNMAPPED`, `RESTRICTION_PRINCIPAL_UNMAPPED`)·첨부 계획을 확인한다. dry-run은 원본을 내려받지도, 페이지를 만들지도 않는다.
+3. 같은 원본으로 모드 **import** 잡을 만들어 발견 → 시작. 진행률은 5초마다 갱신되고, 중단되면 같은 잡을 다시 시작하면 이어서 한다.
+4. 완료 뒤 보고서의 `LINK_UNRESOLVED`·`ATTACHMENT_*`·`VERIFY_*`·데드레터를 확인한다. 데드레터(`DC_NOT_FOUND` 등)는 원본 쪽 문제를 고친 뒤
+   **재발견 → 재시작**하면 그 항목만 다시 처리된다(완료 항목은 같은 checksum이면 건너뛴다).
+
+**재실행·멱등 규칙**: 같은 원본 페이지(id+version)는 한 번만 만든다. 원본이 바뀌어 checksum이 달라지면 제목·본문·라벨을 갱신하고
+새 리비전("컨플루언스 재이관 v{n}")을 남긴다. 첨부는 같은 checksum이면 재다운로드하지 않고, 댓글·이력은 최초 이관에만 만든다.
+
+**옮겨지는 것 / 아닌 것**
+| 옮겨진다 | 옮겨지지 않는다(보고서에 남음) |
+|---|---|
+| 페이지 트리·형제 순서·제목·본문(storage XHTML → IR → 마크다운)·라벨·생성/수정 시각 | 애드온 매크로 본문(Jira·Draw.io 등, `opaque` 패널로 자리만) |
+| 첨부 최신본(이미지는 본문에서 인라인, 그 외는 링크) | 첨부의 지난 버전, 100MB 초과 파일(`ATTACHMENT_TOO_LARGE`) |
+| 페이지·블로그 댓글(원본 작성자 이름·시각), 답글은 1단계로 | 인라인 댓글의 앵커(페이지 댓글로 강등 + 원문 인용) |
+| 지난 버전 N개(기본 10)를 리비전으로, 편집자 이름·변경 요약 | 스페이스 권한(그룹·역할) — 보고서 요약만 |
+| 페이지 제한(보기/편집) — **미매핑 주체는 요청자 단독 제한**(fail-closed) | 사용자 계정 자체(이메일 대조만; 지금은 org-service에 조회 API가 없어 전부 미매핑 → "이관됨 · 원본 이름" 표시) |
+| 같은 스페이스 안 페이지 링크(제목 기반 `[[제목]]` + ID 기반 재작성) | 다른 스페이스·외부 사이트 링크(원본 URL 유지) |
+
+**프로퍼티**(`platform.wiki.migration.dc.*`): `connect-timeout`(PT10S) · `read-timeout`(PT60S, 워커 lease 5분보다 짧게) · `max-pages`(5000) ·
+`page-size`/`child-page-size`/`comment-page-size`(100/200/100, DC limit 상한 200) · `max-attachment-bytes`(100MB, 파일을 통째로 메모리에 담는다 —
+스트리밍 전엔 올리지 말 것) · `history-versions`(10, 0이면 현재본만) · `max-history-version-bytes`(2MB).
+워커(`platform.wiki.migration-worker.*`): `enabled` · `lease`(PT5M) · `retry-backoff`(PT30S)~`retry-backoff-max`(PT30M) · `max-attempts`(5) · `batch-size`(25).
+
+**원본 부하**: 페이지당 본문 1회 + 첨부 수 + 댓글 묶음 수 + 지난 버전 N회를 호출한다. 500페이지·10버전이면 5,000회가 더 붙는다 —
+운영 중인 DC라면 `history-versions`를 낮추거나 업무 외 시간에 돌린다. 429/5xx는 지수 백오프로 재시도한다.
 
 ## 환경 변수
 
