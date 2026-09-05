@@ -41,28 +41,28 @@ public class PersonalController {
     @Operation(summary = "페이지에 별표를 단다")
     @PutMapping("/api/wiki/pages/{pageId}/star")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void starPage(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public void starPage(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         personal.starPage(userId(jwt), pageId);
     }
 
     @Operation(summary = "페이지 별표를 뗀다")
     @DeleteMapping("/api/wiki/pages/{pageId}/star")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unstarPage(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public void unstarPage(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         personal.unstarPage(userId(jwt), pageId);
     }
 
     @Operation(summary = "스페이스에 별표를 단다")
     @PutMapping("/api/wiki/spaces/{spaceId}/star")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void starSpace(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public void starSpace(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         personal.starSpace(userId(jwt), spaceId);
     }
 
     @Operation(summary = "스페이스 별표를 뗀다")
     @DeleteMapping("/api/wiki/spaces/{spaceId}/star")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unstarSpace(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public void unstarSpace(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         personal.unstarSpace(userId(jwt), spaceId);
     }
 

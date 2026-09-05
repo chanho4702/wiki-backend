@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.wikibackend.config.ConflictResponse;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -26,19 +28,21 @@ public class ArchiveController {
 
     @Operation(summary = "스페이스에서 보관한 페이지를 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/archive")
-    public List<TrashItem> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public List<TrashItem> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return archive.list(userId(jwt), spaceId);
     }
 
+    @ConflictResponse("이미 보관된 문서입니다")
     @Operation(summary = "페이지를 보관 처리한다 — 트리에서 빠지고 내용은 남는다")
     @PostMapping("/api/wiki/pages/{id}/archive")
-    public PageResponse archive(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageResponse archive(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return archive.archive(userId(jwt), id);
     }
 
+    @ConflictResponse("보관되지 않은 문서이거나, 상위 문서가 아직 보관 중입니다")
     @Operation(summary = "보관한 페이지를 원래 자리로 되돌린다")
     @PostMapping("/api/wiki/pages/{id}/unarchive")
-    public PageResponse unarchive(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageResponse unarchive(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return archive.unarchive(userId(jwt), id);
     }
 }

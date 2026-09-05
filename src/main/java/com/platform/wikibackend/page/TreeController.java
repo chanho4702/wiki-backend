@@ -30,7 +30,7 @@ public class TreeController {
     /** parentId 생략 = 루트 목록. */
     @Operation(summary = "부모 아래의 자식 페이지를 조회한다 — parentId를 비우면 루트")
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/children")
-    public List<PageNode> children(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+    public List<PageNode> children(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                    @Parameter(description = "부모 페이지 ID. 비우면 스페이스 루트")
                                    @RequestParam(required = false) Long parentId) {
         return tree.children(userId(jwt), spaceId, parentId);
@@ -38,28 +38,28 @@ public class TreeController {
 
     @Operation(summary = "제목으로 페이지를 찾는다 — 위키 링크 해석용")
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/lookup")
-    public List<PageNode> lookup(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+    public List<PageNode> lookup(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                  @Parameter(description = "찾을 페이지 제목. 여러 번 줄 수 있다") @RequestParam List<String> title) {
         return tree.lookupByTitles(userId(jwt), spaceId, title);
     }
 
     @Operation(summary = "최근 수정된 페이지를 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/recent")
-    public List<PageNode> recent(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+    public List<PageNode> recent(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                  @Parameter(description = "최대 건수") @RequestParam(defaultValue = "8") int limit) {
         return tree.recentlyUpdated(userId(jwt), spaceId, limit);
     }
 
     @Operation(summary = "ID 목록으로 페이지 노드를 한 번에 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/by-ids")
-    public List<PageNode> byIds(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+    public List<PageNode> byIds(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                 @Parameter(description = "조회할 페이지 ID. 여러 번 줄 수 있다") @RequestParam List<Long> id) {
         return tree.byIds(userId(jwt), spaceId, id);
     }
 
     @Operation(summary = "스페이스 안에서 제목으로 페이지를 검색한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/pages/search")
-    public List<PageNode> search(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId,
+    public List<PageNode> search(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                  @Parameter(description = "제목에서 찾을 말") @RequestParam String q) {
         return tree.searchByTitle(userId(jwt), spaceId, q);
     }
@@ -80,13 +80,13 @@ public class TreeController {
 
     @Operation(summary = "페이지의 조상을 루트부터 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/ancestors")
-    public List<PageNode> ancestors(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public List<PageNode> ancestors(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return tree.ancestors(userId(jwt), pageId);
     }
 
     @Operation(summary = "페이지의 하위 노드를 전부 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/descendants")
-    public List<PageNode> descendants(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public List<PageNode> descendants(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return tree.descendants(userId(jwt), pageId);
     }
 }

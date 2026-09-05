@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -33,26 +34,26 @@ public class TrashController {
 
     @Operation(summary = "스페이스 휴지통의 페이지를 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/trash")
-    public List<TrashItem> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public List<TrashItem> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return trash.list(userId(jwt), spaceId);
     }
 
     @Operation(summary = "휴지통을 비운다 — 영구 삭제한 건수를 돌려준다")
     @DeleteMapping("/api/wiki/spaces/{spaceId}/trash")
-    public Map<String, Integer> empty(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public Map<String, Integer> empty(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return Map.of("purged", trash.empty(userId(jwt), spaceId));
     }
 
     @Operation(summary = "휴지통의 페이지를 되살린다")
     @PostMapping("/api/wiki/pages/{id}/restore")
-    public PageRestoreResponse restore(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageRestoreResponse restore(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return trash.restore(userId(jwt), id);
     }
 
     @Operation(summary = "휴지통의 페이지를 영구 삭제한다")
     @DeleteMapping("/api/wiki/pages/{id}/purge")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void purge(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public void purge(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         trash.purge(userId(jwt), id);
     }
 }

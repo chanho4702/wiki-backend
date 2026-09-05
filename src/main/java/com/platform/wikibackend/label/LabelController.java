@@ -31,20 +31,20 @@ public class LabelController {
 
     @Operation(summary = "페이지에 붙은 라벨을 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/labels")
-    public List<String> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public List<String> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return labels.list(userId(jwt), pageId);
     }
 
     @Operation(summary = "페이지의 라벨을 통째로 교체한다")
     @PutMapping("/api/wiki/pages/{pageId}/labels")
-    public List<String> replace(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
+    public List<String> replace(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
                                 @Valid @RequestBody LabelsRequest req) {
         return labels.replace(userId(jwt), pageId, req.labels());
     }
 
     @Operation(summary = "이 페이지를 본문에서 링크한 문서를 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/backlinks")
-    public List<PageTreeItem> backlinks(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public List<PageTreeItem> backlinks(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return labels.backlinks(userId(jwt), pageId);
     }
 
@@ -64,14 +64,14 @@ public class LabelController {
     @Operation(summary = "스페이스에서 쓰인 라벨을 사용 횟수와 함께 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/labels")
     public List<LabelService.LabelCountResponse> inSpace(@AuthenticationPrincipal Jwt jwt,
-                                                        @PathVariable Long spaceId) {
+                                                        @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return labels.listInSpace(userId(jwt), spaceId);
     }
 
     @Operation(summary = "그 라벨이 붙은 페이지를 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/labels/{name}/pages")
     public List<PageTreeItem> pagesWithLabel(@AuthenticationPrincipal Jwt jwt,
-                                             @PathVariable Long spaceId,
+                                             @Parameter(description = "스페이스 ID") @PathVariable Long spaceId,
                                              @Parameter(description = "라벨 이름") @PathVariable String name) {
         return labels.pagesWithLabel(userId(jwt), spaceId, name);
     }

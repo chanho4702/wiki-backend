@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -33,25 +34,25 @@ public class SpaceWatchController {
 
     @Operation(summary = "스페이스를 구독 중인지 조회한다")
     @GetMapping
-    public Map<String, Boolean> status(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public Map<String, Boolean> status(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return Map.of("watching", watches.isWatching(userId(jwt), spaceId));
     }
 
     @Operation(summary = "스페이스를 구독한다")
     @PutMapping
-    public Map<String, Boolean> watch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public Map<String, Boolean> watch(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return Map.of("watching", watches.watch(userId(jwt), spaceId));
     }
 
     @Operation(summary = "스페이스를 구독한다 — PUT과 같은 동작(프론트 호환용)")
     @PostMapping
-    public Map<String, Boolean> watchViaPost(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public Map<String, Boolean> watchViaPost(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return watch(jwt, spaceId);
     }
 
     @Operation(summary = "스페이스 구독을 해제한다")
     @DeleteMapping
-    public Map<String, Boolean> unwatch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
+    public Map<String, Boolean> unwatch(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return Map.of("watching", watches.unwatch(userId(jwt), spaceId));
     }
 }

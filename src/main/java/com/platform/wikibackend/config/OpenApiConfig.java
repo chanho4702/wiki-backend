@@ -6,6 +6,7 @@ import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.MediaType;
+import io.swagger.v3.oas.models.media.ArraySchema;
 import io.swagger.v3.oas.models.media.ObjectSchema;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
@@ -51,6 +52,8 @@ public class OpenApiConfig {
     private static final String BEARER = "bearerAuth";
     private static final String APPLICATION_JSON = "application/json";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
+    /** 이동 영향 409만 바디가 다르다 — error 외에 impact를 싣는다(WikiExceptionHandler). */
+    public static final String MOVE_IMPACT_SCHEMA = "MoveImpactError";
 
     /**
      * 오류 설명 문구. wiki·alm·org 세 서비스가 같은 문자열을 쓴다 — 여기만 바꾸지 않는다.
@@ -81,7 +84,8 @@ public class OpenApiConfig {
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
                                 .description("개인 API 토큰 `chanho_pat_…` 또는 세션 JWT"))
-                        .addSchemas(ERROR_SCHEMA, platformError()))
+                        .addSchemas(ERROR_SCHEMA, platformError())
+                        .addSchemas(MOVE_IMPACT_SCHEMA, moveImpactError()))
                 // 공개 엔드포인트가 없으므로 전역으로 건다 — 오퍼레이션별 예외를 두지 않는다.
                 .addSecurityItem(new SecurityRequirement().addList(BEARER));
     }
@@ -96,13 +100,34 @@ public class OpenApiConfig {
     }
 
     /**
+     * 이동 영향 409의 바디. 공통 오류에 {@code impact}가 더 붙는다 — 프론트가 이 목록으로
+     * "이 사람들이 접근을 잃는다" 확인 다이얼로그를 그리고 confirmImpact=true로 재요청한다.
+     * WikiExceptionHandler.moveImpact()가 실제로 내보내는 모양 그대로다.
+     */
+    private static Schema<Object> moveImpactError() {
+        return new ObjectSchema()
+                .description("이동 영향으로 멈춘 409. 새로 적용될 보기 제한을 함께 싣는다.")
+                .addProperty("error", new StringSchema()
+                        .description("사용자에게 보일 오류 메시지")
+                        .example("이동하면 새 위치의 보기 제한이 적용되어 일부 사용자가 접근을 잃습니다. 확인 후 다시 시도하세요"))
+                .addProperty("impact", new ObjectSchema()
+                        .description("확인 다이얼로그가 그릴 영향")
+                        .addProperty("newlyRestrictedBy", new ArraySchema()
+                                .description("이동 후 새로 적용되는 조상 VIEW 제한")
+                                .items(new Schema<>().$ref("#/components/schemas/InheritedRestriction")))
+                        .required(List.of("newlyRestrictedBy")))
+                .required(List.of("error", "impact"));
+    }
+
+    /**
      * 컨트롤러가 직접 선언하지 않는 공통 실패를 채운다. 코드가 실제로 낼 수 있는 것만 넣는다.
      *
      * <ul>
      *   <li>401·403 — 모든 경로가 인증을 요구하고(SecurityConfig) 스페이스 권한을 판정한다.</li>
      *   <li>400 — 요청 본문이 있는 오퍼레이션만. 본문 없는 GET·DELETE에는 검증할 것이 없다.</li>
      *   <li>404 — 경로 변수로 대상을 지목하는 오퍼레이션만. 목록 조회에는 붙이지 않는다.</li>
-     *   <li>409 — 낙관적 락이 있는 PUT(요청 DTO에 {@code expectedVersion})만.</li>
+     *   <li>409 — {@link ConflictResponse}를 붙인 엔드포인트는 그 사유로, 낙관적 락이 있는
+     *       PUT(요청 DTO에 {@code expectedVersion})은 정본 문구로. 둘 다인 곳은 사유가 이긴다.</li>
      *   <li>503 — 전부. 읽기·쓰기가 모두 org-service gRPC 권한 판정을 타고, 그게 불능이면
      *       {@code ServiceUnavailableException}으로 503이 나간다(fail-open이 아니라 가용성 장애).</li>
      * </ul>
@@ -126,6 +151,13 @@ public class OpenApiConfig {
             if (hasPathVariable(handlerMethod)) {
                 addIfAbsent(responses, "404");
             }
+            // 엔드포인트별 사유가 먼저다 — 낙관적 락 정본 문구보다 구체적이다.
+            ConflictResponse conflict = handlerMethod.getMethodAnnotation(ConflictResponse.class);
+            if (conflict != null) {
+                addIfAbsent(responses, "409", conflict.value(), conflict.schema().isEmpty()
+                        ? ERROR_REF
+                        : "#/components/schemas/" + conflict.schema());
+            }
             if (isOptimisticLockedPut(operation, handlerMethod)) {
                 addIfAbsent(responses, "409");
             }
@@ -136,13 +168,21 @@ public class OpenApiConfig {
     }
 
     private static void addIfAbsent(ApiResponses responses, String code) {
+        addIfAbsent(responses, code, ERROR_DESCRIPTIONS.get(code));
+    }
+
+    private static void addIfAbsent(ApiResponses responses, String code, String description) {
+        addIfAbsent(responses, code, description, ERROR_REF);
+    }
+
+    private static void addIfAbsent(ApiResponses responses, String code, String description, String ref) {
         if (responses.containsKey(code)) {
             return;
         }
         responses.addApiResponse(code, new ApiResponse()
-                .description(ERROR_DESCRIPTIONS.get(code))
+                .description(description)
                 .content(new Content().addMediaType("application/json",
-                        new MediaType().schema(new Schema<Object>().$ref(ERROR_REF)))));
+                        new MediaType().schema(new Schema<Object>().$ref(ref)))));
     }
 
     /**

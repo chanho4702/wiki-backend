@@ -18,6 +18,8 @@ import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.wikibackend.config.ConflictResponse;
+import com.platform.wikibackend.config.OpenApiConfig;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -28,6 +30,7 @@ public class PageController {
 
     private final PageService pages;
 
+    @ConflictResponse("보관된 문서 아래에는 새 문서를 만들 수 없습니다")
     @Operation(summary = "페이지를 만든다")
     @PostMapping("/api/wiki/pages")
     @ResponseStatus(HttpStatus.CREATED)
@@ -37,29 +40,32 @@ public class PageController {
 
     @Operation(summary = "페이지 본문과 메타데이터를 조회한다")
     @GetMapping("/api/wiki/pages/{id}")
-    public PageResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return pages.get(userId(jwt), id);
     }
 
-    @Operation(summary = "페이지를 수정한다 — expectedVersion이 현재 버전과 다르면 409")
+    @Operation(summary = "페이지를 수정한다 — expectedVersion이 현재 버전과 다르면 409. 보관된 문서는 수정 불가")
     @PutMapping("/api/wiki/pages/{id}")
-    public PageResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse update(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                @Valid @RequestBody PageUpdateRequest req) {
         return pages.update(userId(jwt), id, req);
     }
 
+    @ConflictResponse("공동 초안이 없거나, 초안 버전이 그사이 바뀌었습니다")
     @Operation(summary = "공동 편집 초안을 정본으로 확정한다")
     @PutMapping("/api/wiki/pages/{id}/collaboration-draft")
     public CollaborationDraftCommitResponse commitCollaborationDraft(
             @AuthenticationPrincipal Jwt jwt,
-            @PathVariable Long id,
+            @Parameter(description = "페이지 ID") @PathVariable Long id,
             @Valid @RequestBody CollaborationDraftCommitRequest req) {
         return pages.commitCollaborationDraft(userId(jwt), id, req);
     }
 
+    @ConflictResponse(value = "새 위치의 보기 제한이 새로 적용됩니다 — 확인 후 confirmImpact=true로 다시 요청하세요",
+            schema = OpenApiConfig.MOVE_IMPACT_SCHEMA)
     @Operation(summary = "페이지를 다른 부모·순서·스페이스로 옮긴다")
     @PostMapping("/api/wiki/pages/{id}/move")
-    public PageResponse move(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse move(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                              @Valid @RequestBody PageMoveRequest req) {
         return pages.move(userId(jwt), id, req);
     }
@@ -68,7 +74,7 @@ public class PageController {
     @Operation(summary = "페이지를 복사한다 — 옵션을 비우면 그 페이지 하나만")
     @PostMapping("/api/wiki/pages/{id}/copy")
     @ResponseStatus(HttpStatus.CREATED)
-    public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                              @RequestBody(required = false) com.platform.wikibackend.page.dto.CopyRequest req) {
         return pages.copy(userId(jwt), id,
                 req == null ? new com.platform.wikibackend.page.dto.CopyRequest(null, null) : req);
@@ -76,7 +82,7 @@ public class PageController {
 
     @Operation(summary = "페이지 아이콘을 지정한다")
     @PutMapping("/api/wiki/pages/{id}/icon")
-    public PageResponse setIcon(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse setIcon(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                 @Valid @RequestBody PageIconRequest req) {
         return pages.setIcon(userId(jwt), id, req.icon());
     }
@@ -84,21 +90,21 @@ public class PageController {
     @Operation(summary = "페이지를 다른 사용자에게 공유해 알림을 보낸다")
     @PostMapping("/api/wiki/pages/{id}/share")
     public com.platform.wikibackend.page.dto.ShareResponse share(
-            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+            @AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
             @jakarta.validation.Valid @RequestBody com.platform.wikibackend.page.dto.ShareRequest req) {
         return pages.share(userId(jwt), id, req);
     }
 
     @Operation(summary = "페이지 조회수를 올리고 최근 방문 기록에 남긴다")
     @PostMapping("/api/wiki/pages/{id}/views")
-    public java.util.Map<String, Long> recordView(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public java.util.Map<String, Long> recordView(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return java.util.Map.of("views", pages.recordView(userId(jwt), id));
     }
 
     /** 소유자 지정·해제(W27-5) — 본문 {"ownerId": 3} 또는 {"ownerId": null}. EDIT 권한. */
     @Operation(summary = "페이지 소유자를 지정하거나 해제한다")
     @PutMapping("/api/wiki/pages/{id}/owner")
-    public PageResponse setOwner(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse setOwner(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                  @RequestBody com.platform.wikibackend.page.dto.PageOwnerRequest req) {
         return pages.setOwner(userId(jwt), id, req.ownerId());
     }
@@ -106,20 +112,20 @@ public class PageController {
     /** 검증(W27-5) — 본문 {"verifiedUntil": "2026-12-03"} 또는 {} (기본 90일). EDIT 권한. */
     @Operation(summary = "페이지를 검증 완료로 표시한다 — 기한을 비우면 90일")
     @PutMapping("/api/wiki/pages/{id}/verification")
-    public PageResponse verify(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public PageResponse verify(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                @RequestBody(required = false) com.platform.wikibackend.page.dto.PageVerificationRequest req) {
         return pages.verify(userId(jwt), id, req == null ? null : req.verifiedUntil());
     }
 
     @Operation(summary = "페이지 검증 표시를 해제한다")
     @DeleteMapping("/api/wiki/pages/{id}/verification")
-    public PageResponse unverify(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageResponse unverify(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return pages.unverify(userId(jwt), id);
     }
 
     @Operation(summary = "초안 페이지를 게시한다")
     @PostMapping("/api/wiki/pages/{id}/publish")
-    public PageResponse publish(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public PageResponse publish(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
         return pages.publish(userId(jwt), id);
     }
 
@@ -127,10 +133,11 @@ public class PageController {
      * children=promote|cascade — 자식이 있을 때만 의미가 있다. 미지정이면 자식이 있는 경우 409.
      * (Spring 기본 enum 변환은 대소문자를 구분해 소문자 값을 거부하므로 문자열로 받아 변환한다.)
      */
+    @ConflictResponse("하위 페이지가 있습니다 — children으로 promote 또는 cascade를 지정하세요")
     @Operation(summary = "페이지를 휴지통으로 보낸다")
     @DeleteMapping("/api/wiki/pages/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public void delete(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                        @Parameter(description = "자식이 있을 때의 처리 — promote(끌어올림) 또는 cascade(함께 삭제). 미지정이면 자식이 있을 때 409")
                        @RequestParam(required = false) String children) {
         pages.delete(userId(jwt), id, ChildrenPolicy.from(children));

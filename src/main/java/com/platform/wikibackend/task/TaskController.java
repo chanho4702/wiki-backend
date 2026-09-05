@@ -14,6 +14,7 @@ import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.wikibackend.config.ConflictResponse;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -34,9 +35,10 @@ public class TaskController {
     }
 
     /** 체크 토글 — 본문의 그 줄을 다시 쓰는 편집이다(리비전이 남는다). */
+    @ConflictResponse("보관된 문서이거나, 그 줄이 더 이상 작업 항목이 아닙니다")
     @Operation(summary = "본문의 체크박스를 체크하거나 해제한다 — 본문 편집이라 리비전이 남는다")
     @PutMapping("/api/wiki/pages/{pageId}/tasks/{lineNo}")
-    public TaskService.TaskView setDone(@AuthenticationPrincipal Jwt jwt, @PathVariable long pageId,
+    public TaskService.TaskView setDone(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable long pageId,
                                         @Parameter(description = "본문에서 그 체크박스가 있는 줄 번호") @PathVariable int lineNo,
                                         @RequestBody DoneRequest req) {
         return tasks.setDone(userId(jwt), pageId, lineNo, req.done());

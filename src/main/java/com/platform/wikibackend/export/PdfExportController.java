@@ -35,7 +35,7 @@ public class PdfExportController {
             content = @Content(mediaType = "application/pdf",
                     schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/api/wiki/pages/{id}/export.pdf")
-    public ResponseEntity<byte[]> export(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public ResponseEntity<byte[]> export(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                          @Parameter(description = "하위 페이지까지 한 PDF에 이어 붙인다")
                                          @RequestParam(defaultValue = "false") boolean includeChildren) {
         PdfExportService.Export export = service.export(userId(jwt), id, includeChildren);

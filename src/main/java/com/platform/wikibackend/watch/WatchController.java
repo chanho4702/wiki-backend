@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -27,19 +28,19 @@ public class WatchController {
 
     @Operation(summary = "페이지를 구독 중인지 조회한다")
     @GetMapping
-    public Map<String, Boolean> status(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public Map<String, Boolean> status(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return Map.of("watching", watches.isWatching(userId(jwt), pageId));
     }
 
     @Operation(summary = "페이지를 구독한다")
     @PostMapping
-    public Map<String, Boolean> watch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public Map<String, Boolean> watch(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return Map.of("watching", watches.watch(userId(jwt), pageId));
     }
 
     @Operation(summary = "페이지 구독을 해제한다")
     @DeleteMapping
-    public Map<String, Boolean> unwatch(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public Map<String, Boolean> unwatch(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return Map.of("watching", watches.unwatch(userId(jwt), pageId));
     }
 }

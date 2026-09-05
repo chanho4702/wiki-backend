@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @Tag(name = "Collaboration", description = "공동 편집 세션 접속용 1회용 티켓.")
 @RestController
@@ -22,7 +23,7 @@ public class CollaborationTicketController {
     @Operation(summary = "공동 편집 WebSocket 접속에 쓸 1회용 티켓을 발급한다")
     @PostMapping("/api/wiki/pages/{pageId}/collaboration-ticket")
     public ResponseEntity<CollaborationTicketResponse> issue(
-            @PathVariable long pageId,
+            @Parameter(description = "페이지 ID") @PathVariable long pageId,
             @AuthenticationPrincipal Jwt jwt) {
         long userId = Long.parseLong(jwt.getSubject());
         CollaborationTicketResponse ticket = tickets.issue(

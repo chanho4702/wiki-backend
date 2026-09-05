@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -31,7 +32,7 @@ public class AuditController {
     @Operation(summary = "스페이스의 감사 로그를 조회한다 — 스페이스 ADMIN만")
     @GetMapping("/api/wiki/spaces/{spaceId}/audit")
     public List<AuditService.AuditEntry> list(@AuthenticationPrincipal Jwt jwt,
-                                              @PathVariable Long spaceId) {
+                                              @Parameter(description = "스페이스 ID") @PathVariable Long spaceId) {
         return audit.list(userId(jwt), spaceId);
     }
 }

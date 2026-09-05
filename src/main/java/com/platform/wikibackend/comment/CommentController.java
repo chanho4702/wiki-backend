@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -32,14 +33,14 @@ public class CommentController {
 
     @Operation(summary = "페이지의 댓글을 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/comments")
-    public List<CommentResponse> list(@PathVariable long pageId, @AuthenticationPrincipal Jwt jwt) {
+    public List<CommentResponse> list(@Parameter(description = "페이지 ID") @PathVariable long pageId, @AuthenticationPrincipal Jwt jwt) {
         return comments.list(userId(jwt), pageId);
     }
 
     @Operation(summary = "페이지에 댓글을 단다 — 인용 구간을 주면 인라인 댓글이다")
     @PostMapping("/api/wiki/pages/{pageId}/comments")
     @ResponseStatus(HttpStatus.CREATED)
-    public CommentResponse create(@PathVariable long pageId,
+    public CommentResponse create(@Parameter(description = "페이지 ID") @PathVariable long pageId,
                                   @Valid @RequestBody CommentCreateRequest req,
                                   @AuthenticationPrincipal Jwt jwt) {
         return comments.create(userId(jwt), jwt.getClaimAsString("name"), pageId, req);
@@ -47,7 +48,7 @@ public class CommentController {
 
     @Operation(summary = "댓글 본문을 수정한다 — 작성자 본인만")
     @PutMapping("/api/wiki/comments/{commentId}")
-    public CommentResponse update(@PathVariable long commentId,
+    public CommentResponse update(@Parameter(description = "댓글 ID") @PathVariable long commentId,
                                   @Valid @RequestBody CommentUpdateRequest req,
                                   @AuthenticationPrincipal Jwt jwt) {
         return comments.update(userId(jwt), commentId, req);
@@ -56,7 +57,7 @@ public class CommentController {
     /** 해결/재개 — 인라인 스레드 전용. 본문은 안 바뀌므로 PUT /comments/{id}(본문 수정)와 분리한다. */
     @Operation(summary = "인라인 댓글 스레드를 해결 처리하거나 되돌린다")
     @PutMapping("/api/wiki/comments/{commentId}/resolved")
-    public CommentResponse setResolved(@PathVariable long commentId,
+    public CommentResponse setResolved(@Parameter(description = "댓글 ID") @PathVariable long commentId,
                                        @AuthenticationPrincipal Jwt jwt,
                                        @RequestBody ResolvedRequest req) {
         return comments.setResolved(userId(jwt), commentId, req.resolved());
@@ -67,7 +68,7 @@ public class CommentController {
     @Operation(summary = "댓글을 삭제한다 — 작성자 또는 스페이스 ADMIN")
     @DeleteMapping("/api/wiki/comments/{commentId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long commentId, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "댓글 ID") @PathVariable long commentId, @AuthenticationPrincipal Jwt jwt) {
         comments.delete(userId(jwt), commentId);
     }
 }

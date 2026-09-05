@@ -30,14 +30,14 @@ public class ReactionController {
     @Operation(summary = "페이지의 리액션 집계를 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/reactions")
     public List<ReactionService.ReactionSummary> page(@AuthenticationPrincipal Jwt jwt,
-                                                      @PathVariable long pageId) {
+                                                      @Parameter(description = "페이지 ID") @PathVariable long pageId) {
         return reactions.forPage(userId(jwt), pageId);
     }
 
     @Operation(summary = "페이지에 이모지 리액션을 단다")
     @PutMapping("/api/wiki/pages/{pageId}/reactions/{emoji}")
     public List<ReactionService.ReactionSummary> reactPage(@AuthenticationPrincipal Jwt jwt,
-                                                           @PathVariable long pageId,
+                                                           @Parameter(description = "페이지 ID") @PathVariable long pageId,
                                                            @Parameter(description = "리액션 이모지 문자")
                                                            @PathVariable String emoji) {
         return reactions.setOnPage(userId(jwt), pageId, emoji, true);
@@ -46,7 +46,7 @@ public class ReactionController {
     @Operation(summary = "페이지에 단 내 리액션을 뗀다")
     @DeleteMapping("/api/wiki/pages/{pageId}/reactions/{emoji}")
     public List<ReactionService.ReactionSummary> unreactPage(@AuthenticationPrincipal Jwt jwt,
-                                                             @PathVariable long pageId,
+                                                             @Parameter(description = "페이지 ID") @PathVariable long pageId,
                                                              @Parameter(description = "리액션 이모지 문자")
                                                              @PathVariable String emoji) {
         return reactions.setOnPage(userId(jwt), pageId, emoji, false);
@@ -55,7 +55,7 @@ public class ReactionController {
     @Operation(summary = "댓글에 이모지 리액션을 단다")
     @PutMapping("/api/wiki/comments/{commentId}/reactions/{emoji}")
     public List<ReactionService.ReactionSummary> reactComment(@AuthenticationPrincipal Jwt jwt,
-                                                              @PathVariable long commentId,
+                                                              @Parameter(description = "댓글 ID") @PathVariable long commentId,
                                                               @Parameter(description = "리액션 이모지 문자")
                                                               @PathVariable String emoji) {
         return reactions.setOnComment(userId(jwt), commentId, emoji, true);
@@ -64,7 +64,7 @@ public class ReactionController {
     @Operation(summary = "댓글에 단 내 리액션을 뗀다")
     @DeleteMapping("/api/wiki/comments/{commentId}/reactions/{emoji}")
     public List<ReactionService.ReactionSummary> unreactComment(@AuthenticationPrincipal Jwt jwt,
-                                                                @PathVariable long commentId,
+                                                                @Parameter(description = "댓글 ID") @PathVariable long commentId,
                                                                 @Parameter(description = "리액션 이모지 문자")
                                                                 @PathVariable String emoji) {
         return reactions.setOnComment(userId(jwt), commentId, emoji, false);

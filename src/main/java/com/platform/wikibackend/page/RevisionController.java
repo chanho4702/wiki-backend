@@ -25,20 +25,20 @@ public class RevisionController {
 
     @Operation(summary = "페이지의 버전 목록을 조회한다")
     @GetMapping
-    public List<RevisionMeta> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
+    public List<RevisionMeta> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
         return pages.listRevisions(userId(jwt), pageId);
     }
 
     @Operation(summary = "특정 버전의 본문을 조회한다")
     @GetMapping("/{version}")
-    public RevisionResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
+    public RevisionResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
                                 @Parameter(description = "조회할 버전 번호(1부터)") @PathVariable Integer version) {
         return pages.getRevision(userId(jwt), pageId, version);
     }
 
     @Operation(summary = "과거 버전 내용으로 되돌린다 — 되돌린 것도 새 버전으로 쌓인다")
     @PostMapping("/{version}/restore")
-    public PageResponse restore(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
+    public PageResponse restore(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
                                 @Parameter(description = "되돌릴 버전 번호") @PathVariable Integer version) {
         return pages.restore(userId(jwt), pageId, version);
     }

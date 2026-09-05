@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @Tag(name = "Spaces", description = "스페이스 목록·생성·조회·수정·삭제.")
 @RestController
@@ -44,13 +45,13 @@ public class SpaceController {
 
     @Operation(summary = "스페이스를 조회한다")
     @GetMapping("/{id}")
-    public SpaceResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public SpaceResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long id) {
         return SpaceResponse.from(spaces.getForView(userId(jwt), id));
     }
 
     @Operation(summary = "스페이스 이름과 설명을 수정한다")
     @PutMapping("/{id}")
-    public SpaceResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+    public SpaceResponse update(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long id,
                                 @Valid @RequestBody SpaceUpdateRequest req) {
         return spaces.update(userId(jwt), id, req);
     }
@@ -58,7 +59,7 @@ public class SpaceController {
     @Operation(summary = "스페이스를 삭제한다")
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+    public void delete(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long id) {
         spaces.delete(userId(jwt), id);
     }
 
