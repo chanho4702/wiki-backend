@@ -30,6 +30,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * `GET /v3/api-docs`로 나가는 OpenAPI 3 스펙의 메타와 공통 오류 응답.
@@ -50,6 +51,18 @@ public class OpenApiConfig {
     private static final String BEARER = "bearerAuth";
     private static final String APPLICATION_JSON = "application/json";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
+
+    /**
+     * 오류 설명 문구. wiki·alm·org 세 서비스가 같은 문자열을 쓴다 — 여기만 바꾸지 않는다.
+     * 생성기가 세 서비스의 문서를 나란히 싣기 때문에 표현이 갈리면 그대로 드러난다.
+     */
+    private static final Map<String, String> ERROR_DESCRIPTIONS = Map.of(
+            "400", "요청 검증 실패",
+            "401", "인증 실패 — 토큰 없음·만료·무효",
+            "403", "권한 없음",
+            "404", "대상 없음",
+            "409", "버전 충돌 — expectedVersion 불일치",
+            "503", "권한 서비스(org) 불능");
 
     @Bean
     OpenAPI wikiOpenApi(@Value("${spring.application.version:0.1.0}") String version) {
@@ -105,29 +118,29 @@ public class OpenApiConfig {
                 responses = new ApiResponses();
                 operation.setResponses(responses);
             }
-            addIfAbsent(responses, "401", "인증 토큰이 없거나 유효하지 않다.");
-            addIfAbsent(responses, "403", "이 스페이스나 페이지에 대한 권한이 없다.");
+            addIfAbsent(responses, "401");
+            addIfAbsent(responses, "403");
             if (hasRequestBody(handlerMethod)) {
-                addIfAbsent(responses, "400", "요청 검증 실패");
+                addIfAbsent(responses, "400");
             }
             if (hasPathVariable(handlerMethod)) {
-                addIfAbsent(responses, "404", "대상을 찾을 수 없다.");
+                addIfAbsent(responses, "404");
             }
             if (isOptimisticLockedPut(operation, handlerMethod)) {
-                addIfAbsent(responses, "409", "다른 사용자가 먼저 수정해 버전이 어긋났다.");
+                addIfAbsent(responses, "409");
             }
-            addIfAbsent(responses, "503", "권한 서비스(org) 불능");
+            addIfAbsent(responses, "503");
             relabelMultipartBody(operation, handlerMethod);
             return operation;
         };
     }
 
-    private static void addIfAbsent(ApiResponses responses, String code, String description) {
+    private static void addIfAbsent(ApiResponses responses, String code) {
         if (responses.containsKey(code)) {
             return;
         }
         responses.addApiResponse(code, new ApiResponse()
-                .description(description)
+                .description(ERROR_DESCRIPTIONS.get(code))
                 .content(new Content().addMediaType("application/json",
                         new MediaType().schema(new Schema<Object>().$ref(ERROR_REF)))));
     }
@@ -171,7 +184,8 @@ public class OpenApiConfig {
      */
     private static boolean hasRequestBody(HandlerMethod handlerMethod) {
         for (MethodParameter parameter : handlerMethod.getMethodParameters()) {
-            if (parameter.hasParameterAnnotation(org.springframework.web.bind.annotation.RequestBody.class)) {
+            if (parameter.hasParameterAnnotation(org.springframework.web.bind.annotation.RequestBody.class)
+                    || parameter.hasParameterAnnotation(org.springframework.web.bind.annotation.RequestPart.class)) {
                 return true;
             }
         }

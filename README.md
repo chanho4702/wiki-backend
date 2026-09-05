@@ -116,6 +116,10 @@ alm-backend·org-service와 맞춘 플랫폼 공통 규칙이라 여기만 바�
 | 409 | `expectedVersion`을 받는 PUT |
 | 503 | 모든 오퍼레이션 — 읽기·쓰기가 모두 org-service 권한 판정을 탄다 |
 
+설명 문구 6종은 wiki·alm·org가 같은 문자열을 쓴다(`OpenApiConfig.ERROR_DESCRIPTIONS`).
+400은 요청 본문을 받는 엔드포인트를 기준으로 붙인다 — 400이 날 수 있는 모든 경로의
+완전한 목록은 아니다(쿼리 파라미터 형변환 실패 등은 이 표에 없다).
+
 `/internal/**`은 `springdoc.paths-to-exclude`로 스캔에서 통째로 뺀다. 내부 전용 컨트롤러를
 새로 만들어도 공개 문서로 새지 않으므로, 거기에는 `@Tag`·`@Operation`을 달 필요가 없다.
 `OpenApiDocsTest`가 태그·요약 누락, 내부 경로 노출, 인증 주체 누출, 성공 응답 소실,

@@ -14,6 +14,7 @@ import org.springframework.web.context.WebApplicationContext;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +32,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class OpenApiDocsTest {
 
+    private static final Map<String, String> CANONICAL = Map.of(
+            "400", "요청 검증 실패",
+            "401", "인증 실패 — 토큰 없음·만료·무효",
+            "403", "권한 없음",
+            "404", "대상 없음",
+            "409", "버전 충돌 — expectedVersion 불일치",
+            "503", "권한 서비스(org) 불능");
     private static final String ERROR_REF = "#/components/schemas/PlatformError";
     private static final Set<String> HTTP_METHODS =
             Set.of("get", "put", "post", "delete", "patch", "head", "options", "trace");
@@ -242,6 +250,35 @@ class OpenApiDocsTest {
         JsonNode create = spec().at("/paths/~1api~1wiki~1pages/post");
         assertThat(create.at("/responses/400").isMissingNode()).isFalse();
         assertThat(spec().at("/paths/~1api~1wiki~1pages~1{id}/get/responses/400").isMissingNode()).isTrue();
+    }
+
+    /**
+     * 오류 설명 문구가 세 서비스 공통값 그대로인지. 상수를 읽지 않고 리터럴로 대조한다 —
+     * 상수를 참조하면 문구가 바뀔 때 테스트도 같이 따라가서 아무것도 못 잡는다.
+     */
+    @Test
+    void 오류_설명_문구가_세_서비스_공통값이다() throws Exception {
+        JsonNode spec = spec();
+
+        JsonNode write = spec.at("/paths/~1api~1wiki~1pages/post/responses");
+        assertThat(write.at("/400/description").asText()).isEqualTo("요청 검증 실패");
+        assertThat(write.at("/401/description").asText()).isEqualTo("인증 실패 — 토큰 없음·만료·무효");
+        assertThat(write.at("/403/description").asText()).isEqualTo("권한 없음");
+        assertThat(write.at("/503/description").asText()).isEqualTo("권한 서비스(org) 불능");
+
+        JsonNode put = spec.at("/paths/~1api~1wiki~1pages~1{id}/put/responses");
+        assertThat(put.at("/404/description").asText()).isEqualTo("대상 없음");
+        assertThat(put.at("/409/description").asText()).isEqualTo("버전 충돌 — expectedVersion 불일치");
+
+        // 한 곳만 맞고 나머지가 옛 문구로 남는 일이 없도록 전 오퍼레이션을 훑는다.
+        List<String> drifted = new ArrayList<>();
+        eachOperation(spec, (where, operation) -> operation.path("responses").properties().forEach(r -> {
+            String expected = CANONICAL.get(r.getKey());
+            if (expected != null && !expected.equals(r.getValue().path("description").asText())) {
+                drifted.add(where + " " + r.getKey());
+            }
+        }));
+        assertThat(drifted).as("문구가 어긋난 응답").isEmpty();
     }
 
     @Test
