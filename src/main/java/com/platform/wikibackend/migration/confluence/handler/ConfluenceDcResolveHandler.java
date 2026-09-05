@@ -251,7 +251,7 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
                     }
                     return history.revisions().stream()
                             .map(entry -> new ImportedPageWriter.ImportedRevision(entry.title(),
-                                    entry.markdown(), entry.editorName(), entry.message(),
+                                    entry.markdown(), null, entry.editorName(), entry.message(),
                                     parseInstantOrNull(entry.when())))
                             .toList();
                 })

@@ -70,6 +70,9 @@ platform:
     enabled: ${WIKI_GRPC_ENABLED:true}
     port: ${WIKI_GRPC_PORT:9111}
   wiki:
+    # 이관 엔진(migration-service)이 /internal/wiki/import/**를 부를 때 실어 보내는 공유 비밀.
+    # 비어 있으면 그 경로는 전부 403이다 — 설정을 깜빡한 인스턴스가 열린 채로 뜨지 않게.
+    internal-token: ${WIKI_INTERNAL_TOKEN:}
     files-dir: ${WIKI_FILES_DIR:./data/attachments}
     storage:
       # 기존 첨부는 행별 storage_backend로 계속 읽고, 신규 업로드 대상만 전환한다.

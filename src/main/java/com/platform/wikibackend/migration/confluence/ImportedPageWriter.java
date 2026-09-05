@@ -145,6 +145,35 @@ public class ImportedPageWriter {
     }
 
     /**
+     * 본문을 바꾸면서 **새 리비전을 남기는** 이관 쓰기(링크 정리 pass, import API의 bumpVersion).
+     *
+     * 트랜잭션을 열지 않는다 — 호출부의 것에 참여한다. 링크 정리는 같은 트랜잭션에서 손실 기록도
+     * 함께 남겨야 하고(둘이 갈라지면 "고쳤는데 보고가 없다"가 생긴다), import API 쪽은
+     * {@link #rewriteBodyAsRevision}이 경계를 연다.
+     *
+     * @return 본문이 실제로 바뀌었으면 true
+     */
+    public boolean applyRevision(Page page, String markdown, long editorId, String changeNote) {
+        if (page.getContent().equals(markdown)) {
+            return false;
+        }
+        page.edit(page.getTitle(), markdown, editorId);
+        pages.flush();
+        revisions.save(PageRevision.snapshotOf(page, changeNote));
+        tasks.sync(page);
+        labelService.reindexLinks(page);
+        events.afterCommit(WikiEvents.pageUpdated(editorId, page));
+        return true;
+    }
+
+    /** {@link #applyRevision}의 트랜잭션 경계 — 페이지 id만 아는 호출부(import API)가 쓴다. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean rewriteBodyAsRevision(long pageId, String markdown, long editorId, String changeNote) {
+        Page page = pages.findById(pageId).orElseThrow();
+        return applyRevision(page, markdown, editorId, changeNote);
+    }
+
+    /**
      * 순번만 갱신한다(M2 §4.4). 원본에서 문서 순서만 바뀐 재이관이 여기로 온다 — 본문이 그대로라
      * 리비전도 이벤트도 만들 이유가 없다.
      *
@@ -204,8 +233,9 @@ public class ImportedPageWriter {
                     ? currentTitle
                     : truncateTitle(revision.title(), source.externalObjectId(), new ArrayList<>());
             PageRevision row = revisions.save(PageRevision.imported(page.getId(), version++, title,
-                    revision.markdown(), source.authorId(), revision.editorName(),
-                    revision.changeNote()));
+                    revision.markdown(),
+                    revision.editorId() == null ? source.authorId() : revision.editorId(),
+                    revision.editorName(), revision.changeNote()));
             revisions.flush();
             if (revision.savedAt() != null) {
                 revisions.overwriteCreatedAt(row.getId(), revision.savedAt());
@@ -276,9 +306,15 @@ public class ImportedPageWriter {
         }
     }
 
-    /** 원본의 지난 버전 하나. 리비전 번호는 writer가 1부터 다시 매긴다. */
-    public record ImportedRevision(String title, String markdown, String editorName, String changeNote,
-                                   Instant savedAt) {
+    /**
+     * 원본의 지난 버전 하나. 리비전 번호는 writer가 1부터 다시 매긴다.
+     *
+     * editorId는 그 버전을 쓴 사람을 우리 계정으로 **대조했을 때만** 값이 있다(import API가
+     * 실어 보낸다). null이면 문서 작성자 id로 눕고 원본 편집자는 이름 스냅샷으로만 남는다 —
+     * DC 추출기는 계정 대조를 리비전 단위로 하지 않으므로 늘 null을 넘긴다.
+     */
+    public record ImportedRevision(String title, String markdown, Long editorId, String editorName,
+                                   String changeNote, Instant savedAt) {
     }
 
     public record ImportResult(long pageId, List<MigrationStageIssue> issues) {

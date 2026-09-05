@@ -1,0 +1,37 @@
+{
+  "spaceId": -1,
+  "parentId": null,
+  "type": "page",
+  "title": "설계 문서",
+  "content": "# 설계 문서\n\n원본에서 옮겨온 본문.",
+  "createdAt": "2019-03-04T05:06:07Z",
+  "updatedAt": "2021-08-09T10:11:12Z",
+  "authorId": null,
+  "importedAuthorName": "Jane Confluence",
+  "sourceUrl": "https://dc.example.com/pages/viewpage.action?pageId=1234",
+  "sortOrder": 3,
+  "labels": [
+    "설계",
+    "이관"
+  ],
+  "revisions": [
+    {
+      "version": 1,
+      "title": "설계 문서",
+      "content": "첫 판",
+      "editorId": null,
+      "editorName": "Jane Confluence",
+      "savedAt": "2019-03-04T05:06:07Z",
+      "changeNote": null
+    },
+    {
+      "version": 2,
+      "title": "설계 문서",
+      "content": "두 번째 판",
+      "editorId": null,
+      "editorName": "John Confluence",
+      "savedAt": "2020-01-02T03:04:05Z",
+      "changeNote": "표 추가"
+    }
+  ]
+}

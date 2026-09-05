@@ -52,6 +52,10 @@ public class DocsSecurityConfig {
                 .addFilterBefore(new DocsPrincipalFilter(importToken), AuthorizationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // 내부 이관 API(W29 X1)는 이 인스턴스에 존재할 이유가 없다. InternalApiSecurityConfig가
+                        // docs 프로필에서 빠지므로 이미 이 체인으로 떨어지지만, 규칙을 눈에 보이게 박아
+                        // 나중에 누가 체인을 옮겨도 열리지 않게 한다.
+                        .requestMatchers("/internal/**").denyAll()
                         // 조회수는 공개 인스턴스에서 세지 않는다 — 임포터에게도 열지 않는다.
                         // GET 허용 규칙보다 먼저 와야 한다(POST라 겹치지는 않지만 의도를 앞에 둔다).
                         .requestMatchers(HttpMethod.POST, "/api/wiki/pages/*/views").denyAll()

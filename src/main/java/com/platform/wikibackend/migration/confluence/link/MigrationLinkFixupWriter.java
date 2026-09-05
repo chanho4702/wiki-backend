@@ -1,10 +1,7 @@
 package com.platform.wikibackend.migration.confluence.link;
 
 import com.platform.wikibackend.domain.Page;
-import com.platform.wikibackend.domain.PageRevision;
-import com.platform.wikibackend.event.EventRelay;
-import com.platform.wikibackend.event.WikiEvents;
-import com.platform.wikibackend.label.LabelService;
+import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
 import com.platform.wikibackend.migration.model.MigrationIssue;
 import com.platform.wikibackend.migration.model.MigrationItem;
 import com.platform.wikibackend.migration.model.MigrationJob;
@@ -13,8 +10,6 @@ import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
 import com.platform.wikibackend.migration.repository.MigrationItemRepository;
 import com.platform.wikibackend.migration.worker.MigrationStageIssue;
 import com.platform.wikibackend.repository.PageRepository;
-import com.platform.wikibackend.repository.PageRevisionRepository;
-import com.platform.wikibackend.task.TaskService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -46,10 +41,7 @@ public class MigrationLinkFixupWriter {
     private final MigrationItemRepository items;
     private final MigrationIssueRepository issues;
     private final PageRepository pages;
-    private final PageRevisionRepository revisions;
-    private final LabelService labelService;
-    private final TaskService tasks;
-    private final EventRelay events;
+    private final ImportedPageWriter writer;
 
     /** @return 본문이 실제로 바뀌었으면 true */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -70,13 +62,9 @@ public class MigrationLinkFixupWriter {
         if (result.markdown().equals(before)) {
             return false;
         }
-        page.edit(page.getTitle(), result.markdown(), job.getRequestedBy());
-        pages.flush();
-        revisions.save(PageRevision.snapshotOf(page, CHANGE_NOTE));
-        tasks.sync(page);
-        labelService.reindexLinks(page);
-        events.afterCommit(WikiEvents.pageUpdated(job.getRequestedBy(), page));
-        return true;
+        // 실제 쓰기는 ImportedPageWriter가 한다 — import API의 bumpVersion 경로와 같은 코드를 타야
+        // 두 입구가 조용히 갈라지지 않는다.
+        return writer.applyRevision(page, result.markdown(), job.getRequestedBy(), CHANGE_NOTE);
     }
 
     /**

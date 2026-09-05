@@ -26,5 +26,11 @@ public enum AuditAction {
     SPACE_DELETED,
     TEMPLATE_CREATED,
     TEMPLATE_UPDATED,
-    TEMPLATE_DELETED
+    TEMPLATE_DELETED,
+    /**
+     * 외부 위키에서 옮겨온 문서(W29 X1). 이관 엔진이 부르는 내부 import API가 **문서 한 건당
+     * 한 번만** 남긴다 — 뒤따르는 첨부·댓글·제한·본문 정리까지 기록하면 한 번의 이관이 감사
+     * 로그를 수백 줄로 덮어 정작 봐야 할 삭제·권한 변경이 목록 밖으로 밀려난다.
+     */
+    IMPORTED
 }

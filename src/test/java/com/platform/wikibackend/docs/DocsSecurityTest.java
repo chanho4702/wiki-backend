@@ -221,6 +221,24 @@ class DocsSecurityTest {
         mvc.perform(get(path).header(TOKEN_HEADER, "test-token")).andExpect(status().isForbidden());
     }
 
+    /**
+     * 내부 이관 API(W29 X1)는 공개 문서 인스턴스에 존재하지 않는다. 여기에는 org 원장도 이관
+     * 원장도 없어 "옮겨 넣을 수 있는 상태"가 아니고, 열려 있으면 공개 인스턴스가 쓰기 창구가 된다.
+     */
+    @Test
+    void 내부_이관_API는_docs에서_전부_403이다() throws Exception {
+        mvc.perform(get("/internal/wiki/import/spaces/1")).andExpect(status().isForbidden());
+        mvc.perform(get("/internal/wiki/import/spaces/1")
+                        .header(TOKEN_HEADER, "test-token")).andExpect(status().isForbidden());
+        mvc.perform(post("/internal/wiki/import/pages")
+                        .header(TOKEN_HEADER, "test-token")
+                        .header("X-Internal-Token", "test-token")
+                        .header("X-Actor-Id", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
     /** 위 403이 "필터 체인이 막았다"인지 확인한다 — 서비스까지 갔다면 기본 설정 행이 남는다. */
     @Test
     void 알림_설정_익명_GET은_기본_설정_행을_만들지_않는다() throws Exception {

@@ -1,0 +1,18 @@
+{
+  "view": [
+    {
+      "type": "USER",
+      "id": 11
+    },
+    {
+      "type": "TEAM",
+      "id": 22
+    }
+  ],
+  "edit": [
+    {
+      "type": "USER",
+      "id": 11
+    }
+  ]
+}

@@ -11,6 +11,9 @@ import java.util.List;
 public interface PageCommentRepository extends JpaRepository<PageComment, Long> {
     List<PageComment> findByPageIdOrderByCreatedAtAscIdAsc(long pageId);
 
+    /** 이관 검증 조회(W29 X1) — 본문을 끌어오지 않고 건수만 센다. */
+    long countByPageId(long pageId);
+
     List<PageComment> findByParentIdOrderByCreatedAtAscIdAsc(long parentId);
 
     /**

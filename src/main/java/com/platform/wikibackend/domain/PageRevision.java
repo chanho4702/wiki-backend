@@ -28,15 +28,24 @@ public class PageRevision {
     @Column(nullable = false, updatable = false)
     private String title;
 
+    /*
+     * 본문 두 컬럼만 updatable이다(나머지 리비전 필드는 전부 불변).
+     *
+     * 이관의 첨부 참조 정리({@link #replaceContent})가 버전을 올리지 않고 현재 리비전의 본문을
+     * 눌러야 하기 때문이다 — updatable=false이면 그 호출이 Hibernate의 UPDATE에서 조용히 빠져
+     * "현재"와 같은 번호의 리비전이 서로 다른 본문을 들고 있게 된다(복원이 첨부 참조를 되돌린다).
+     * 일반 편집 경로는 여기를 건드리지 않는다 — 새 버전은 늘 새 행이다.
+     */
+
     /**
      * 평문 본문 — V16 이전 행과, 압축 임계값 미만인 짧은 본문만 여기 남는다.
      * 읽을 땐 항상 {@link #getContent()}를 쓴다(어느 쪽에 있는지 호출부가 알 필요 없다).
      */
-    @Column(name = "content", updatable = false, columnDefinition = "text")
+    @Column(name = "content", columnDefinition = "text")
     private String contentText;
 
     /** gzip 압축 본문(V16). 저장할 때마다 본문 전체가 복사되는 구조라 크기가 그대로 비용이다. */
-    @Column(name = "content_gzip", updatable = false)
+    @Column(name = "content_gzip")
     private byte[] contentGzip;
 
     @Column(name = "edited_by", nullable = false, updatable = false)

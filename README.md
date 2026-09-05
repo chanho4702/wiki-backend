@@ -124,6 +124,54 @@ alm-backend·org-service와 맞춘 플랫폼 공통 규칙이라 여기만 바�
 사람이 읽는 문서 페이지는 이 스펙에서 생성한다 — myFront의 `scripts/api`가 스펙을 긁어
 `docs/api-reference/`를 만들고 문서 위키로 동기화한다. 생성물을 직접 고치지 말고 여기 주석을 고친다.
 
+### 내부 이관 API (`/internal/wiki/import`, W29 X1)
+
+이관 엔진(migration-service)이 "원본 그대로" 문서를 넣기 위한 **내부 전용** 표면이다. 공개
+`/api/wiki/**`로는 할 수 없는 일 — 원본 생성·수정 시각 보존, 지난 버전을 리비전 1..k로 깔기,
+미대조 작성자 표시, 버전을 올리지 않는 본문 교체, 알림 없는 댓글·제한 — 을 한다.
+
+- **노출 안 함**: 게이트웨이도 nginx도 `/internal/**`을 라우팅하지 않는다. 브라우저에서는 없는
+  경로다. OpenAPI 스펙에서도 빠진다(`springdoc.paths-to-exclude`).
+- **인증**: `X-Internal-Token`(= `WIKI_INTERNAL_TOKEN`) 공유 비밀. **비어 있으면 전부 403**이라
+  이관을 쓰지 않는 인스턴스는 자동으로 닫혀 있다. 사용자 JWT를 쓰지 않는다.
+- **주체**: `X-Actor-Id`(잡 요청자 id). 감사 기록과 `createdBy` 폴백에 쓰인다. 쓰기 요청에서
+  없거나 숫자가 아니면 400.
+- **권한 검사 없음**: 대상 스페이스 ADMIN 판정은 엔진이 org-service로 이미 끝냈다고 본다.
+- **부수효과**: 검색 색인 이벤트(`pageCreated`/`pageUpdated`)만 발행한다. 알림·자동 구독은 없고,
+  감사는 문서 한 건당 `IMPORTED` 한 줄만 남는다.
+
+| 메서드 | 경로 | 본문 → 응답 |
+|---|---|---|
+| POST | `/pages` | `{spaceId, parentId?, type, title, content, createdAt, updatedAt, authorId?, importedAuthorName?, sourceUrl?, sortOrder?, labels[], revisions?}` → `{pageId, version, issues[]}` |
+| PUT | `/pages/{id}` | `{title, content, updatedAt, editorId?, editorName, changeNote, sourceUrl?, labels[]}` → `{pageId, version, issues[]}` |
+| PUT | `/pages/{id}/content` | `{content, bumpVersion, changeNote?}` → `{pageId, version, changed}` |
+| PUT | `/pages/{id}/order` | `{sortOrder}` → `{pageId, sortOrder, changed}` |
+| POST | `/pages/{id}/attachments` | multipart `file` + `filename`·`contentType`·`checksum`·`sourceVersion` → `{attachmentId, inlineUrl, downloadUrl, outcome}` |
+| POST | `/pages/{id}/comments` | `{parentCommentId?, authorId?, authorName, body, createdAt}` → `{commentId}` |
+| GET | `/comments/{id}` | → `{commentId, pageId, parentCommentId, createdAt}` (없으면 404) |
+| PUT | `/pages/{id}/restrictions` | `{view:[{type,id}], edit:[...]}` → 204 |
+| GET | `/pages/{id}` | → `{pageId, spaceId, parentId, title, type, contentLength, version, sortOrder, labels[], attachments[{id,filename,checksum}], commentCount}` |
+| GET | `/spaces/{id}/pages?title=` | → `{pages:[{pageId, title, type}]}` (중복이면 여러 건) |
+| GET | `/spaces/{id}` | → `{spaceId, key, name}` |
+
+규칙 몇 가지가 계약의 일부다.
+
+- `authorId`(댓글은 `authorId`, 재이관은 `editorId`)가 있으면 그 사람이 쓴 것이 되고, 없으면
+  `X-Actor-Id`가 작성자로 눕고 원본 이름이 표시 스냅샷으로 남는다.
+- `revisions`가 오면 리비전 1..k를 깔고 현재본이 k+1이 된다. 요청의 `version`은 **순서를 정할
+  때만** 쓰이고 실제 번호는 서버가 1부터 다시 매긴다.
+- `bumpVersion=false`는 버전을 올리지 않고 현재 리비전 본문까지 함께 눌러 이력과 현재를
+  일치시킨다(첨부 URL fixup). `true`는 `changeNote`를 단 새 리비전을 만든다(링크 정리).
+- 첨부 `outcome`은 같은 이름·같은 checksum이면 `UNCHANGED`(저장소에 쓰지 않는다), 같은
+  이름·다른 내용이면 `NEW_VERSION`(같은 id로 갈아끼움), 그 외 `CREATED`다. `checksum`을 보내면
+  서버가 실제 바이트와 대조해 다르면 400이다. multipart 상한은 일반 업로드와 같다
+  (`WIKI_MAX_ATTACHMENT_MB`).
+- 오류는 플랫폼 계약 `{"error": "메시지"}`, 상태 코드는 400/403/404 그대로다.
+
+요청·응답 예시는 `src/test/resources/fixtures/import-api/*.json`에 있고
+`WikiImportApiTest`가 그 파일을 실제 요청 본문으로 쓴다 — migration-service는 같은 픽스처로
+가짜 위키 서버를 만든다. 픽스처의 `-1`은 "호출자가 실제 id로 채운다"는 자리 표시다.
+
 ## 서비스 경계
 
 ```text
@@ -299,6 +347,7 @@ wiki-front `/admin/migrations`(전역 관리자). ⚠️ 실기 DC로 실측하�
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
 | `DOCS_IMPORT_TOKEN` | 빈 값 | docs 프로필 임포터 토큰. 비면 쓰기 경로 전면 차단 |
+| `WIKI_INTERNAL_TOKEN` | 빈 값 | 내부 이관 API(`/internal/wiki/import`) 공유 비밀. 비면 그 경로 전면 차단 |
 
 ## 테스트와 배포
 
