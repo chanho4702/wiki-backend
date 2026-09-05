@@ -214,8 +214,9 @@ public class ImportedPageWriter {
     }
 
     private void writeRevision(Page page, ImportedPage source, String changeNote) {
+        // 대조된 작성자는 우리 사용자로 보여야 한다 — 이름 스냅샷은 못 찾았을 때만 남긴다(M3 §5.4).
         PageRevision revision = PageRevision.snapshotOf(page, changeNote)
-                .withEditorName(source.authorDisplayName());
+                .withEditorName(source.authorMapped() ? null : source.authorDisplayName());
         revisions.save(revision);
         revisions.flush();
         revisions.overwriteCreatedAt(revision.getId(), source.updatedAt());

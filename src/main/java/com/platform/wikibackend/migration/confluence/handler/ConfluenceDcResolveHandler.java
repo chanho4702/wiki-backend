@@ -11,6 +11,7 @@ import com.platform.wikibackend.migration.confluence.history.MigrationHistoryPay
 import com.platform.wikibackend.migration.confluence.link.MigrationLinkResolver;
 import com.platform.wikibackend.migration.confluence.link.MigrationLinkRewriter;
 import com.platform.wikibackend.migration.confluence.media.MigrationAttachmentImporter;
+import com.platform.wikibackend.migration.confluence.restriction.MigrationPrincipalResolver;
 import com.platform.wikibackend.migration.confluence.restriction.MigrationRestrictionApplier;
 import com.platform.wikibackend.migration.ir.DocumentIrMarkdownContext;
 import com.platform.wikibackend.migration.ir.DocumentIrMarkdownResult;
@@ -69,6 +70,7 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
     private final MigrationLinkRewriter linkRewriter;
     private final MigrationAttachmentImporter attachmentImporter;
     private final MigrationRestrictionApplier restrictionApplier;
+    private final MigrationPrincipalResolver principals;
     private final MigrationCommentImporter commentImporter;
     private final MigrationObjectMappingWriter objectMappings;
     private final MigrationObjectMappingRepository mappings;
@@ -189,11 +191,17 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
         Long parentId = type == PageType.BLOG ? null : resolveParent(work, snapshot, issues);
         JsonNode createdBy = snapshot.path("history").path("createdBy");
         String displayName = createdBy.path("displayName").asText("");
-        // 이메일로 우리 사용자를 찾는 창구가 아직 없다(org proto 0.14.0에 조회 API가 없다).
-        // 계정을 새로 만들지 않는 것이 이 모듈의 전제이므로(기획 §2 제외), 잡 요청자를 작성자로 두고
-        // 원본 이름은 문서의 imported_author_name과 리비전 편집자 이름으로 남긴다(M3 §5.4).
-        issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.AUTHOR_UNMAPPED,
-                "user:" + (displayName.isBlank() ? "unknown" : displayName)));
+        // 원본 작성자를 우리 계정으로 찾는다(org proto 0.15.0 LookupMembers). 찾으면 그 사람이
+        // 문서의 작성자·수정자다. 못 찾으면 계정을 새로 만들지 않는 것이 이 모듈의 전제라
+        // (기획 §2 제외) 잡 요청자를 작성자로 두고 원본 이름을 imported_author_name과 리비전
+        // 편집자 이름으로 남긴다(M3 §5.4).
+        Optional<Long> mappedAuthor = principals.resolveUser(new MigrationPrincipalResolver.SourceUser(
+                createdBy.path("username").asText(""), displayName,
+                createdBy.path("email").asText("")));
+        if (mappedAuthor.isEmpty()) {
+            issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.AUTHOR_UNMAPPED,
+                    "user:" + (displayName.isBlank() ? "unknown" : displayName)));
+        }
 
         List<String> labels = new ArrayList<>();
         for (JsonNode label : snapshot.path("metadata").path("labels").path("results")) {
@@ -206,7 +214,8 @@ public class ConfluenceDcResolveHandler implements MigrationStageHandler {
         Instant updatedAt = parseInstant(snapshot.path("version").path("when").asText(""));
         return new ImportedPageWriter.ImportedPage(job.getTargetSpaceId(), parentId,
                 work.externalObjectId(), snapshot.path("title").asText(""), markdown,
-                job.getRequestedBy(), displayName, false, sourceUrlOf(source, work),
+                mappedAuthor.orElseGet(job::getRequestedBy), displayName, mappedAuthor.isPresent(),
+                sourceUrlOf(source, work),
                 createdAt, updatedAt, labels, work.siblingOrder(), type,
                 importedHistory(work));
     }

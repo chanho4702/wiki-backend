@@ -7,6 +7,8 @@ import com.platform.wikibackend.permission.GrpcPrincipalDirectory;
 import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;
 import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.migration.confluence.restriction.GrpcMigrationPrincipalResolver;
+import com.platform.wikibackend.migration.confluence.restriction.MigrationPrincipalResolver;
 import io.grpc.ManagedChannelBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -69,5 +71,15 @@ public class SecurityConfig {
     @ConditionalOnMissingBean(PrincipalDirectory.class)
     PrincipalDirectory principalDirectory(io.grpc.ManagedChannel orgChannel) {
         return new GrpcPrincipalDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    }
+
+    /**
+     * W29 이관이 원본 작성자·제한 주체를 우리 계정·팀에 짝짓는 창구(common-proto 0.15.0).
+     * 테스트는 FakeMigrationPrincipalResolver(@Primary)가 대체한다.
+     */
+    @Bean
+    @ConditionalOnMissingBean(MigrationPrincipalResolver.class)
+    MigrationPrincipalResolver migrationPrincipalResolver(io.grpc.ManagedChannel orgChannel) {
+        return new GrpcMigrationPrincipalResolver(PermissionServiceGrpc.newBlockingStub(orgChannel));
     }
 }

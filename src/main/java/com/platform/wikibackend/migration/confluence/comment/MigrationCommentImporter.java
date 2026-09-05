@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.wikibackend.comment.CommentService;
 import com.platform.wikibackend.migration.MigrationPayloadStore;
 import com.platform.wikibackend.migration.confluence.handler.ConfluenceDcIssues;
+import com.platform.wikibackend.migration.confluence.restriction.MigrationPrincipalResolver;
 import com.platform.wikibackend.migration.model.MigrationObjectMapping;
 import com.platform.wikibackend.migration.model.MigrationPayloadKind;
 import com.platform.wikibackend.migration.repository.MigrationObjectMappingRepository;
@@ -27,6 +28,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * EXTRACT가 받아 둔 원본 댓글을 대상 문서에 단다(M3 §5.2). RESOLVE에서 문서를 쓴 뒤에 돈다.
@@ -48,10 +50,12 @@ public class MigrationCommentImporter {
     private final MigrationObjectMappingWriter mappingWriter;
     private final PageCommentRepository comments;
     private final CommentService commentService;
+    private final MigrationPrincipalResolver principals;
     private final ObjectMapper objectMapper;
 
     /**
-     * @param requesterId 잡 요청자 — 옮긴 댓글의 작성자 id가 된다(원본 이름은 스냅샷 컬럼에 남는다)
+     * @param requesterId 잡 요청자 — 원본 작성자를 우리 계정으로 못 찾은 댓글의 작성자 id가 된다
+     *                    (그때만 원본 이름이 스냅샷 컬럼에 남는다)
      * @return 그 과정의 손실
      */
     public List<MigrationStageIssue> importComments(MigrationStageWork work, long pageId,
@@ -60,6 +64,9 @@ public class MigrationCommentImporter {
         if (entries.isEmpty()) {
             return List.of();
         }
+        // 댓글마다 org를 왕복하지 않는다 — 한 문서의 대화는 같은 사람들이 반복해서 등장한다.
+        principals.warmUp(entries.stream().map(MigrationCommentImporter::sourceUserOf).toList(),
+                List.of());
         List<MigrationStageIssue> issues = new ArrayList<>();
         Map<String, Long> targetIds = existing(work, entries);
 
@@ -98,10 +105,15 @@ public class MigrationCommentImporter {
                     "comment:" + entry.id()));
             return;
         }
+        // 대조되면 그 사람이 쓴 댓글이 된다. 못 찾으면 잡 요청자 이름으로 달리되 원본 이름을
+        // 스냅샷으로 남긴다 — 대조된 댓글까지 이름을 남기면 화면이 계속 "이관됨"으로 보인다.
+        Optional<Long> mappedAuthor = principals.resolveUser(sourceUserOf(entry));
         long commentId;
         try {
-            commentId = commentService.createImported(pageId, parentTargetId, requesterId,
-                    entry.authorName(), body, parseInstant(entry.createdAt()));
+            commentId = commentService.createImported(pageId, parentTargetId,
+                    mappedAuthor.orElse(requesterId),
+                    mappedAuthor.isPresent() ? null : entry.authorName(),
+                    body, parseInstant(entry.createdAt()));
         } catch (RuntimeException exception) {
             log.warn("원본 댓글을 옮기지 못했다: page={} comment={}", pageId, entry.id(), exception);
             issues.add(MigrationStageIssue.warning(ConfluenceDcIssues.COMMENT_NOT_MIGRATED,
@@ -111,6 +123,12 @@ public class MigrationCommentImporter {
         targetIds.put(entry.id(), commentId);
         mappingWriter.upsertComment(work.provider(), work.sourceInstanceId(), entry.id(),
                 checksumOf(entry.id()), commentId, work.jobId());
+    }
+
+    /** 원본 댓글이 알려주는 사람. 이메일이 있으면 그것이 먼저 쓰인다. */
+    private static MigrationPrincipalResolver.SourceUser sourceUserOf(MigrationCommentPayload.Entry entry) {
+        return new MigrationPrincipalResolver.SourceUser(entry.authorName(), entry.authorName(),
+                entry.authorEmail());
     }
 
     /**

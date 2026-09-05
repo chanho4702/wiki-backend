@@ -39,6 +39,8 @@ public class MigrationRestrictionApplier {
      */
     public List<MigrationStageIssue> apply(JsonNode content, long pageId, long requester) {
         JsonNode source = content.path("restrictions");
+        // 주체마다 org를 왕복하지 않도록 이 문서가 물어볼 것을 한 번에 실어 보낸다.
+        warmUp(source);
         Group view = resolveGroup(source.path("read"), requester);
         Group edit = resolveGroup(source.path("update"), requester);
         if (view.absent() && edit.absent()) {
@@ -51,6 +53,29 @@ public class MigrationRestrictionApplier {
         return issues;
     }
 
+    /** 보기·편집 양쪽의 사용자·그룹을 모아 resolver에 미리 넘긴다. */
+    private void warmUp(JsonNode source) {
+        List<MigrationPrincipalResolver.SourceUser> users = new ArrayList<>();
+        List<String> groups = new ArrayList<>();
+        for (String kind : new String[] {"read", "update"}) {
+            JsonNode group = source.path(kind);
+            for (JsonNode user : group.path("users")) {
+                users.add(sourceUserOf(user));
+            }
+            for (JsonNode name : group.path("groups")) {
+                groups.add(name.asText(""));
+            }
+        }
+        if (!users.isEmpty() || !groups.isEmpty()) {
+            resolver.warmUp(users, groups);
+        }
+    }
+
+    private static MigrationPrincipalResolver.SourceUser sourceUserOf(JsonNode user) {
+        return new MigrationPrincipalResolver.SourceUser(user.path("username").asText(""),
+                user.path("displayName").asText(""), user.path("email").asText(""));
+    }
+
     private Group resolveGroup(JsonNode source, long requester) {
         List<RestrictionPrincipal> mapped = new ArrayList<>();
         List<MigrationStageIssue> issues = new ArrayList<>();
@@ -59,9 +84,7 @@ public class MigrationRestrictionApplier {
 
         for (JsonNode user : source.path("users")) {
             present = true;
-            MigrationPrincipalResolver.SourceUser sourceUser = new MigrationPrincipalResolver.SourceUser(
-                    user.path("username").asText(""), user.path("displayName").asText(""),
-                    user.path("email").asText(""));
+            MigrationPrincipalResolver.SourceUser sourceUser = sourceUserOf(user);
             Optional<Long> resolved = resolver.resolveUser(sourceUser);
             if (resolved.isEmpty()) {
                 unmapped = true;

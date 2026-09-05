@@ -10,12 +10,15 @@ import java.util.Optional;
 /**
  * 테스트 전용 페이크 — 원본 사용자·그룹을 우리 id로 대조하는 창구를 흉내 낸다.
  *
- * 운영 기본 구현({@link UnmappedMigrationPrincipalResolver})은 아무것도 대조하지 못한다(org에
- * 이름 조회 API가 없다). 그 상태만 테스트하면 fail-closed 경로만 보게 되므로, 여기서 "대조에
- * 성공했을 때"도 함께 고정한다 — 나중에 실제 구현이 들어와도 규칙이 그대로여야 한다.
+ * 운영 구현({@link GrpcMigrationPrincipalResolver})은 org의 이름 조회를 탄다. 이관 시나리오
+ * 대부분은 org 응답이 아니라 **대조 결과에 따른 규칙**(fail-closed·작성자 표시)을 보는 것이라
+ * 여기서 매핑을 직접 심는다. gRPC 계약 위에서 그 규칙이 성립하는지는
+ * {@code ConfluenceDcPrincipalLookupTest}가 실제 구현으로 따로 확인한다.
  */
 @Component
 @Primary
+// docs 프로필은 프로필 전용 빈을, org-lookup 프로필은 실제 gRPC 구현을 그대로 검증한다.
+@org.springframework.context.annotation.Profile("!docs & !org-lookup")
 public class FakeMigrationPrincipalResolver implements MigrationPrincipalResolver {
 
     private final Map<String, Long> users = new HashMap<>();

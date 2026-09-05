@@ -1,6 +1,8 @@
 package com.platform.wikibackend.config;
 
 import com.platform.wikibackend.event.EventPublisher;
+import com.platform.wikibackend.migration.confluence.restriction.MigrationPrincipalResolver;
+import com.platform.wikibackend.migration.confluence.restriction.UnmappedMigrationPrincipalResolver;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;
@@ -97,6 +99,12 @@ public class DocsSecurityConfig {
     PrincipalDirectory docsPrincipalDirectory() {
         return principals -> {
         };
+    }
+
+    /** 조회할 계정도 팀도 없는 인스턴스다. 이관이 돌더라도 아무도 대조되지 않는다(fail-closed). */
+    @Bean
+    MigrationPrincipalResolver docsMigrationPrincipalResolver() {
+        return new UnmappedMigrationPrincipalResolver();
     }
 
     /**
