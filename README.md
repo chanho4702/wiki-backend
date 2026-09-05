@@ -91,6 +91,25 @@ org-service에 COMMENT action이 생기기 전까지의 기준선 — 수정은 
 작성 시점 표시 이름 스냅샷이고, `updatedAt`은 본문이 실제로 수정된 시각이라 수정 전에는 null이다
 (무변경 재저장은 "(수정됨)"을 남기지 않는다). `anchor_type`은 후속 인라인 댓글 확장 자리다.
 
+### OpenAPI
+
+springdoc이 컨트롤러 주석에서 OpenAPI 3 스펙을 만들어 `GET /v3/api-docs`(JSON)로 낸다. UI는
+붙이지 않는다. 게이트웨이도 nginx도 `/v3`를 라우팅하지 않으므로 **클러스터 안에서만** 보이고,
+공개 문서 인스턴스(`docs` 프로필)에서는 경로째로 막혀 스펙이 나가지 않는다.
+
+```bash
+docker run --rm --network <compose 네트워크> curlimages/curl -s http://wiki-backend:9110/v3/api-docs
+```
+
+주석 규약은 컨트롤러마다 `@Tag(영문 리소스명, 한국어 설명)`, 엔드포인트마다
+`@Operation(summary)`, 뜻이 드러나지 않는 파라미터에 `@Parameter(description)`, DTO 핵심 필드에
+`@Schema(description, example)`다. 401·403은 모든 오퍼레이션에, 404는 경로 변수가 있는 곳에,
+409는 `expectedVersion`을 받는 PUT에 `OpenApiConfig`가 자동으로 붙인다(스키마 `PlatformError`).
+`OpenApiDocsTest`가 태그·요약 누락과 내부 경로 노출을 막는다.
+
+사람이 읽는 문서 페이지는 이 스펙에서 생성한다 — myFront의 `scripts/api`가 스펙을 긁어
+`docs/api-reference/`를 만들고 문서 위키로 동기화한다. 생성물을 직접 고치지 말고 여기 주석을 고친다.
+
 ## 서비스 경계
 
 ```text

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * 라벨과 백링크(W21-2).
@@ -170,6 +171,9 @@ public class LabelService {
         return candidates.stream().filter(p -> visible.contains(p.getId())).toList();
     }
 
-    public record LabelCountResponse(String name, long count) {
+    @Schema(description = "라벨 하나와 그 라벨이 붙은 페이지 수")
+    public record LabelCountResponse(
+            @Schema(description = "라벨 이름", example = "배포") String name,
+            @Schema(description = "그 라벨이 붙은 페이지 수", example = "12") long count) {
     }
 }

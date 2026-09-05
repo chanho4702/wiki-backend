@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * 리액션(W23). 볼 수 있으면 누를 수 있다 — 댓글과 같은 기준선이다.
@@ -107,5 +108,9 @@ public class ReactionService {
         effective.requireView(userId, page);
     }
 
-    public record ReactionSummary(String emoji, long count, boolean reacted) {}
+    @Schema(description = "이모지 하나의 리액션 집계")
+    public record ReactionSummary(
+            @Schema(description = "이모지 문자", example = "\u2764\uFE0F") String emoji,
+            @Schema(description = "그 이모지를 누른 사람 수", example = "3") long count,
+            @Schema(description = "내가 눌렀는지", example = "true") boolean reacted) {}
 }

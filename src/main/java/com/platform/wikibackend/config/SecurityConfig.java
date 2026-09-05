@@ -37,8 +37,13 @@ public class SecurityConfig {
         http
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
-                // 위키는 공개 엔드포인트 없음 — 조회 권한도 스페이스 단위 VIEW로 서비스 계층에서 판정
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                // 위키는 공개 엔드포인트 없음 — 조회 권한도 스페이스 단위 VIEW로 서비스 계층에서 판정.
+                // 예외는 OpenAPI 스펙 하나뿐이다: 게이트웨이·nginx가 /v3를 라우팅하지 않아
+                // 클러스터 밖에서는 닿지 않고, 수집기(myFront scripts/api)는 토큰 없이 컨테이너
+                // 네트워크에서 긁어 간다. 공개 문서 인스턴스(docs 프로필)는 이 체인을 타지 않는다.
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs/**").permitAll()
+                        .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
     }

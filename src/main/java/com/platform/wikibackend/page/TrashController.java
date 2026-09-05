@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
@@ -22,27 +24,32 @@ import static com.platform.wikibackend.space.SpaceController.userId;
  * 휴지통(W21-1). 복원은 `/pages/{id}/restore` — 리비전 복원(`/pages/{id}/revisions/{v}/restore`)과
  * 경로가 다르다: 하나는 "지운 문서를 되살린다", 다른 하나는 "예전 내용으로 되돌린다".
  */
+@Tag(name = "Trash", description = "삭제한 페이지의 휴지통 조회·복원·영구 삭제.")
 @RestController
 @RequiredArgsConstructor
 public class TrashController {
 
     private final TrashService trash;
 
+    @Operation(summary = "스페이스 휴지통의 페이지를 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/trash")
     public List<TrashItem> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
         return trash.list(userId(jwt), spaceId);
     }
 
+    @Operation(summary = "휴지통을 비운다 — 영구 삭제한 건수를 돌려준다")
     @DeleteMapping("/api/wiki/spaces/{spaceId}/trash")
     public Map<String, Integer> empty(@AuthenticationPrincipal Jwt jwt, @PathVariable Long spaceId) {
         return Map.of("purged", trash.empty(userId(jwt), spaceId));
     }
 
+    @Operation(summary = "휴지통의 페이지를 되살린다")
     @PostMapping("/api/wiki/pages/{id}/restore")
     public PageRestoreResponse restore(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         return trash.restore(userId(jwt), id);
     }
 
+    @Operation(summary = "휴지통의 페이지를 영구 삭제한다")
     @DeleteMapping("/api/wiki/pages/{id}/purge")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void purge(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {

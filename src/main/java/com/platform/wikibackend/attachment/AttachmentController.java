@@ -16,24 +16,35 @@ import org.springframework.web.multipart.MultipartFile;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
 
+@Tag(name = "Attachments", description = "페이지 첨부 파일의 업로드·목록·내려받기와 버전 관리.")
 @RestController
 @RequiredArgsConstructor
 public class AttachmentController {
 
     private final AttachmentService service;
 
+    @Operation(summary = "페이지에 첨부 파일을 올린다")
     @PostMapping("/api/wiki/pages/{pageId}/attachments")
     @ResponseStatus(HttpStatus.CREATED)
     public AttachmentResponse upload(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
+                                     @Parameter(description = "올릴 파일(multipart/form-data)")
                                      @RequestParam("file") MultipartFile file,
+                                     @Parameter(description = "본문 저장 전 에디터가 먼저 올리는 임시 첨부. confirm 전까지 정리 대상이다")
                                      @RequestParam(name = "pending", defaultValue = "false") boolean pending) {
         return service.upload(userId(jwt), pageId, file, pending);
     }
 
     /** 페이지 저장 뒤 본문에 남은 에디터 업로드를 장기 보존 대상으로 확정한다. */
+    @Operation(summary = "에디터가 먼저 올린 임시 첨부를 본문 저장 뒤 확정한다")
     @PostMapping("/api/wiki/pages/{pageId}/attachments/confirm")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void confirm(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId,
@@ -41,12 +52,17 @@ public class AttachmentController {
         service.confirm(userId(jwt), pageId, request.attachmentIds());
     }
 
+    @Operation(summary = "페이지의 첨부 목록을 조회한다")
     @GetMapping("/api/wiki/pages/{pageId}/attachments")
     public List<AttachmentResponse> list(@AuthenticationPrincipal Jwt jwt, @PathVariable Long pageId) {
         return service.list(userId(jwt), pageId);
     }
 
     /** Content-Disposition attachment 고정 — 브라우저 인라인 실행(XSS) 차단(스펙). */
+    @Operation(summary = "첨부를 내려받는다 — 브라우저 인라인 실행은 막는다")
+    @ApiResponse(responseCode = "200", description = "첨부 파일 내용. Content-Type은 첨부의 실제 타입이다",
+            content = @Content(mediaType = "application/octet-stream",
+                    schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/api/wiki/attachments/{id}")
     public ResponseEntity<Resource> download(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         AttachmentService.DownloadItem item = service.download(userId(jwt), id);
@@ -60,6 +76,7 @@ public class AttachmentController {
     }
 
     /** 지난 버전 목록 — 최신이 먼저. 현재 내용은 목록에 없다(첨부 자체가 곧 현재다). */
+    @Operation(summary = "첨부의 지난 버전 목록을 최신순으로 조회한다")
     @GetMapping("/api/wiki/attachments/{id}/versions")
     public List<com.platform.wikibackend.attachment.dto.AttachmentVersionResponse> versions(
             @AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
@@ -67,9 +84,14 @@ public class AttachmentController {
     }
 
     /** 지난 버전 내려받기 — 미리보기는 주지 않는다(옛 파일을 문서에 다시 심을 이유가 없다). */
+    @Operation(summary = "첨부의 지난 버전을 내려받는다")
+    @ApiResponse(responseCode = "200", description = "그 버전의 파일 내용",
+            content = @Content(mediaType = "application/octet-stream",
+                    schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/api/wiki/attachments/{id}/versions/{version}")
     public ResponseEntity<Resource> downloadVersion(@AuthenticationPrincipal Jwt jwt,
                                                     @PathVariable Long id,
+                                                    @Parameter(description = "내려받을 지난 버전 번호(1부터)")
                                                     @PathVariable int version) {
         AttachmentService.DownloadItem item = service.downloadVersion(userId(jwt), id, version);
         String encoded = URLEncoder.encode(item.meta().getFilename(), StandardCharsets.UTF_8).replace("+", "%20");
@@ -82,13 +104,19 @@ public class AttachmentController {
     }
 
     /** 지난 버전을 현재로 되돌린다 — 되돌린 것도 새 버전으로 쌓인다. */
+    @Operation(summary = "지난 버전을 현재 첨부로 되돌린다 — 되돌린 것도 새 버전으로 쌓인다")
     @PostMapping("/api/wiki/attachments/{id}/versions/{version}/restore")
     public com.platform.wikibackend.attachment.dto.AttachmentResponse restoreVersion(
-            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id, @PathVariable int version) {
+            @AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+            @Parameter(description = "현재로 되돌릴 지난 버전 번호") @PathVariable int version) {
         return service.restoreVersion(userId(jwt), id, version);
     }
 
     /** 권한 확인 후 안전한 타입만 인라인으로 제공한다(SVG/HTML 실행 차단). */
+    @Operation(summary = "안전한 타입의 첨부만 인라인으로 표시한다")
+    @ApiResponse(responseCode = "200", description = "첨부 파일 내용. 안전한 타입만 인라인으로 나간다",
+            content = @Content(mediaType = "application/octet-stream",
+                    schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/api/wiki/attachments/{id}/inline")
     public ResponseEntity<Resource> inline(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
         AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
@@ -103,6 +131,7 @@ public class AttachmentController {
                 .body(item.resource());
     }
 
+    @Operation(summary = "첨부를 삭제한다")
     @DeleteMapping("/api/wiki/attachments/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
