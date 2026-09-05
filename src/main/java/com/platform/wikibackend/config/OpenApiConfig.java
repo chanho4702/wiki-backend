@@ -87,10 +87,14 @@ public class OpenApiConfig {
      *
      * <ul>
      *   <li>401·403 — 모든 경로가 인증을 요구하고(SecurityConfig) 스페이스 권한을 판정한다.</li>
+     *   <li>400 — 요청 본문이 있는 오퍼레이션만. 본문 없는 GET·DELETE에는 검증할 것이 없다.</li>
      *   <li>404 — 경로 변수로 대상을 지목하는 오퍼레이션만. 목록 조회에는 붙이지 않는다.</li>
      *   <li>409 — 낙관적 락이 있는 PUT(요청 DTO에 {@code expectedVersion})만.</li>
+     *   <li>503 — 전부. 읽기·쓰기가 모두 org-service gRPC 권한 판정을 타고, 그게 불능이면
+     *       {@code ServiceUnavailableException}으로 503이 나간다(fail-open이 아니라 가용성 장애).</li>
      * </ul>
      *
+     * 400·503 두 줄은 alm-backend·org-service와 맞춘 플랫폼 공통 규칙이다 — 여기만 바꾸지 않는다.
      * 이미 선언된 응답 코드는 건드리지 않는다 — 컨트롤러 주석이 항상 이긴다.
      */
     @Bean
@@ -103,12 +107,16 @@ public class OpenApiConfig {
             }
             addIfAbsent(responses, "401", "인증 토큰이 없거나 유효하지 않다.");
             addIfAbsent(responses, "403", "이 스페이스나 페이지에 대한 권한이 없다.");
+            if (hasRequestBody(handlerMethod)) {
+                addIfAbsent(responses, "400", "요청 검증 실패");
+            }
             if (hasPathVariable(handlerMethod)) {
                 addIfAbsent(responses, "404", "대상을 찾을 수 없다.");
             }
             if (isOptimisticLockedPut(operation, handlerMethod)) {
                 addIfAbsent(responses, "409", "다른 사용자가 먼저 수정해 버전이 어긋났다.");
             }
+            addIfAbsent(responses, "503", "권한 서비스(org) 불능");
             relabelMultipartBody(operation, handlerMethod);
             return operation;
         };
@@ -153,6 +161,21 @@ public class OpenApiConfig {
             }
         }
         return false;
+    }
+
+    /**
+     * 요청 본문을 받는가 — {@code @RequestBody} 또는 파일 업로드(MultipartFile).
+     *
+     * 오퍼레이션의 {@code requestBody} 유무로 판정하지 않는 이유: 그건 springdoc이 이 커스터마이저
+     * 전에 채워 두었는지에 기댄다. 핸들러 시그니처는 실행 순서와 무관하다.
+     */
+    private static boolean hasRequestBody(HandlerMethod handlerMethod) {
+        for (MethodParameter parameter : handlerMethod.getMethodParameters()) {
+            if (parameter.hasParameterAnnotation(org.springframework.web.bind.annotation.RequestBody.class)) {
+                return true;
+            }
+        }
+        return hasMultipartParameter(handlerMethod);
     }
 
     private static boolean hasPathVariable(HandlerMethod handlerMethod) {

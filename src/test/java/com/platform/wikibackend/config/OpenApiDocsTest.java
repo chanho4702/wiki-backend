@@ -31,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class OpenApiDocsTest {
 
+    private static final String ERROR_REF = "#/components/schemas/PlatformError";
     private static final Set<String> HTTP_METHODS =
             Set.of("get", "put", "post", "delete", "patch", "head", "options", "trace");
 
@@ -198,6 +199,49 @@ class OpenApiDocsTest {
                 .isFalse();
         assertThat(spec.at("/paths/~1api~1wiki~1spaces~1{id}/put/responses/409").isMissingNode())
                 .isTrue();
+    }
+
+    /**
+     * 503은 전 오퍼레이션에 붙는다. 읽기든 쓰기든 org-service gRPC 권한 판정을 타므로,
+     * org가 죽으면 어떤 엔드포인트든 503이 나갈 수 있다 — alm·org와 맞춘 플랫폼 공통 규칙.
+     */
+    @Test
+    void 모든_오퍼레이션에_503이_붙는다() throws Exception {
+        List<String> missing = new ArrayList<>();
+        eachOperation(spec(), (where, operation) -> {
+            JsonNode response = operation.path("responses").path("503");
+            if (response.isMissingNode()) {
+                missing.add(where);
+            } else if (!ERROR_REF.equals(response.at("/content/application~1json/schema/$ref").asText())) {
+                missing.add(where + " — PlatformError 스키마가 아님");
+            }
+        });
+        assertThat(missing).as("503이 빠진 오퍼레이션").isEmpty();
+    }
+
+    /**
+     * 400은 요청 본문이 있는 오퍼레이션에만. 본문 없는 GET·DELETE에는 검증할 것이 없다 —
+     * 전부에 붙이면 생성된 문서가 "아무 요청이나 400이 날 수 있다"고 잘못 말한다.
+     */
+    @Test
+    void 요청_본문이_있는_오퍼레이션에만_400이_붙는다() throws Exception {
+        List<String> wrong = new ArrayList<>();
+        eachOperation(spec(), (where, operation) -> {
+            boolean hasBody = !operation.path("requestBody").isMissingNode();
+            boolean has400 = !operation.path("responses").path("400").isMissingNode();
+            if (hasBody && !has400) {
+                wrong.add(where + " — 본문이 있는데 400 없음");
+            }
+            if (!hasBody && has400) {
+                wrong.add(where + " — 본문이 없는데 400 있음");
+            }
+        });
+        assertThat(wrong).as("400 규칙에 어긋난 오퍼레이션").isEmpty();
+
+        // 규칙이 실제로 무언가를 덮는지 — 본문 있는 오퍼레이션이 0개면 위 단언은 공허하게 통과한다.
+        JsonNode create = spec().at("/paths/~1api~1wiki~1pages/post");
+        assertThat(create.at("/responses/400").isMissingNode()).isFalse();
+        assertThat(spec().at("/paths/~1api~1wiki~1pages~1{id}/get/responses/400").isMissingNode()).isTrue();
     }
 
     @Test

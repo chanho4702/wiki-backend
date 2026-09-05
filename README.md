@@ -103,9 +103,23 @@ docker run --rm --network <compose 네트워크> curlimages/curl -s http://wiki-
 
 주석 규약은 컨트롤러마다 `@Tag(영문 리소스명, 한국어 설명)`, 엔드포인트마다
 `@Operation(summary)`, 뜻이 드러나지 않는 파라미터에 `@Parameter(description)`, DTO 핵심 필드에
-`@Schema(description, example)`다. 401·403은 모든 오퍼레이션에, 404는 경로 변수가 있는 곳에,
-409는 `expectedVersion`을 받는 PUT에 `OpenApiConfig`가 자동으로 붙인다(스키마 `PlatformError`).
-`OpenApiDocsTest`가 태그·요약 누락과 내부 경로 노출을 막는다.
+`@Schema(description, example)`다.
+
+공통 오류는 `OpenApiConfig`가 자동으로 붙인다(전부 스키마 `PlatformError`). 이 규칙은
+alm-backend·org-service와 맞춘 플랫폼 공통 규칙이라 여기만 바꾸지 않는다.
+
+| 코드 | 붙는 곳 |
+|---|---|
+| 401·403 | 모든 오퍼레이션 |
+| 400 | 요청 본문(`@RequestBody` 또는 `MultipartFile`)이 있는 오퍼레이션 |
+| 404 | 경로 변수로 대상을 지목하는 오퍼레이션 |
+| 409 | `expectedVersion`을 받는 PUT |
+| 503 | 모든 오퍼레이션 — 읽기·쓰기가 모두 org-service 권한 판정을 탄다 |
+
+`/internal/**`은 `springdoc.paths-to-exclude`로 스캔에서 통째로 뺀다. 내부 전용 컨트롤러를
+새로 만들어도 공개 문서로 새지 않으므로, 거기에는 `@Tag`·`@Operation`을 달 필요가 없다.
+`OpenApiDocsTest`가 태그·요약 누락, 내부 경로 노출, 인증 주체 누출, 성공 응답 소실,
+그리고 위 400·503 규칙을 회귀로 막는다.
 
 사람이 읽는 문서 페이지는 이 스펙에서 생성한다 — myFront의 `scripts/api`가 스펙을 긁어
 `docs/api-reference/`를 만들고 문서 위키로 동기화한다. 생성물을 직접 고치지 말고 여기 주석을 고친다.
