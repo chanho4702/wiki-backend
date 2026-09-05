@@ -52,16 +52,8 @@ class OpenApiDocsTest {
 
     @Test
     void 모든_오퍼레이션에_태그와_요약이_있다() throws Exception {
-        JsonNode paths = spec().get("paths");
-        assertThat(paths).isNotNull();
-
         List<String> missing = new ArrayList<>();
-        paths.properties().forEach(path -> path.getValue().properties().forEach(op -> {
-            if (!HTTP_METHODS.contains(op.getKey())) {
-                return;
-            }
-            JsonNode operation = op.getValue();
-            String where = op.getKey().toUpperCase() + " " + path.getKey();
+        eachOperation(spec(), (where, operation) -> {
             JsonNode tags = operation.get("tags");
             if (tags == null || !tags.isArray() || tags.isEmpty()) {
                 missing.add(where + " — @Tag 없음");
@@ -70,9 +62,18 @@ class OpenApiDocsTest {
             if (summary == null || summary.asText().isBlank()) {
                 missing.add(where + " — @Operation(summary) 없음");
             }
-        }));
+        });
 
         assertThat(missing).as("주석이 빠진 오퍼레이션").isEmpty();
+    }
+
+    /** "METHOD /경로" 라벨과 오퍼레이션 노드를 짝지어 훑는다. */
+    private static void eachOperation(JsonNode spec, java.util.function.BiConsumer<String, JsonNode> visit) {
+        spec.get("paths").properties().forEach(path -> path.getValue().properties().forEach(op -> {
+            if (HTTP_METHODS.contains(op.getKey())) {
+                visit.accept(op.getKey().toUpperCase() + " " + path.getKey(), op.getValue());
+            }
+        }));
     }
 
     @Test
@@ -88,6 +89,52 @@ class OpenApiDocsTest {
         }
         // 컨트롤러가 통째로 스캔에서 빠지는 회귀(예: springdoc 패키지 스캔 설정 실수)를 잡는다.
         assertThat(operations).isGreaterThan(70);
+    }
+
+    /**
+     * 인증 주체(@AuthenticationPrincipal Jwt)가 쿼리 파라미터로 새지 않는지.
+     * 모든 핸들러가 Jwt를 받으므로, 한 번 새면 105개 오퍼레이션 전부에 가짜 파라미터가 붙는다.
+     * alm-backend가 실제로 밟은 함정이라 여기서 회귀로 막는다.
+     */
+    @Test
+    void 인증_주체가_파라미터로_새지_않는다() throws Exception {
+        List<String> leaked = new ArrayList<>();
+        eachOperation(spec(), (where, operation) -> {
+            JsonNode parameters = operation.get("parameters");
+            if (parameters == null) {
+                return;
+            }
+            for (JsonNode parameter : parameters) {
+                String name = parameter.path("name").asText("").toLowerCase();
+                if (name.contains("jwt") || name.contains("principal")) {
+                    leaked.add(where + " — " + name);
+                }
+            }
+        });
+        assertThat(leaked).as("인증 주체가 샌 파라미터").isEmpty();
+    }
+
+    /**
+     * 성공 응답이 사라지지 않았는지.
+     * 핸들러에 @ApiResponse를 하나라도 달면 springdoc이 반환 타입에서 200을 자동 생성하지 않는다 —
+     * 4xx만 달면 성공 응답이 조용히 사라진다. 바이너리 응답 세 곳이 그 경계에 있다.
+     */
+    @Test
+    void 모든_오퍼레이션에_성공_응답이_있다() throws Exception {
+        List<String> missing = new ArrayList<>();
+        eachOperation(spec(), (where, operation) -> {
+            boolean success = false;
+            var codes = operation.path("responses").fieldNames();
+            while (codes.hasNext()) {
+                if (codes.next().startsWith("2")) {
+                    success = true;
+                }
+            }
+            if (!success) {
+                missing.add(where);
+            }
+        });
+        assertThat(missing).as("2xx 응답이 없는 오퍼레이션").isEmpty();
     }
 
     @Test
