@@ -1,0 +1,5 @@
+# 골든 파일은 줄바꿈까지 포함해 바이트로 대조한다(DocumentIrMarkdownWriterTest).
+# 이 리포에는 전역 줄바꿈 규칙이 없고 윈도우 개발기는 보통 core.autocrlf=true라,
+# 그대로 두면 윈도우에서 새로 클론했을 때만 골든 3건이 깨진다 — 리눅스 CI는 LF로 받아 통과하므로
+# CI만 보고 있으면 드러나지 않는다. 이 디렉터리만 LF로 못박아 체크아웃 환경과 무관하게 만든다.
+src/test/resources/fixtures/migration/confluence/golden/** text eol=lf
