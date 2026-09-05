@@ -203,7 +203,6 @@ class DocsSecurityTest {
             "/api/wiki/stars",
             "/api/wiki/recent",
             "/api/wiki/tasks/mine",
-            "/api/wiki/migrations/1",
             "/api/wiki/audit/space-deletions"})
     void 사용자_범위_경로는_익명_GET도_403이다(String path) throws Exception {
         mvc.perform(get(path)).andExpect(status().isForbidden());
@@ -215,8 +214,7 @@ class DocsSecurityTest {
             "/api/wiki/notifications/prefs",
             "/api/wiki/stars",
             "/api/wiki/recent",
-            "/api/wiki/tasks/mine",
-            "/api/wiki/migrations/1"})
+            "/api/wiki/tasks/mine"})
     void 사용자_범위_경로는_임포터_토큰으로도_403이다(String path) throws Exception {
         mvc.perform(get(path).header(TOKEN_HEADER, "test-token")).andExpect(status().isForbidden());
     }

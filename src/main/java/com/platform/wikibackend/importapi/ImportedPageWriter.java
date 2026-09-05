@@ -1,4 +1,4 @@
-package com.platform.wikibackend.migration.confluence;
+package com.platform.wikibackend.importapi;
 
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageLabel;
@@ -7,7 +7,7 @@ import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.label.LabelService;
-import com.platform.wikibackend.migration.worker.MigrationStageIssue;
+import com.platform.wikibackend.importapi.dto.WikiImportResponses;
 import com.platform.wikibackend.repository.PageLabelRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
@@ -36,7 +36,9 @@ import java.util.Set;
  * 하나로만 갱신되므로(EventRelay 주석), 빼면 옮긴 문서가 검색에 영영 안 잡힌다. 알림과 색인이
  * 같은 이벤트를 타지 않는다 — 알림은 NotificationService가 따로 만든다.
  *
- * worker의 트랜잭션 밖에서 불리므로 스스로 트랜잭션을 연다.
+ * 요청 단위 트랜잭션 밖에서 불리므로 스스로 트랜잭션을 연다. 이 클래스가 이관 엔진이 아니라
+ * import API 곁에 있는 이유는 W29 X4다 — 엔진은 migration-service로 나갔고, 위키에는 "받아
+ * 넣는 쓰기 경로"만 남았다.
  */
 @Component
 @RequiredArgsConstructor
@@ -44,6 +46,9 @@ public class ImportedPageWriter {
 
     /** 원본 제목이 우리 상한을 넘어 잘랐다. */
     public static final String TITLE_TRUNCATED = "TITLE_TRUNCATED";
+
+    /** 문서를 옮기지 못하게 할 정도는 아닌 손실. 엔진이 자기 보고서에 옮겨 적는다. */
+    private static final String WARNING = "WARNING";
 
     /** page.title은 varchar(255)다 — 넘치면 저장 자체가 실패하므로 잘라서라도 옮긴다. */
     public static final int MAX_TITLE_LENGTH = 255;
@@ -62,8 +67,8 @@ public class ImportedPageWriter {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportResult create(ImportedPage source) {
-        List<MigrationStageIssue> issues = new ArrayList<>();
-        String title = truncateTitle(source.title(), source.externalObjectId(), issues);
+        List<WikiImportResponses.Issue> issues = new ArrayList<>();
+        String title = truncateTitle(source.title(), issues);
 
         // 지난 버전을 함께 옮기면 문서는 k+1번째 버전으로 태어난다(M3 §5.3) — 리비전 1..k가
         // 원본 이력이고 k+1이 현재본이다. 이력은 **최초 이관에만** 쌓는다: 재이관에서 다시 깔면
@@ -92,8 +97,8 @@ public class ImportedPageWriter {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportResult update(long pageId, ImportedPage source, String changeNote) {
-        List<MigrationStageIssue> issues = new ArrayList<>();
-        String title = truncateTitle(source.title(), source.externalObjectId(), issues);
+        List<WikiImportResponses.Issue> issues = new ArrayList<>();
+        String title = truncateTitle(source.title(), issues);
         Page page = pages.findById(pageId).orElseThrow();
 
         page.reimport(title, source.markdown(), source.authorId(), source.updatedAt());
@@ -145,15 +150,17 @@ public class ImportedPageWriter {
     }
 
     /**
-     * 본문을 바꾸면서 **새 리비전을 남기는** 이관 쓰기(링크 정리 pass, import API의 bumpVersion).
+     * 본문을 바꾸면서 **새 리비전을 남기는** 이관 쓰기(import API의 bumpVersion — 링크 정리 pass).
      *
-     * 트랜잭션을 열지 않는다 — 호출부의 것에 참여한다. 링크 정리는 같은 트랜잭션에서 손실 기록도
-     * 함께 남겨야 하고(둘이 갈라지면 "고쳤는데 보고가 없다"가 생긴다), import API 쪽은
-     * {@link #rewriteBodyAsRevision}이 경계를 연다.
+     * {@link #rewriteBody}와 갈라지는 지점은 "이 눌림이 편집인가"다. 첨부 URL 정리는 이관이라는
+     * 한 번의 저장을 끝맺는 일이라 버전을 올리지 않지만, 링크 정리는 문서 사이의 관계를 실제로
+     * 바꾸므로 이력에 한 줄로 남아야 한다("이관 링크 정리").
      *
      * @return 본문이 실제로 바뀌었으면 true
      */
-    public boolean applyRevision(Page page, String markdown, long editorId, String changeNote) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean rewriteBodyAsRevision(long pageId, String markdown, long editorId, String changeNote) {
+        Page page = pages.findById(pageId).orElseThrow();
         if (page.getContent().equals(markdown)) {
             return false;
         }
@@ -164,13 +171,6 @@ public class ImportedPageWriter {
         labelService.reindexLinks(page);
         events.afterCommit(WikiEvents.pageUpdated(editorId, page));
         return true;
-    }
-
-    /** {@link #applyRevision}의 트랜잭션 경계 — 페이지 id만 아는 호출부(import API)가 쓴다. */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean rewriteBodyAsRevision(long pageId, String markdown, long editorId, String changeNote) {
-        Page page = pages.findById(pageId).orElseThrow();
-        return applyRevision(page, markdown, editorId, changeNote);
     }
 
     /**
@@ -231,7 +231,7 @@ public class ImportedPageWriter {
         for (ImportedRevision revision : source.history()) {
             String title = revision.title() == null || revision.title().isBlank()
                     ? currentTitle
-                    : truncateTitle(revision.title(), source.externalObjectId(), new ArrayList<>());
+                    : truncateTitle(revision.title(), new ArrayList<>());
             PageRevision row = revisions.save(PageRevision.imported(page.getId(), version++, title,
                     revision.markdown(),
                     revision.editorId() == null ? source.authorId() : revision.editorId(),
@@ -274,12 +274,12 @@ public class ImportedPageWriter {
         labels.saveAll(rows);
     }
 
-    private String truncateTitle(String title, String externalObjectId, List<MigrationStageIssue> issues) {
+    private String truncateTitle(String title, List<WikiImportResponses.Issue> issues) {
         String value = title == null || title.isBlank() ? "제목 없음" : title.trim();
         if (value.length() <= MAX_TITLE_LENGTH) {
             return value;
         }
-        issues.add(MigrationStageIssue.warning(TITLE_TRUNCATED, "page:" + externalObjectId));
+        issues.add(new WikiImportResponses.Issue(WARNING, TITLE_TRUNCATED));
         return value.substring(0, MAX_TITLE_LENGTH);
     }
 
@@ -317,6 +317,6 @@ public class ImportedPageWriter {
                                    String changeNote, Instant savedAt) {
     }
 
-    public record ImportResult(long pageId, List<MigrationStageIssue> issues) {
+    public record ImportResult(long pageId, List<WikiImportResponses.Issue> issues) {
     }
 }

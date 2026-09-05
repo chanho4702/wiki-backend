@@ -12,12 +12,10 @@ import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.domain.Space;
+import com.platform.wikibackend.importapi.ImportedPageWriter.ImportedPage;
+import com.platform.wikibackend.importapi.ImportedPageWriter.ImportedRevision;
 import com.platform.wikibackend.importapi.dto.WikiImportRequests;
 import com.platform.wikibackend.importapi.dto.WikiImportResponses;
-import com.platform.wikibackend.migration.confluence.ImportedPageWriter;
-import com.platform.wikibackend.migration.confluence.ImportedPageWriter.ImportedPage;
-import com.platform.wikibackend.migration.confluence.ImportedPageWriter.ImportedRevision;
-import com.platform.wikibackend.migration.worker.MigrationStageIssue;
 import com.platform.wikibackend.permission.PageRestrictionService;
 import com.platform.wikibackend.permission.dto.RestrictionPrincipal;
 import com.platform.wikibackend.repository.AttachmentRepository;
@@ -92,7 +90,7 @@ public class WikiImportService {
         Page page = requirePage(result.pageId());
         // 문서 한 건당 감사 기록 한 줄 — 첨부·댓글·본문 정리까지 남기면 목록이 이관으로 덮인다.
         audit.recordPage(actorId, AuditAction.IMPORTED, page, "import:page.create");
-        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), issues(result));
+        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), result.issues());
     }
 
     public WikiImportResponses.PageWritten reimportPage(long actorId, long pageId,
@@ -109,7 +107,7 @@ public class WikiImportService {
 
         ImportedPageWriter.ImportResult result = writer.update(pageId, source, req.changeNote());
         Page page = requirePage(pageId);
-        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), issues(result));
+        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), result.issues());
     }
 
     public WikiImportResponses.ContentWritten rewriteContent(long actorId, long pageId,
@@ -251,16 +249,6 @@ public class WikiImportService {
                 .map(r -> new ImportedRevision(r.title(), text(r.content()), r.editorId(),
                         r.editorName(), r.changeNote(), r.savedAt()))
                 .toList();
-    }
-
-    private static List<WikiImportResponses.Issue> issues(ImportedPageWriter.ImportResult result) {
-        return result.issues().stream()
-                .map(WikiImportService::issue)
-                .toList();
-    }
-
-    private static WikiImportResponses.Issue issue(MigrationStageIssue raw) {
-        return new WikiImportResponses.Issue(raw.severity().name(), raw.code());
     }
 
     private static WikiImportResponses.AttachmentRegistered registered(long id, String outcome) {

@@ -71,10 +71,6 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 공동 편집 ticket | `POST /api/wiki/pages/{pageId}/collaboration-ticket` | EDIT |
 | 댓글 | `GET/POST /api/wiki/pages/{pageId}/comments` | VIEW |
 | 댓글 | `PUT/DELETE /api/wiki/comments/{id}` | 작성자 (삭제는 스페이스 ADMIN도) |
-| 마이그레이션 job | `POST /api/wiki/migrations`, `GET /api/wiki/migrations/{id}` | 대상 스페이스 ADMIN |
-| 마이그레이션 원본 등록 | `POST /api/wiki/migrations/{id}/items` | 대상 스페이스 ADMIN |
-| 마이그레이션 시작·취소 | `POST /api/wiki/migrations/{id}/start`, `.../cancel` | 대상 스페이스 ADMIN |
-| 마이그레이션 보고서 | `GET /api/wiki/migrations/{id}/report` | 대상 스페이스 ADMIN |
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -219,109 +215,23 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 - 이 인스턴스의 호스트 포트는 루프백에만 연다(임포터 전용). 웹 노출은 nginx `/api/docs/`가 맡고
   거기서 `X-Docs-Import-Token` 헤더를 제거한다.
 
-## 마이그레이션 기반
+## 이관(마이그레이션)은 이 서비스에 없다
 
-Notion과 Confluence Data Center에서 가져온 문서는 provider별 원본을 곧바로 `Page.content`에
-저장하지 않는다. 먼저 `schema/document-ir-v1.schema.json`의 provider 중립 Document IR로
-정규화하고 `DocumentIrValidator`의 런타임 문법·의미 검증을 통과해야 한다.
+Confluence Data Center·Notion에서 문서를 가져오는 엔진은 **migration-service**에 있다(W29 X4).
+Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·`/api/migration/**` REST와 그 운영
+가이드가 전부 그쪽 리포와 README로 옮겨 갔다. 위키에 남은 것은 "옮겨온 데이터를 원본 그대로 받아
+넣는" 내부 쓰기 표면 하나뿐이다 — 위의 [내부 이관 API](#내부-이관-api-internalwikiimport-w29-x1).
 
-- schema의 버전·provider·block/mark type·ID/checksum 규칙을 런타임과 공유한다.
-- block ID와 media ID 중복, 선언되지 않은 media 참조, 만료 URL 직접 저장을 거부한다.
-- 지원하지 않는 원본 구조는 `opaque + sourceRef`로 보존하며 원본 payload는 IR 밖에 둔다.
-- 검증 오류는 stable code와 JSON path만 반환하고 문서 본문이나 원본 값을 반사하지 않는다.
-- `migration_job`과 `migration_item`은 extract → normalize → media copy → resolve → verify
-  checkpoint, retry 시각·횟수, dead letter 상태를 PostgreSQL에 보존한다.
-- 외부 object mapping은 긴 원본 ID 대신 source identity의 SHA-256 key로 멱등성을 보장하고,
-  `migration_issue`에는 구조화된 code/path만 기록한다.
-- worker는 item을 lease로 점유한다. stage 실행은 트랜잭션 밖에서 돌고 점유·결과 기록만 짧은
-  트랜잭션으로 끊으므로, 외부 API 호출이 DB 커넥션을 잡고 있지 않는다.
-- 같은 item을 두 노드가 노리면 낙관적 락으로 한쪽만 이긴다. 노드가 죽어 결과를 기록하지 못한
-  item은 lease 만료 뒤 다른 노드가 회수해 재시도 대기로 되돌린다.
+가른 이유는 경계다. 이관은 남의 서버 사정(인증·속도 제한·버전)에 끌려다니는 장기 실행 잡이고,
+위키는 그 사정을 몰라야 한다. 엔진이 위키 안에 있으면 DC 한 곳의 응답 지연이 위키 배포 주기와
+스키마에 묶인다.
 
-Notion은 `snapshotVersion: 1` envelope에 page 응답과 parent block ID별 paginated
-`Retrieve block children` 원본 응답을 함께 보존한다. normalizer는 현재 `Notion-Version: 2026-03-11`
-계약을 명시적으로 확인하고 pagination·재귀 children 누락을 부분 import로 진행하지 않는다. rich text,
-heading, paragraph, list/task, panel, column, page link와 복사 완료 media를 IR로 바꾸며, 미지원 block과
-복사되지 않은 media는 `opaque + migration issue`로 보존한다. Notion-hosted 임시 URL은 IR에 복사하지
-않는다. 근거는 [page content API](https://developers.notion.com/guides/data-apis/working-with-page-content)와
-[file retrieval guide](https://developers.notion.com/guides/data-apis/retrieving-files)를 따른다.
-
-Confluence DC는 특정 제품 버전을 아직 보장하지 않고, 공식 storage format의 공통 XML 부분집합만
-fixture parser로 검증한다. heading/paragraph/mark/list/task/panel/layout/table/page link를 IR로 바꾸고,
-복사 완료 attachment image만 `mediaId`로 연결한다. custom macro와 미지원 element는
-`opaque + sourceRef + issue`로 남긴다. XML parser는 DOCTYPE, entity, processing instruction과 외부
-DTD/schema 접근을 차단한다. 근거는 [Atlassian storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)을
-따르며 실제 고객/사내 DC 버전을 확보한 뒤 별도 compatibility matrix를 만든다.
-
-### job 수명주기와 보고서
-
-job은 `PENDING`(원본 등록) → `RUNNING`(등록 마감, worker 처리) → `COMPLETED`/`FAILED`/`CANCELLED`로
-움직인다. `start` 뒤의 원본 등록은 `409`이며, 같은 외부 객체를 다시 등록해도 item은 늘지 않는다.
-job 상태 전이(`start`/`cancel`)와 그 상태에 기대는 동작(원본 등록·item 점유)은 job 행 잠금으로
-직렬화한다. 취소된 job은 새 item을 집지 않고, 취소 직전에 시작된 stage의 결과도 반영하지 않는다.
-worker tick은 전용 스레드에서 돌아 다른 주기 작업(첨부 reconciliation)을 막지 않으며, 이전 tick이
-끝나지 않았으면 건너뛴다.
-
-worker는 `MigrationStageHandler`(provider × stage)를 찾아 실행하고 결과에 따라 다음 단계로
-전진시키거나 지수 백오프로 재시도한다. 재시도 상한을 넘기거나 처리기가 없는 stage는 즉시 dead
-letter가 되고 `migration_issue`에 ERROR로 남는다. 처리 대상이 모두 소진되면 job은 마감되며 dead
-letter가 하나라도 있으면 `FAILED`다.
-
-`GET /api/wiki/migrations/{id}/report`는 dry-run과 실제 import가 같은 형태로 낸다 — 상태별·단계별
-item 수, severity/code별 손실 집계, dead letter 목록이다. `DRY_RUN`은 대상 페이지를 만들지 않으므로
-`migration_object_map`도 남기지 않는다. 보고서에는 아직 옮기지 않은 외부 객체 ID가 들어가므로
-VIEW가 아니라 대상 스페이스 ADMIN만 열 수 있다.
-
-현재 경계는 IR v1 golden fixture, migration checkpoint 저장 모델, Notion snapshot normalizer,
-Confluence 공통 storage parser, worker 실행기와 job/report API까지 검증한다. Confluence DC provider는
-extractor·media copier·resolver·verifier가 `MigrationStageHandler`로 붙어 있고(W29 M1~M3, 아래 운영 가이드), Notion은
-아직 normalizer까지다. 기존 `Page.content` 정본 포맷은 바꾸지 않는다.
-
-### 컨플루언스 설치형(Server/DC) 이관 — 운영 가이드 (W29, 2026-09-05)
-
-M1~M3로 파이프라인이 실제로 돈다(EXTRACT → NORMALIZE → MEDIA_COPY → RESOLVE → VERIFY, 잡 마감 뒤 링크 fixup).
-설계 정본은 `wiki-front/docs/superpowers/specs/2026-09-05-confluence-dc-migration-design.md`, 관리 화면은
-wiki-front `/admin/migrations`(전역 관리자). ⚠️ 실기 DC로 실측하기 전이라 지원 버전을 보장하지 않는다 —
-기본 가정은 7.19 LTS~9.x, 개인 액세스 토큰(PAT, 7.9+).
-
-**준비(운영자)**
-1. 원본 DC에서 이관 계정으로 PAT를 발급한다(스페이스 보기 + 첨부 다운로드 권한). 토큰은 잡 생성 요청 본문에만 들어가고
-   응답·화면·로그 어디에도 다시 나오지 않지만, DB `migration_source.auth_token`에는 **평문**으로 저장된다 — DB 접근 통제로
-   보호하고, 이관이 끝나면 원본 쪽에서 토큰을 폐기한다(암호화 저장은 후속 ADR).
-2. wiki-backend가 원본 DC로 **아웃바운드 HTTPS**를 열 수 있어야 한다(게이트웨이·nginx 무관, 워커 프로세스에서 직접 호출).
-   요청은 `base_url` + 고정 경로만 조합하고 원본 응답의 `_links`·리다이렉트를 따라가지 않는다.
-3. 워커를 켠다: `platform.wiki.migration-worker.enabled=true`(기본 꺼짐). 다중 노드면 한 노드만 켜도 되고, 여러 노드가 켜져
-   있으면 lease로 나눠 갖는다. `docs` 프로필(공개 문서 인스턴스)은 마이그레이션 API 자체를 막는다.
-4. 첨부 저장소 용량: 원본 스페이스 첨부 합계만큼(+지난 버전 본문 텍스트). dry-run 보고서의 `ATTACHMENT_PLANNED` 합계로 미리 본다.
-
-**절차(관리자, 화면 기준)**
-1. `/admin/migrations` → 새 잡: DC URL·스페이스 키·PAT 입력 → **연결 확인**(스페이스 이름·페이지 수). 대상은 **빈 스페이스**를 권장한다.
-2. 모드 **dry-run**으로 잡 생성 → **발견**(페이지·블로그 목록을 조상 깊이순으로 등록) → **시작**. 보고서에서 미지원 매크로(`MACRO_OPAQUE`)·
-   미매핑 사용자(`AUTHOR_UNMAPPED`, `RESTRICTION_PRINCIPAL_UNMAPPED`)·첨부 계획을 확인한다. dry-run은 원본을 내려받지도, 페이지를 만들지도 않는다.
-3. 같은 원본으로 모드 **import** 잡을 만들어 발견 → 시작. 진행률은 5초마다 갱신되고, 중단되면 같은 잡을 다시 시작하면 이어서 한다.
-4. 완료 뒤 보고서의 `LINK_UNRESOLVED`·`ATTACHMENT_*`·`VERIFY_*`·데드레터를 확인한다. 데드레터(`DC_NOT_FOUND` 등)는 원본 쪽 문제를 고친 뒤
-   **재발견 → 재시작**하면 그 항목만 다시 처리된다(완료 항목은 같은 checksum이면 건너뛴다).
-
-**재실행·멱등 규칙**: 같은 원본 페이지(id+version)는 한 번만 만든다. 원본이 바뀌어 checksum이 달라지면 제목·본문·라벨을 갱신하고
-새 리비전("컨플루언스 재이관 v{n}")을 남긴다. 첨부는 같은 checksum이면 재다운로드하지 않고, 댓글·이력은 최초 이관에만 만든다.
-
-**옮겨지는 것 / 아닌 것**
-| 옮겨진다 | 옮겨지지 않는다(보고서에 남음) |
-|---|---|
-| 페이지 트리·형제 순서·제목·본문(storage XHTML → IR → 마크다운)·라벨·생성/수정 시각 | 애드온 매크로 본문(Jira·Draw.io 등, `opaque` 패널로 자리만) |
-| 첨부 최신본(이미지는 본문에서 인라인, 그 외는 링크) | 첨부의 지난 버전, 100MB 초과 파일(`ATTACHMENT_TOO_LARGE`) |
-| 페이지·블로그 댓글(원본 작성자 이름·시각), 답글은 1단계로 | 인라인 댓글의 앵커(페이지 댓글로 강등 + 원문 인용) |
-| 지난 버전 N개(기본 10)를 리비전으로, 편집자 이름·변경 요약 | 스페이스 권한(그룹·역할) — 보고서 요약만 |
-| 페이지 제한(보기/편집) — **미매핑 주체는 요청자 단독 제한**(fail-closed) | 사용자 계정 자체(이메일 대조만; 지금은 org-service에 조회 API가 없어 전부 미매핑 → "이관됨 · 원본 이름" 표시) |
-| 같은 스페이스 안 페이지 링크(제목 기반 `[[제목]]` + ID 기반 재작성) | 다른 스페이스·외부 사이트 링크(원본 URL 유지) |
-
-**프로퍼티**(`platform.wiki.migration.dc.*`): `connect-timeout`(PT10S) · `read-timeout`(PT60S, 워커 lease 5분보다 짧게) · `max-pages`(5000) ·
-`page-size`/`child-page-size`/`comment-page-size`(100/200/100, DC limit 상한 200) · `max-attachment-bytes`(100MB, 파일을 통째로 메모리에 담는다 —
-스트리밍 전엔 올리지 말 것) · `history-versions`(10, 0이면 현재본만) · `max-history-version-bytes`(2MB).
-워커(`platform.wiki.migration-worker.*`): `enabled` · `lease`(PT5M) · `retry-backoff`(PT30S)~`retry-backoff-max`(PT30M) · `max-attempts`(5) · `batch-size`(25).
-
-**원본 부하**: 페이지당 본문 1회 + 첨부 수 + 댓글 묶음 수 + 지난 버전 N회를 호출한다. 500페이지·10버전이면 5,000회가 더 붙는다 —
-운영 중인 DC라면 `history-versions`를 낮추거나 업무 외 시간에 돌린다. 429/5xx는 지수 백오프로 재시도한다.
+- 잡 원장 테이블(`migration_*`)은 V37에서 지웠다. 위키가 갱신하지 않는 원장을 들고 있으면
+  엔진 쪽 원장과 갈라진 사본이 된다.
+- `page.imported_author_name` / `imported_source_url`은 남는다. 잡 원장이 아니라 문서 자신의
+  속성이고("원본 작성자를 우리 계정에서 못 찾았다"), import API가 지금도 채운다.
+- 관리 화면은 wiki-front `/admin/migrations`(전역 관리자)에 그대로 있고, 호출 대상만
+  `/api/migration/**`으로 바뀌었다.
 
 ## 환경 변수
 
@@ -344,10 +254,6 @@ wiki-front `/admin/migrations`(전역 관리자). ⚠️ 실기 DC로 실측하�
 | `WIKI_MAX_ATTACHMENT_MB` | `20` | 파일·요청 최대 크기(MB) |
 | `WIKI_PENDING_ATTACHMENT_RETENTION` | `PT24H` | PENDING 첨부 정리 유예 |
 | `WIKI_COLLABORATION_TICKET_TTL` | `PT1M` | WebSocket 접속용 1회 ticket TTL(최대 5분) |
-| `platform.wiki.migration-worker.enabled` | `true` | migration worker 스케줄러 on/off |
-| `platform.wiki.migration-worker.lease` | `PT5M` | item 점유 lease(노드 장애 회수 지연) |
-| `platform.wiki.migration-worker.max-attempts` | `5` | dead letter 전 최대 시도 횟수 |
-| `platform.wiki.migration-worker.retry-backoff[-max]` | `PT30S` / `PT30M` | 지수 백오프 기준·상한 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `WIKI_EUREKA_ENABLED` | `true`(docker) | Compose 다중 노드 REST 로드밸런싱 등록 |
 | `DOCS_IMPORT_TOKEN` | 빈 값 | docs 프로필 임포터 토큰. 비면 쓰기 경로 전면 차단 |
@@ -373,7 +279,7 @@ src/main/java/com/platform/wikibackend/
 ├─ page/         페이지·revision REST와 도메인 로직
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
-├─ migration/    Document IR 검증·job REST와 worker 실행기(단계적 외부 문서 가져오기)
+├─ importapi/    이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행

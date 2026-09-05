@@ -35,14 +35,12 @@ platform:
   wiki:
     storage:
       write-backend: local   # 노트에 이미지가 없다 — S3/MinIO를 붙이지 않는다
-    # 스케줄러 5종 정지: 쓰기가 임포터뿐이라 정리할 것이 생기지 않는다.
+    # 스케줄러 4종 정지: 쓰기가 임포터뿐이라 정리할 것이 생기지 않는다.
     trash:
       enabled: false
     revisions:
       enabled: false
     attachment-reconciliation:
-      enabled: false
-    migration-worker:
       enabled: false
     mail:
       digest-enabled: false

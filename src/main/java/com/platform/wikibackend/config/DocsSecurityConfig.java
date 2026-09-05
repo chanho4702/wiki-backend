@@ -1,8 +1,6 @@
 package com.platform.wikibackend.config;
 
 import com.platform.wikibackend.event.EventPublisher;
-import com.platform.wikibackend.migration.confluence.restriction.MigrationPrincipalResolver;
-import com.platform.wikibackend.migration.confluence.restriction.UnmappedMigrationPrincipalResolver;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;
@@ -69,7 +67,6 @@ public class DocsSecurityConfig {
                         .requestMatchers("/api/wiki/stars", "/api/wiki/stars/**").denyAll()
                         .requestMatchers("/api/wiki/recent").denyAll()
                         .requestMatchers("/api/wiki/tasks", "/api/wiki/tasks/**").denyAll()
-                        .requestMatchers("/api/wiki/migrations", "/api/wiki/migrations/**").denyAll()
                         // 전역 감사 로그는 accessibleSpaces().all()로 전역 관리자를 판정한다 —
                         // PublicReadPermissionClient가 all=true를 주므로 익명에게 열려 버린다.
                         // 스페이스별 감사(/spaces/*/audit)는 ADMIN 판정이라 이미 닫혀 있다.
@@ -103,12 +100,6 @@ public class DocsSecurityConfig {
     PrincipalDirectory docsPrincipalDirectory() {
         return principals -> {
         };
-    }
-
-    /** 조회할 계정도 팀도 없는 인스턴스다. 이관이 돌더라도 아무도 대조되지 않는다(fail-closed). */
-    @Bean
-    MigrationPrincipalResolver docsMigrationPrincipalResolver() {
-        return new UnmappedMigrationPrincipalResolver();
     }
 
     /**

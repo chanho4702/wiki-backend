@@ -5,18 +5,6 @@ import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.PageStatus;
 import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.domain.Space;
-import com.platform.wikibackend.migration.model.MigrationIssue;
-import com.platform.wikibackend.migration.model.MigrationIssueSeverity;
-import com.platform.wikibackend.migration.model.MigrationItem;
-import com.platform.wikibackend.migration.model.MigrationItemStatus;
-import com.platform.wikibackend.migration.model.MigrationJob;
-import com.platform.wikibackend.migration.model.MigrationJobMode;
-import com.platform.wikibackend.migration.model.MigrationProvider;
-import com.platform.wikibackend.migration.repository.MigrationIssueRepository;
-import com.platform.wikibackend.migration.repository.MigrationItemRepository;
-import com.platform.wikibackend.migration.repository.MigrationJobRepository;
-import com.platform.wikibackend.migration.repository.MigrationPayloadRepository;
-import com.platform.wikibackend.migration.repository.MigrationSourceRepository;
 import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
@@ -24,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -64,11 +53,7 @@ class FlywaySchemaValidationTest {
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
     @Autowired PageCommentRepository comments;
-    @Autowired MigrationJobRepository migrationJobs;
-    @Autowired MigrationItemRepository migrationItems;
-    @Autowired MigrationIssueRepository migrationIssues;
-    @Autowired MigrationSourceRepository migrationSources;
-    @Autowired MigrationPayloadRepository migrationPayloads;
+    @Autowired JdbcTemplate jdbc;
 
     /**
      * 컨텍스트가 떴다는 것 자체가 "마이그레이션 결과 스키마 == 엔티티 매핑"의 증거다
@@ -105,54 +90,6 @@ class FlywaySchemaValidationTest {
         assertThat(pages.findById(child.getId())).isEmpty();
     }
 
-    @Test
-    void V6_migration_checkpoint가_실제_Postgres에_저장된다() {
-        Space space = spaces.save(Space.of("migration", "마이그레이션", null, 1L));
-        MigrationJob job = migrationJobs.save(MigrationJob.create(
-                MigrationProvider.NOTION, "workspace-acme", space.getId(), 1L, MigrationJobMode.DRY_RUN));
-        MigrationItem item = migrationItems.save(MigrationItem.pending(
-                job.getId(), "page-42", "v1", "d".repeat(64),
-                "imports/notion/job-1/page-42.json"));
-        migrationIssues.save(MigrationIssue.of(
-                job.getId(), item.getId(), MigrationIssueSeverity.WARNING,
-                "UNSUPPORTED_BLOCK", "/blocks/4"));
-
-        assertThat(migrationItems.findByJobIdAndSourceKey(job.getId(), item.getSourceKey()))
-                .get()
-                .extracting(MigrationItem::getId)
-                .isEqualTo(item.getId());
-        assertThat(migrationIssues.findByJobIdOrderByIdAsc(job.getId())).hasSize(1);
-    }
-
-    /**
-     * V34 원본·산출물 — job cascade와 payload의 (item, kind) 유니크는 실제 Postgres에서만 확인된다.
-     * H2 스키마(create-drop)에는 FK도 CHECK도 없다.
-     */
-    @Test
-    void V34_원본과_산출물은_job_삭제를_cascade로_따라간다() {
-        Space space = spaces.save(Space.of("v34", "이관", null, 1L));
-        MigrationJob job = migrationJobs.saveAndFlush(MigrationJob.create(
-                MigrationProvider.CONFLUENCE_DC, "wiki.example.com", space.getId(), 1L,
-                MigrationJobMode.IMPORT));
-        migrationSources.saveAndFlush(com.platform.wikibackend.migration.model.MigrationSource.of(
-                job.getId(), "https://wiki.example.com", "ENG", "pat-token"));
-        MigrationItem item = migrationItems.saveAndFlush(MigrationItem.pending(
-                job.getId(), "10001", "27", "f".repeat(64), "dc:content/10001"));
-        migrationPayloads.saveAndFlush(com.platform.wikibackend.migration.model.MigrationPayload.of(
-                item.getId(), com.platform.wikibackend.migration.model.MigrationPayloadKind.SNAPSHOT,
-                "{\"snapshotVersion\":1}"));
-
-        assertThat(migrationSources.findById(job.getId())).isPresent();
-        assertThat(migrationPayloads.findByItemIdAndKind(item.getId(),
-                com.platform.wikibackend.migration.model.MigrationPayloadKind.SNAPSHOT)).isPresent();
-
-        migrationJobs.deleteById(job.getId());
-        migrationJobs.flush();
-
-        assertThat(migrationSources.findById(job.getId())).isEmpty();
-        assertThat(migrationPayloads.count()).isZero();
-    }
-
     /** V8 댓글 — page cascade와 답글 cascade는 실제 Postgres FK에서만 확인된다. */
     @Test
     void V8_댓글은_페이지와_최상위_댓글_삭제를_cascade로_따라간다() {
@@ -167,41 +104,42 @@ class FlywaySchemaValidationTest {
         assertThat(comments.count()).isZero();
     }
 
+
     /**
-     * V7의 lease CHECK는 H2 스키마(create-drop)에는 없다. RUNNING과 소유자/만료가 항상 함께
-     * 움직이는지는 실제 Postgres에서만 확인된다.
+     * V37 — 이관 엔진이 migration-service로 나가면서 잡 원장 테이블이 사라졌다(W29 X4).
+     *
+     * H2는 마이그레이션을 타지 않으므로 DROP이 실제로 도는 곳은 여기뿐이다. 남아 있으면 위키가
+     * 갱신하지 않는 원장이 조용히 늙는다 — 엔진 쪽 원장과 갈라진 사본이 가장 나쁜 상태다.
      */
     @Test
-    void V7_worker_lease는_RUNNING_상태와_함께만_존재한다() {
-        Space space = spaces.save(Space.of("lease", "점유", null, 1L));
-        MigrationJob job = migrationJobs.save(MigrationJob.create(
-                MigrationProvider.NOTION, "workspace-acme", space.getId(), 1L, MigrationJobMode.IMPORT));
-        MigrationItem item = migrationItems.saveAndFlush(MigrationItem.pending(
-                job.getId(), "page-77", "v1", "e".repeat(64), "imports/notion/job-2/page-77.json"));
-        Instant claimedAt = Instant.parse("2026-08-18T09:00:00Z");
+    void V37이_이관_잡_원장_테이블을_전부_지웠다() {
+        for (String table : new String[] {"migration_job", "migration_item", "migration_issue",
+                "migration_object_map", "migration_source", "migration_payload"}) {
+            assertThat(exists(table)).as(table).isFalse();
+        }
+    }
 
-        assertThat(migrationItems.claim(item.getId(), "worker-a", "token-1",
-                claimedAt.plusSeconds(300), claimedAt, MigrationItemStatus.RUNNING,
-                MigrationItemStatus.PENDING, MigrationItemStatus.RETRY_WAIT)).isEqualTo(1);
+    /**
+     * 반대로 page의 이관 표시 컬럼(V36)은 남아야 한다 — 잡 원장이 아니라 문서 자신의 속성이고,
+     * import API가 지금도 채운다.
+     */
+    @Test
+    void 이관_작성자_표시_컬럼은_남아_있다() {
+        Space space = spaces.save(Space.of("kept", "유지", null, 1L));
+        Page page = pages.save(Page.imported(space.getId(), null, "옮겨온 문서", "본문", 1L,
+                Instant.parse("2020-01-02T03:04:05Z"), Instant.parse("2021-01-02T03:04:05Z")));
+        page.markImportedAuthor("Jane Confluence", "https://dc.example.com/x");
+        pages.saveAndFlush(page);
 
-        assertThat(migrationItems.findById(item.getId()).orElseThrow())
-                .satisfies(running -> {
-                    assertThat(running.getStatus()).isEqualTo(MigrationItemStatus.RUNNING);
-                    assertThat(running.getClaimedBy()).isEqualTo("worker-a");
-                    assertThat(running.getClaimToken()).isEqualTo("token-1");
-                    assertThat(running.getLeaseExpiresAt()).isEqualTo(claimedAt.plusSeconds(300));
-                });
+        assertThat(pages.findById(page.getId()).orElseThrow().getImportedAuthorName())
+                .isEqualTo("Jane Confluence");
+    }
 
-        MigrationItem running = migrationItems.findById(item.getId()).orElseThrow();
-        running.scheduleRetry("NOTION_TIMEOUT", claimedAt.plusSeconds(60));
-        migrationItems.saveAndFlush(running);
-
-        assertThat(migrationItems.findById(item.getId()).orElseThrow())
-                .satisfies(waiting -> {
-                    assertThat(waiting.getStatus()).isEqualTo(MigrationItemStatus.RETRY_WAIT);
-                    assertThat(waiting.getClaimedBy()).isNull();
-                    assertThat(waiting.getClaimToken()).isNull();
-                    assertThat(waiting.getLeaseExpiresAt()).isNull();
-                });
+    private boolean exists(String table) {
+        Boolean found = jdbc.queryForObject(
+                "select exists (select 1 from information_schema.tables"
+                        + " where table_schema = 'public' and table_name = ?)",
+                Boolean.class, table);
+        return Boolean.TRUE.equals(found);
     }
 }
