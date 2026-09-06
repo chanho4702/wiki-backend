@@ -78,6 +78,8 @@ public class ImportedPageWriter {
                 source.markdown(), source.authorId(), source.createdAt(), source.updatedAt(),
                 source.type(), history.size() + 1));
         applyImportedAuthor(page, source);
+        // 키는 생성 시 한 번만 붙는다 — 재이관(update)은 이미 붙은 키를 건드리지 않는다.
+        page.markImportKey(source.importKey());
         page.resequence(sortOrderOf(source));
         pages.flush();
 
@@ -287,7 +289,7 @@ public class ImportedPageWriter {
      * 한 문서를 쓰는 데 필요한 값. authorId는 이미 우리 사용자로 결정된 값이고(대조 실패 시
      * 잡 요청자), authorDisplayName은 원본에 적혀 있던 이름 그대로다.
      */
-    public record ImportedPage(long spaceId, Long parentId, String externalObjectId, String title,
+    public record ImportedPage(long spaceId, Long parentId, String importKey, String title,
                                String markdown, long authorId, String authorDisplayName,
                                /** 원본 작성자를 우리 계정으로 찾았는가. 못 찾았으면 이름·원본 주소를 문서에 남긴다(M3). */
                                boolean authorMapped,

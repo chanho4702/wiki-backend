@@ -24,6 +24,7 @@ import com.platform.wikibackend.repository.PageLabelRepository;
 import com.platform.wikibackend.repository.PageRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -69,6 +70,15 @@ public class WikiImportService {
 
     // ── 페이지 ──
 
+    /**
+     * 새 문서. importKey가 오면 멱등이다 — 같은 키의 문서가 이미 있으면 아무것도 쓰지 않고
+     * 그 문서를 돌려준다(EXISTING).
+     *
+     * 방어가 두 겹인 이유는 경합이다. 조회 후 INSERT 사이에 다른 요청이 같은 키를 넣을 수 있고
+     * (잡 재시도, 두 워커가 같은 항목을 집는 경우), 그때는 부분 유니크 인덱스(V38)가 거부한다.
+     * 그 거부를 오류로 올리면 엔진은 "실패"로 보고 또 재시도한다 — 실제로는 이미 들어가 있는데도.
+     * 그래서 위반을 잡아 다시 찾아보고 같은 결론(EXISTING)으로 수렴시킨다.
+     */
     public WikiImportResponses.PageWritten createPage(long actorId, WikiImportRequests.CreatePage req) {
         long spaceId = required(req.spaceId(), "spaceId");
         requireSpace(spaceId);
@@ -79,18 +89,32 @@ public class WikiImportService {
         Instant updatedAt = required(req.updatedAt(), "updatedAt");
         boolean mapped = req.authorId() != null;
         long authorId = mapped ? req.authorId() : actorId;
+        // 저장 전에 다듬는다 — 조회 키와 저장 키가 다르면 멱등이 성립하지 않는다.
+        String importKey = normalizeKey(req.importKey());
 
-        ImportedPage source = new ImportedPage(spaceId, req.parentId(), null,
+        Optional<WikiImportResponses.PageWritten> already = existingByKey(importKey);
+        if (already.isPresent()) {
+            return already.get();
+        }
+
+        ImportedPage source = new ImportedPage(spaceId, req.parentId(), importKey,
                 required(req.title(), "title"), text(req.content()), authorId,
                 req.importedAuthorName(), mapped, req.sourceUrl(), createdAt, updatedAt,
                 req.labels(), req.sortOrder(), req.type() == null ? PageType.PAGE : req.type(),
                 history(req.revisions()));
 
-        ImportedPageWriter.ImportResult result = writer.create(source);
+        ImportedPageWriter.ImportResult result;
+        try {
+            result = writer.create(source);
+        } catch (DataIntegrityViolationException conflict) {
+            // 경합. 방금 누가 같은 키로 넣었다는 뜻이므로 그 문서가 정답이다.
+            return existingByKey(importKey).orElseThrow(() -> conflict);
+        }
         Page page = requirePage(result.pageId());
         // 문서 한 건당 감사 기록 한 줄 — 첨부·댓글·본문 정리까지 남기면 목록이 이관으로 덮인다.
         audit.recordPage(actorId, AuditAction.IMPORTED, page, "import:page.create");
-        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), result.issues());
+        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(),
+                WikiImportResponses.PageWritten.CREATED, result.issues());
     }
 
     public WikiImportResponses.PageWritten reimportPage(long actorId, long pageId,
@@ -107,7 +131,8 @@ public class WikiImportService {
 
         ImportedPageWriter.ImportResult result = writer.update(pageId, source, req.changeNote());
         Page page = requirePage(pageId);
-        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(), result.issues());
+        return new WikiImportResponses.PageWritten(page.getId(), page.getVersion(),
+                WikiImportResponses.PageWritten.UPDATED, result.issues());
     }
 
     public WikiImportResponses.ContentWritten rewriteContent(long actorId, long pageId,
@@ -210,7 +235,8 @@ public class WikiImportService {
                 .toList();
         return new WikiImportResponses.PageView(page.getId(), page.getSpaceId(), page.getParentId(),
                 page.getTitle(), page.getType(), page.getContent().length(), page.getVersion(),
-                page.getSortOrder(), names, files, commentRows.countByPageId(pageId));
+                page.getSortOrder(), page.getImportKey(), names, files,
+                commentRows.countByPageId(pageId));
     }
 
     @Transactional(readOnly = true)
@@ -263,6 +289,25 @@ public class WikiImportService {
         // 타입 문자열은 여기서 검증한다 — 저장 직전에 터지면 절반만 걸린 제한이 남는다.
         raw.forEach(RestrictionPrincipal::toType);
         return raw;
+    }
+
+    /** 키는 엔진이 정하는 불투명한 문자열이다 — 다듬기만 하고 형식은 보지 않는다. */
+    private static String normalizeKey(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** 같은 키의 살아 있는 문서(휴지통 행은 @SQLRestriction이 뺀다 — 부분 유니크 인덱스와 같은 범위). */
+    private Optional<WikiImportResponses.PageWritten> existingByKey(String importKey) {
+        if (importKey == null) {
+            return Optional.empty();
+        }
+        return pages.findByImportKey(importKey)
+                .map(page -> new WikiImportResponses.PageWritten(page.getId(), page.getVersion(),
+                        WikiImportResponses.PageWritten.EXISTING, List.of()));
     }
 
     private Page requirePage(long pageId) {

@@ -22,8 +22,18 @@ public final class WikiImportResponses {
     public record Issue(String severity, String code) {
     }
 
-    /** POST /pages, PUT /pages/{id} */
-    public record PageWritten(long pageId, int version, List<Issue> issues) {
+    /**
+     * POST /pages, PUT /pages/{id}.
+     *
+     * outcome: CREATED(새로 만들었다) / EXISTING(같은 importKey의 문서가 이미 있어 그대로
+     * 돌려준다 — 아무것도 쓰지 않았다) / UPDATED(재이관으로 새 리비전을 쌓았다). 엔진이 자기
+     * 원장에 "이번 실행에서 실제로 무엇이 일어났는가"를 적을 때 쓴다.
+     */
+    public record PageWritten(long pageId, int version, String outcome, List<Issue> issues) {
+
+        public static final String CREATED = "CREATED";
+        public static final String EXISTING = "EXISTING";
+        public static final String UPDATED = "UPDATED";
     }
 
     /** PUT /pages/{id}/content — changed=false면 본문이 이미 같아 아무것도 하지 않았다. */
@@ -55,8 +65,9 @@ public final class WikiImportResponses {
 
     /** GET /pages/{id} — 이관 검증(VERIFY)이 읽는 요약. 본문은 길이만 준다. */
     public record PageView(long pageId, long spaceId, Long parentId, String title, PageType type,
-                           int contentLength, int version, long sortOrder, List<String> labels,
-                           List<AttachmentView> attachments, long commentCount) {
+                           int contentLength, int version, long sortOrder, String importKey,
+                           List<String> labels, List<AttachmentView> attachments,
+                           long commentCount) {
     }
 
     public record AttachmentView(long id, String filename, String checksum) {

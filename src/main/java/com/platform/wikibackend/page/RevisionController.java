@@ -3,6 +3,8 @@ package com.platform.wikibackend.page;
 import com.platform.wikibackend.page.dto.PageResponse;
 import com.platform.wikibackend.page.dto.RevisionMeta;
 import com.platform.wikibackend.page.dto.RevisionResponse;
+import com.platform.wikibackend.page.dto.RevisionRestoreRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -36,10 +38,15 @@ public class RevisionController {
         return pages.getRevision(userId(jwt), pageId, version);
     }
 
+    /**
+     * 본문은 통째로 선택이다(`required = false`). 본문 없이 부르는 클라이언트가 이미 있고, 기본
+     * 요약("v{n} 버전으로 복원")만으로도 복원은 읽힌다 — 요약을 실어 보내면 그것이 이긴다.
+     */
     @Operation(summary = "과거 버전 내용으로 되돌린다 — 되돌린 것도 새 버전으로 쌓인다")
     @PostMapping("/{version}/restore")
     public PageResponse restore(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
-                                @Parameter(description = "되돌릴 버전 번호") @PathVariable Integer version) {
-        return pages.restore(userId(jwt), pageId, version);
+                                @Parameter(description = "되돌릴 버전 번호") @PathVariable Integer version,
+                                @RequestBody(required = false) @Valid RevisionRestoreRequest req) {
+        return pages.restore(userId(jwt), pageId, version, req == null ? null : req.changeNote());
     }
 }

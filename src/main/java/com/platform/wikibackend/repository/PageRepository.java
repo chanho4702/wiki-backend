@@ -15,6 +15,12 @@ import java.util.List;
 import java.util.Optional;
 
 public interface PageRepository extends JpaRepository<Page, Long> {
+
+    /**
+     * 이관 멱등 키로 찾는다(V38). @SQLRestriction 덕분에 휴지통 행은 보이지 않는다 —
+     * 부분 유니크 인덱스가 `deleted_at IS NULL`인 것과 같은 범위다.
+     */
+    java.util.Optional<Page> findByImportKey(String importKey);
     List<Page> findBySpaceIdOrderById(Long spaceId);
 
     /** 형제 그룹 — 루트는 parentId가 null이라 파생 쿼리로 못 쓰고 명시 비교한다(ALM findRankGroup과 동형). */

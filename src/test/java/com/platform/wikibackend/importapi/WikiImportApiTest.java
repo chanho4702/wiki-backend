@@ -284,6 +284,73 @@ class WikiImportApiTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ── 멱등 키 ──
+
+    @Test
+    void 같은_importKey로_두_번_보내면_문서는_하나이고_두_번째는_EXISTING이다() throws Exception {
+        ObjectNode body = createPageBody();
+        body.put("importKey", "confluence-dc:wiki.example.com:10001");
+
+        JsonNode first = postJson("/pages", body);
+        assertThat(first.path("outcome").asText()).isEqualTo("CREATED");
+
+        JsonNode second = postJson("/pages", body);
+        assertThat(second.path("outcome").asText()).isEqualTo("EXISTING");
+        assertThat(second.path("pageId").asLong()).isEqualTo(first.path("pageId").asLong());
+        assertThat(second.path("version").asInt()).isEqualTo(first.path("version").asInt());
+        assertShape(second, fixture("create-page.existing.response.json"));
+
+        assertThat(pages.count()).isEqualTo(1);
+        // 두 번째 요청은 아무것도 쓰지 않았다 — 리비전도 감사도 이벤트도 한 벌뿐이다.
+        assertThat(revisions.findByPageIdOrderByVersionDesc(first.path("pageId").asLong())).hasSize(3);
+        assertThat(auditLogs.count()).isEqualTo(1);
+        assertThat(events.events).hasSize(1);
+    }
+
+    @Test
+    void importKey가_없으면_같은_문서라도_매번_새로_만든다() throws Exception {
+        JsonNode first = create();
+        JsonNode second = create();
+
+        assertThat(second.path("pageId").asLong()).isNotEqualTo(first.path("pageId").asLong());
+        assertThat(second.path("outcome").asText()).isEqualTo("CREATED");
+        assertThat(pages.count()).isEqualTo(2);
+    }
+
+    @Test
+    void 공백뿐인_importKey는_없는_것과_같다() throws Exception {
+        ObjectNode body = createPageBody();
+        body.put("importKey", "   ");
+
+        long pageId = postJson("/pages", body).path("pageId").asLong();
+        assertThat(pages.findById(pageId).orElseThrow().getImportKey()).isNull();
+    }
+
+    @Test
+    void importKey는_다듬어_저장되고_같은_키로_다시_찾힌다() throws Exception {
+        ObjectNode body = createPageBody();
+        body.put("importKey", "  confluence-dc:wiki.example.com:10002  ");
+
+        JsonNode first = postJson("/pages", body);
+        assertThat(pages.findById(first.path("pageId").asLong()).orElseThrow().getImportKey())
+                .isEqualTo("confluence-dc:wiki.example.com:10002");
+
+        // 다듬기 전후가 다르면 조회 키와 저장 키가 갈라져 멱등이 깨진다.
+        ObjectNode tight = createPageBody();
+        tight.put("importKey", "confluence-dc:wiki.example.com:10002");
+        assertThat(postJson("/pages", tight).path("outcome").asText()).isEqualTo("EXISTING");
+    }
+
+    @Test
+    void 검증_조회는_importKey를_돌려준다() throws Exception {
+        ObjectNode body = createPageBody();
+        body.put("importKey", "confluence-dc:wiki.example.com:10003");
+        long pageId = postJson("/pages", body).path("pageId").asLong();
+
+        assertThat(getJson("/pages/" + pageId).path("importKey").asText())
+                .isEqualTo("confluence-dc:wiki.example.com:10003");
+    }
+
     // ── 재이관 ──
 
     @Test
@@ -293,6 +360,7 @@ class WikiImportApiTest {
         JsonNode response = putJson("/pages/" + pageId, fixture("reimport-page.request.json"));
 
         assertThat(response.path("version").asInt()).isEqualTo(4);
+        assertThat(response.path("outcome").asText()).isEqualTo("UPDATED");
         Page page = pages.findById(pageId).orElseThrow();
         assertThat(page.getTitle()).isEqualTo("설계 문서 (개정)");
         assertThat(page.getUpdatedAt()).isEqualTo(Instant.parse("2022-02-03T04:05:06Z"));
@@ -549,10 +617,16 @@ class WikiImportApiTest {
         return postJson("/pages", createPageBody());
     }
 
-    /** 픽스처의 자리 표시(-1)를 이 테스트의 실제 스페이스로 갈아 끼운다. */
+    /**
+     * 픽스처의 자리 표시(-1)를 이 테스트의 실제 스페이스로 갈아 끼운다.
+     *
+     * importKey는 비운다 — 대부분의 테스트가 같은 문서를 여러 번 만들고, 키가 살아 있으면 두
+     * 번째부터 EXISTING으로 떨어진다. 멱등 자체는 전용 테스트가 키를 넣어 확인한다.
+     */
     private ObjectNode createPageBody() {
         ObjectNode body = fixture("create-page.request.json");
         body.put("spaceId", spaceId);
+        body.putNull("importKey");
         return body;
     }
 

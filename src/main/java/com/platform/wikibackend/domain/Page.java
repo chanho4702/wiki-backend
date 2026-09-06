@@ -131,6 +131,17 @@ public class Page {
     @Column(name = "imported_source_url", length = 1024)
     private String importedSourceUrl;
 
+    /**
+     * 이관 멱등 키(V38) — 이관으로 들어온 문서에만 값이 있다. 엔진이 정하는 불투명한 문자열이고
+     * (예: `confluence-dc:{instanceId}:{objectId}`) 위키는 형식을 해석하지 않는다.
+     *
+     * 살아 있는 문서 사이에서 유일하다(부분 유니크 인덱스). 같은 원본이 두 번 들어오면 두 번째
+     * 요청은 새 문서를 만들지 않고 이미 있는 문서를 가리킨다 — 중복 문서는 검색·트리·백링크를
+     * 전부 두 벌로 만들고 사람이 손으로 지우기 전까지 남는다.
+     */
+    @Column(name = "import_key", length = 200)
+    private String importKey;
+
     public static Page of(Long spaceId, Long parentId, String title, String content, Long authorId) {
         return of(spaceId, parentId, title, content, authorId, PageType.PAGE, PageStatus.PUBLISHED);
     }
@@ -185,6 +196,15 @@ public class Page {
         p.updatedAt = updatedAt;
         p.version = version < 1 ? 1 : version;
         return p;
+    }
+
+    /**
+     * 이관 멱등 키를 붙인다(V38). 생성 시 한 번만 — 이미 들어온 문서의 키를 바꿀 일은 없다
+     * (바꾸면 그 문서는 원본과의 연결을 잃는다).
+     */
+    public void markImportKey(String importKey) {
+        this.importKey = importKey == null || importKey.isBlank() ? null
+                : truncate(importKey.trim(), 200);
     }
 
     /**

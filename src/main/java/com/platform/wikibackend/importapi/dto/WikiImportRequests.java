@@ -27,9 +27,15 @@ public final class WikiImportRequests {
      * authorId가 있으면 그 사람이 쓴 문서가 되고, 없으면 `X-Actor-Id`(잡 요청자)가 작성자로
      * 눕고 importedAuthorName·sourceUrl이 "이관됨 · {원본 이름}" 표시로 남는다(V36).
      * revisions가 오면 그 개수 k만큼 리비전 1..k를 깔고 현재본이 k+1이 된다.
+     *
+     * importKey는 멱등 키다(선택). 같은 키의 문서가 이미 있으면 새로 만들지 않고 그 문서를
+     * 돌려준다(outcome=EXISTING) — 잡 재시도나 두 워커가 같은 항목을 집었을 때 원본 하나가
+     * 문서 두 벌이 되는 것을 막는 최종 방어선이다. 형식은 엔진이 정하고 위키는 해석하지 않는다
+     * (예: `confluence-dc:{instanceId}:{objectId}`).
      */
     public record CreatePage(Long spaceId,
                              Long parentId,
+                             String importKey,
                              PageType type,
                              String title,
                              String content,

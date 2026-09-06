@@ -670,6 +670,17 @@ public class PageService {
 
     /** 복원 = 해당 리비전 내용으로 새 버전 생성(이력 보존 — 스펙). */
     public PageResponse restore(long userId, long pageId, int version) {
+        return restore(userId, pageId, version, null);
+    }
+
+    /**
+     * 사람이 남긴 요약과 함께 복원한다(W30).
+     *
+     * 요약이 비어 있으면 기본값("v{n} 버전으로 복원")을 쓴다 — 어느 버전에서 되돌렸는지는 사람이
+     * 무엇을 적었든 이력에 남아야 하는 정보다. 사람이 적었으면 그것이 이긴다: 왜 되돌렸는지는
+     * 서버가 알 수 없고, 그 문장이 다음 사람에게 더 쓸모 있다.
+     */
+    public PageResponse restore(long userId, long pageId, int version, String changeNote) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
@@ -677,7 +688,10 @@ public class PageService {
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);
         // 복원도 이력에 남는다 — 어느 버전에서 되돌렸는지가 다음 사람에게 가장 중요한 정보다.
-        revisions.save(PageRevision.snapshotOf(p, "v" + version + " 버전으로 복원").withEditorName(actorNames.current()));
+        String note = changeNote == null || changeNote.isBlank()
+                ? "v" + version + " 버전으로 복원"
+                : changeNote;
+        revisions.save(PageRevision.snapshotOf(p, note).withEditorName(actorNames.current()));
         taskSync.sync(p); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
         labelService.reindexLinks(p);
         events.afterCommit(WikiEvents.pageUpdated(userId, p));

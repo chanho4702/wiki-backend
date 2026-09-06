@@ -75,6 +75,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
 기록해 이력을 보존한다. 부모 변경 시 자기 자손 아래로 이동하는 순환도 거부한다.
+복원은 선택 본문 `{"changeNote": "..."}`를 받는다 — 비우거나 아예 보내지 않으면 서버가
+`"v{n} 버전으로 복원"`을 남긴다. 사람이 적었으면 그것이 이긴다(왜 되돌렸는지는 서버가 모른다).
 
 공동 초안 확정은 `expectedPageVersion`과 `expectedGeneration`을 모두 검사한다. page와
 `collaboration_document` metadata를 같은 PostgreSQL transaction에서 row lock한 뒤 page revision과
@@ -142,15 +144,15 @@ alm-backend·org-service와 맞춘 플랫폼 공통 규칙이라 여기만 바�
 
 | 메서드 | 경로 | 본문 → 응답 |
 |---|---|---|
-| POST | `/pages` | `{spaceId, parentId?, type, title, content, createdAt, updatedAt, authorId?, importedAuthorName?, sourceUrl?, sortOrder?, labels[], revisions?}` → `{pageId, version, issues[]}` |
-| PUT | `/pages/{id}` | `{title, content, updatedAt, editorId?, editorName, changeNote, sourceUrl?, labels[]}` → `{pageId, version, issues[]}` |
+| POST | `/pages` | `{spaceId, parentId?, importKey?, type, title, content, createdAt, updatedAt, authorId?, importedAuthorName?, sourceUrl?, sortOrder?, labels[], revisions?}` → `{pageId, version, outcome, issues[]}` |
+| PUT | `/pages/{id}` | `{title, content, updatedAt, editorId?, editorName, changeNote, sourceUrl?, labels[]}` → `{pageId, version, outcome, issues[]}` |
 | PUT | `/pages/{id}/content` | `{content, bumpVersion, changeNote?}` → `{pageId, version, changed}` |
 | PUT | `/pages/{id}/order` | `{sortOrder}` → `{pageId, sortOrder, changed}` |
 | POST | `/pages/{id}/attachments` | multipart `file` + `filename`·`contentType`·`checksum`·`sourceVersion` → `{attachmentId, inlineUrl, downloadUrl, outcome}` |
 | POST | `/pages/{id}/comments` | `{parentCommentId?, authorId?, authorName, body, createdAt}` → `{commentId}` |
 | GET | `/comments/{id}` | → `{commentId, pageId, parentCommentId, createdAt}` (없으면 404) |
 | PUT | `/pages/{id}/restrictions` | `{view:[{type,id}], edit:[...]}` → 204 |
-| GET | `/pages/{id}` | → `{pageId, spaceId, parentId, title, type, contentLength, version, sortOrder, labels[], attachments[{id,filename,checksum}], commentCount}` |
+| GET | `/pages/{id}` | → `{pageId, spaceId, parentId, title, type, contentLength, version, sortOrder, importKey, labels[], attachments[{id,filename,checksum}], commentCount}` |
 | GET | `/spaces/{id}/pages?title=` | → `{pages:[{pageId, title, type}]}` (중복이면 여러 건) |
 | GET | `/spaces/{id}` | → `{spaceId, key, name}` |
 
@@ -158,6 +160,13 @@ alm-backend·org-service와 맞춘 플랫폼 공통 규칙이라 여기만 바�
 
 - `authorId`(댓글은 `authorId`, 재이관은 `editorId`)가 있으면 그 사람이 쓴 것이 되고, 없으면
   `X-Actor-Id`가 작성자로 눕고 원본 이름이 표시 스냅샷으로 남는다.
+- `importKey`는 멱등 키다(선택). 같은 키의 **살아 있는** 문서가 이미 있으면 아무것도 쓰지 않고
+  그 문서를 돌려준다(`outcome: "EXISTING"`). 새로 만들면 `CREATED`, 재이관은 `UPDATED`다.
+  형식은 엔진이 정하고 위키는 해석하지 않는다(예: `confluence-dc:{instanceId}:{objectId}`).
+  방어는 두 겹이다: 사전 조회와, 그 사이를 파고드는 경합을 막는 부분 유니크 인덱스(V38).
+  유니크 위반은 오류로 올리지 않고 다시 찾아 `EXISTING`으로 수렴시킨다 — 오류로 올리면 엔진이
+  "실패"로 보고 이미 들어간 문서를 또 넣으려 든다. 휴지통으로 간 문서의 키는 풀려, 버린 문서를
+  다시 이관하면 새로 만들어진다.
 - `revisions`가 오면 리비전 1..k를 깔고 현재본이 k+1이 된다. 요청의 `version`은 **순서를 정할
   때만** 쓰이고 실제 번호는 서버가 1부터 다시 매긴다.
 - `bumpVersion=false`는 버전을 올리지 않고 현재 리비전 본문까지 함께 눌러 이력과 현재를

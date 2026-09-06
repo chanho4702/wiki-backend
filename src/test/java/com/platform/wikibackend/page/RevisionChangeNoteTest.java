@@ -115,6 +115,61 @@ class RevisionChangeNoteTest {
                 .andExpect(jsonPath("$[0].changeNote").value("v1 버전으로 복원"));
     }
 
+    /**
+     * 본문 없는 POST — wiki-front가 changeNote 없이 부를 때의 모양이다(어댑터가 본문을 아예 싣지
+     * 않는다). Content-Type도 없으므로 그 요청이 415로 튕기지 않는지까지 함께 본다.
+     */
+    @Test
+    void 복원_본문이_없으면_기본_요약이_남는다() throws Exception {
+        update("2번째", 1, "");
+
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/revisions/1/restore")
+                        .with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/wiki/pages/" + pageId + "/revisions").with(asUser(EDITOR, "Alice")))
+                .andExpect(jsonPath("$[0].changeNote").value("v1 버전으로 복원"));
+    }
+
+    @Test
+    void 복원_요약을_보내면_그것이_이력에_남는다() throws Exception {
+        update("2번째", 1, "");
+
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/revisions/1/restore")
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"changeNote\":\"장애 전 상태로 되돌림\"}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/wiki/pages/" + pageId + "/revisions").with(asUser(EDITOR, "Alice")))
+                .andExpect(jsonPath("$[0].version").value(3))
+                .andExpect(jsonPath("$[0].changeNote").value("장애 전 상태로 되돌림"));
+    }
+
+    /** 공백만 적은 것은 안 적은 것이다 — 빈 요약을 남기면 화면이 빈 칩을 그린다. */
+    @Test
+    void 복원_요약이_공백뿐이면_기본_요약으로_돌아간다() throws Exception {
+        update("2번째", 1, "");
+
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/revisions/1/restore")
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"changeNote\":\"   \"}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/wiki/pages/" + pageId + "/revisions").with(asUser(EDITOR, "Alice")))
+                .andExpect(jsonPath("$[0].changeNote").value("v1 버전으로 복원"));
+    }
+
+    @Test
+    void 복원_요약도_길이_상한을_지킨다() throws Exception {
+        mvc.perform(post("/api/wiki/pages/" + pageId + "/revisions/1/restore")
+                        .with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"changeNote\":\"" + "가".repeat(501) + "\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void 너무_긴_요약은_거부한다() throws Exception {
         String tooLong = "가".repeat(501);

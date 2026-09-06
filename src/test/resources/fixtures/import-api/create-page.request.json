@@ -1,6 +1,7 @@
 {
   "spaceId": -1,
   "parentId": null,
+  "importKey": "confluence-dc:wiki.example.com:10001",
   "type": "page",
   "title": "설계 문서",
   "content": "# 설계 문서\n\n원본에서 옮겨온 본문.",
