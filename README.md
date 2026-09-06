@@ -255,7 +255,8 @@ org 불능은 `503`이고, 그 밖의 조회 실패는 warn만 남기고 통과�
 **알림 메일 발송기도 org-service다.** 위키는 SMTP를 직접 말하지 않고 허브의 내부 API에 제목과 본문을
 넘긴다 — `POST /internal/org/mail`(`{to[], subject, text, source:"wiki"}` → 202 `{accepted, disabled}`),
 `GET /internal/org/mail/status`(→ `{enabled}`, 60초 캐시). 인증은 사용자 JWT가 아니라 공유 비밀
-`X-Internal-Token`(`ORG_INTERNAL_TOKEN`)이고, 타임아웃은 연결 2초·읽기 5초다. SMTP 서버·자격증명·TLS·
+`X-Internal-Token`(`ORG_INTERNAL_TOKEN`)이고, 타임아웃은 연결 2초·읽기 5초다. 한 요청의 수신자는
+100명까지라 넘으면 그 크기로 나눠 보낸다 — 잘라내면 101번째 사람만 조용히 알림을 못 받는다. SMTP 서버·자격증명·TLS·
 보내는 주소는 org의 관리 화면이 플랫폼 전체를 하나로 정하고, 재시도와 발송 로그(outbox)도 거기 있다.
 서비스마다 `WIKI_MAIL_*`·`ALM_MAIL_*`로 갈라져 있던 설정이 한 곳으로 모인 결과다.
 

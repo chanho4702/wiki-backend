@@ -166,6 +166,60 @@ class OrgMailClientTest {
         assertThat(sendCalls).isEmpty();
     }
 
+    /**
+     * 허브는 한 요청의 수신자를 100명까지만 받고 넘으면 400이다. 잘라 보내면 101번째 사람만 조용히
+     * 알림을 못 받는다 — 나눠 보내고, 아무도 빠지지 않는지 본다.
+     */
+    @Test
+    void 수신자가_백_명을_넘으면_나눠_보낸다() throws Exception {
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 250; i++) many.add("user" + i + "@org.example");
+
+        assertThat(client().send(many, "제목", "본문")).isTrue();
+
+        assertThat(sendCalls).hasSize(3);
+        List<String> delivered = new java.util.ArrayList<>();
+        for (Recorded call : sendCalls) {
+            JsonNode to = json.readTree(call.body()).get("to");
+            assertThat(to.size()).isLessThanOrEqualTo(100);
+            to.forEach(node -> delivered.add(node.asText()));
+        }
+        assertThat(delivered).containsExactlyElementsOf(many);
+    }
+
+    /** 한 묶음이라도 거절당하면 "보냈다"고 말하지 않는다 — 나머지는 그대로 보낸다. */
+    @Test
+    void 나눠_보내다_한_묶음이_실패하면_false다() {
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 150; i++) many.add("user" + i + "@org.example");
+        sendStatus = 500;
+
+        assertThat(client().send(many, "제목", "본문")).isFalse();
+        assertThat(sendCalls).hasSize(2);
+    }
+
+    /** 꺼진 허브에 남은 묶음까지 던지지 않는다 — 같은 답이 돌아온다. */
+    @Test
+    void 첫_묶음이_꺼짐이면_나머지는_보내지_않는다() {
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 150; i++) many.add("user" + i + "@org.example");
+        sendBody = "{\"accepted\":0,\"disabled\":true}";
+
+        assertThat(client().send(many, "제목", "본문")).isFalse();
+        assertThat(sendCalls).hasSize(1);
+    }
+
+    @Test
+    void 같은_주소는_한_번만_싣는다() throws Exception {
+        assertThat(client().send(List.of("bob@org.example", " bob@org.example ", "carol@org.example"),
+                "제목", "본문")).isTrue();
+
+        JsonNode to = json.readTree(sendCalls.get(0).body()).get("to");
+        assertThat(to).hasSize(2);
+        assertThat(to.get(0).asText()).isEqualTo("bob@org.example");
+        assertThat(to.get(1).asText()).isEqualTo("carol@org.example");
+    }
+
     @Test
     void 주소가_비면_보내지_않는다() {
         OrgMailClient client = client();

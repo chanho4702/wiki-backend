@@ -15,7 +15,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 플랫폼 메일 허브(org-service) 내부 API 클라이언트.
@@ -46,7 +48,10 @@ public class OrgMailClient {
     private static final String SOURCE = "wiki";
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
-    /** 한 요청의 수신자 상한(org 계약). 넘으면 잘라 보낸다 — 통째로 버리는 것보다 낫다. */
+    /**
+     * 한 요청의 수신자 상한(org 계약) — 넘기면 허브가 400으로 거절한다. 잘라내지 않고 이 크기로
+     * 나눠 보낸다: 101번째 사람만 조용히 알림을 못 받는 것이 가장 찾기 어려운 종류의 버그다.
+     */
     private static final int MAX_RECIPIENTS = 100;
     /**
      * "메일이 켜져 있는가"의 캐시 수명. 설정 화면 조회와 커밋 뒤 발송이 매번 물으면 왕복이 붙는다.
@@ -92,12 +97,29 @@ public class OrgMailClient {
     /**
      * 한 통을 허브에 넘긴다. 반환값은 "허브가 받아 큐에 넣었는가"다 — 실제 SMTP 발송은 org의
      * outbox 워커가 하고, 그 결과는 관리 화면의 발송 로그에 남는다.
+     *
+     * <p>수신자가 {@value #MAX_RECIPIENTS}명을 넘으면 그 크기로 나눠 여러 번 부른다. 전부 받아들여져야
+     * {@code true}다 — 한 묶음이라도 거절당하면 "보냈다"고 말하지 않는다.
      */
     public boolean send(List<String> to, String subject, String text) {
         List<String> recipients = clean(to);
         if (recipients.isEmpty()) return false;
         if (!usable()) return false;
 
+        boolean all = true;
+        for (int from = 0; from < recipients.size(); from += MAX_RECIPIENTS) {
+            List<String> chunk = recipients.subList(from, Math.min(from + MAX_RECIPIENTS, recipients.size()));
+            Outcome outcome = post(chunk, subject, text);
+            // 꺼져 있다는 답은 묶음이 아니라 허브의 상태다 — 남은 묶음도 같은 답을 받는다
+            if (outcome == Outcome.DISABLED) return false;
+            if (outcome == Outcome.FAILED) all = false;
+        }
+        return all;
+    }
+
+    private enum Outcome { ACCEPTED, DISABLED, FAILED }
+
+    private Outcome post(List<String> recipients, String subject, String text) {
         ObjectNode body = json.createObjectNode();
         ArrayNode addresses = body.putArray("to");
         recipients.forEach(addresses::add);
@@ -116,22 +138,22 @@ public class OrgMailClient {
             if (response.statusCode() / 100 != 2) {
                 log.warn("메일 허브가 발송을 거절했다: status={} to={} subject={} body={}",
                         response.statusCode(), recipients, subject, response.body());
-                return false;
+                return Outcome.FAILED;
             }
             if (disabled(response.body())) {
                 // 관리 화면에서 꺼 둔 상태다 — 정상이므로 경고하지 않는다(다음 status 조회가 화면에도 반영한다)
                 log.debug("메일 허브가 꺼져 있어 보내지 않는다: to={} subject={}", recipients, subject);
                 cache(false);
-                return false;
+                return Outcome.DISABLED;
             }
-            return true;
+            return Outcome.ACCEPTED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("메일 허브 발송이 중단됐다: to={} subject={}", recipients, subject);
-            return false;
+            return Outcome.FAILED;
         } catch (Exception e) {
             log.warn("메일 허브에 발송을 넘기지 못했다: to={} subject={}", recipients, subject, e);
-            return false;
+            return Outcome.FAILED;
         }
     }
 
@@ -174,16 +196,19 @@ public class OrgMailClient {
         this.cachedAt = System.nanoTime();
     }
 
-    /** 주소를 모르면 부르지 않는다 — 빈 주소는 org에서도 버려진다. */
+    /**
+     * 주소를 모르면 부르지 않는다 — 빈 주소는 org에서도 버려진다. 같은 주소가 두 번 들어오면
+     * 한 번만 남긴다: 한 사람에게 같은 메일을 두 통 보내는 것은 아무에게도 이롭지 않고,
+     * 수신자 상한도 그만큼 헛되이 찬다.
+     */
     private List<String> clean(List<String> to) {
         if (to == null) return List.of();
-        List<String> cleaned = new ArrayList<>();
+        Set<String> unique = new LinkedHashSet<>();
         for (String address : to) {
             if (address == null || address.isBlank()) continue;
-            cleaned.add(address.trim());
-            if (cleaned.size() == MAX_RECIPIENTS) break;
+            unique.add(address.trim());
         }
-        return cleaned;
+        return new ArrayList<>(unique);
     }
 
     private boolean usable() {
