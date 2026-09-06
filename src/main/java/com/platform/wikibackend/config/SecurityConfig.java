@@ -41,6 +41,10 @@ public class SecurityConfig {
                 // 네트워크에서 긁어 간다. 공개 문서 인스턴스(docs 프로필)는 이 체인을 타지 않는다.
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/v3/api-docs", "/v3/api-docs/**").permitAll()
+                        // 헬스·빌드정보 — 게이트웨이의 플랫폼 상태 집계가 컨테이너 네트워크에서
+                        // 토큰 없이 프로브한다. 노출 목록(management.endpoints.web.exposure.include)에
+                        // 이 둘만 있으므로 나머지 /actuator/** 는 애초에 매핑되지 않는다.
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();

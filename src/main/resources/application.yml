@@ -39,6 +39,31 @@ spring:
         jwt:
           jwk-set-uri: ${AUTH_JWKS_URI:http://localhost:9000/.well-known/jwks.json}
 
+management:
+  # 내부망 전용이다. 게이트웨이 라우트는 /api/** 뿐이고 nginx도 /api|oauth2|login|invite|.well-known/
+  # 만 넘기므로 클러스터 밖에서는 /actuator/**에 닿지 않는다. 그 위에 SecurityFilterChain이
+  # health·info 두 경로만 permitAll 한다.
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      # 게이트웨이 헬스 집계가 components.db·components.redis를 읽어 인프라 상태를 판정한다.
+      show-details: always
+  info:
+    build:
+      enabled: true
+  health:
+    # db·redis만 본다. 외부 의존(OpenSearch·S3/MinIO·org gRPC)은 넣지 않는다 — 헬스 프로브가
+    # 그 자체로 부하가 되면 안 되고, 선택 의존이 빠진 배포가 DOWN으로 보이면 경보가 무의미해진다.
+    defaults:
+      enabled: false
+    db:
+      enabled: true
+    redis:
+      enabled: true
+
 springdoc:
   # 내부 전용 표면은 문서에 넣지 않는다. @RestController면 springdoc이 무조건 스캔하므로,
   # 컨트롤러마다 빼는 대신 경로로 한 번에 끊는다 — 나중에 누가 /internal 컨트롤러를 더 만들어도

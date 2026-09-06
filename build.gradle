@@ -41,6 +41,9 @@ dependencies {
     implementation 'com.platform:common-starter:0.16.0'
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    // 헬스·빌드정보만 노출한다(management.endpoints.web.exposure.include). 게이트웨이의
+    // 플랫폼 헬스 집계가 /actuator/health를 컨테이너 네트워크에서만 프로브한다.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -88,4 +91,6 @@ tasks.named('test') {
     // (Gradle은 데몬의 시스템 프로퍼티를 테스트 JVM에 자동으로 전달하지 않는다)
     systemProperty 'golden.write', System.getProperty('golden.write', 'false')
 }
+// /actuator/info의 build.version — 헬스 집계 화면이 서비스별 배포 버전을 여기서 읽는다.
+springBoot { buildInfo() }
 tasks.named('bootJar') { archiveFileName = 'app.jar' }

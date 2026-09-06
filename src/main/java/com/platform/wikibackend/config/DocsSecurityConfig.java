@@ -50,6 +50,9 @@ public class DocsSecurityConfig {
                 .addFilterBefore(new DocsPrincipalFilter(importToken), AuthorizationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // 헬스·빌드정보. 공개 인스턴스도 게이트웨이 상태판에 뜬다 — anyRequest().denyAll()
+                        // 앞에 명시해야 이 체인에서 열린다. 나머지 /actuator/** 는 노출 목록에 없다.
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // 내부 이관 API(W29 X1)는 이 인스턴스에 존재할 이유가 없다. InternalApiSecurityConfig가
                         // docs 프로필에서 빠지므로 이미 이 체인으로 떨어지지만, 규칙을 눈에 보이게 박아
                         // 나중에 누가 체인을 옮겨도 열리지 않게 한다.
@@ -71,6 +74,10 @@ public class DocsSecurityConfig {
                         // PublicReadPermissionClient가 all=true를 주므로 익명에게 열려 버린다.
                         // 스페이스별 감사(/spaces/*/audit)는 ADMIN 판정이라 이미 닫혀 있다.
                         .requestMatchers("/api/wiki/audit/**").denyAll()
+                        // 관리자 현황(설계 §4.1)도 같은 이유로 닫는다 — accessibleSpaces().all()로
+                        // 전역 관리자를 판정하는데 여기서는 그게 익명에게도 true다. 게다가 그 숫자는
+                        // 팀 위키가 아니라 이 인스턴스의 것이라 공개해도 뜻이 없다.
+                        .requestMatchers("/api/wiki/admin/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/api/wiki/**").permitAll()
                         // 라이트 검색 GraphQL — 읽기 질의만 있는 스키마다(mutation 없음).
                         .requestMatchers(HttpMethod.POST, "/graphql").permitAll()

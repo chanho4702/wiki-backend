@@ -19,6 +19,14 @@ spring:
         jwt:
           jwk-set-uri: http://localhost:9000/.well-known/jwks.json
 
+management:
+  health:
+    # 테스트 JVM에는 Redis가 없다(발행기도 platform.events.enabled=false로 꺼져 있다).
+    # 인디케이터를 켜 두면 /actuator/health가 DOWN 503으로 떨어져 경로 자체를 검증하지 못한다 —
+    # Redis 판정은 실 스택에서 본다. H2 데이터소스는 살아 있으므로 db 인디케이터는 그대로 둔다.
+    redis:
+      enabled: false
+
 eureka:
   client:
     enabled: false
