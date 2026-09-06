@@ -207,6 +207,44 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
   collaboration service는 `GETDEL`로 ticket을 원자적으로 한 번만 소비한다. payload 계약은
   `schema/collaboration-ticket-v1.schema.json`이 정본이다.
 
+### 권한 거부 응답 계약
+
+| 상황 | 상태 | 본문 |
+|---|---|---|
+| grant 없음 · 사유 불명 | `403` | `{"error":"VIEW 권한이 필요합니다 (space N)"}` (호출부 문구) |
+| `denied_reason=PENDING` | `403` | `{"error":"승인 대기 중인 계정입니다"}` |
+| `denied_reason=SUSPENDED` | `403` | `{"error":"정지된 계정입니다"}` |
+| `denied_reason=DEACTIVATED` | `403` | `{"error":"비활성된 계정입니다"}` |
+| org-service 불능(`UNAVAILABLE`·`DEADLINE_EXCEEDED`) | `503` | `{"error":"권한 서비스에 연결할 수 없습니다"}` |
+
+`denied_reason`(common-proto 0.16.0)은 **거부 사유이지 장애 신호가 아니다** — 모르는 값은 일반 거부로
+다룬다(값은 앞으로 늘 수 있다). 장애는 gRPC 상태 코드로만 판단하며 `503`이다. 프론트가 이 `503`을
+"권한 없음"으로 그리면 org가 죽은 동안 사용자에게 "당신은 권한이 없다"고 거짓말하게 된다.
+문구는 alm-backend와 같은 문자열이다(`PermissionDecision.accountMessage`가 두 서비스에서 한 벌씩
+같은 값을 낸다) — 같은 org 상태를 서비스마다 다르게 말하면 사용자가 다른 조치를 하게 된다.
+
+계정 상태가 아닌 거부는 각 호출부의 기존 문구를 그대로 낸다: 스페이스 가드는
+`ACTION 권한이 필요합니다 (space N)`, 감사 로그는 `감사 로그는 스페이스 관리자만 볼 수 있습니다`,
+남의 코멘트 삭제는 `본인의 코멘트만 삭제할 수 있습니다`.
+
+판정은 30초 캐시된다(`GrpcPermissionClient`). grant 회수뿐 아니라 **계정 정지·비활성도 그만큼 늦게**
+반영된다.
+
+### 계정 상태 격리
+
+권한 판정은 스페이스를 건드리는 경로만 지킨다 — 즐겨찾기·최근 문서·알림처럼 스페이스 grant를 묻지
+않는 사용자 범위 읽기는 org REST가 막아 둔 승인 대기 계정에게도 열려 있었다. `AccountStatusInterceptor`가
+`/api/wiki/**` 전체에서 요청자의 org 계정 상태를 확인하고 `PENDING`·`SUSPENDED`·`DEACTIVATED`면 위 표와
+같은 문구로 403을 낸다. 상태는 `GetMembers([me])`로 읽고 30초 캐시한다(그만큼 반영이 늦다).
+**org에 아직 그 사람이 없으면 통과**시킨다 — member 행은 첫 org 호출 때 생기고 위키가 먼저 불릴 수 있어서,
+없는 것을 막으면 정상 사용자가 미러링 순서에 따라 무작위로 차단된다(org gRPC의 규칙과 같다).
+org 불능은 `503`이고, 그 밖의 조회 실패는 warn만 남기고 통과시킨다(org 버그를 "계정 정지"로 말하지 않는다 —
+권한이 필요한 경로는 그때도 fail-closed로 닫힌다).
+
+게이트에서 빠지는 경로는 셋이다. `/actuator/**`(헬스체크를 org에 묶으면 org가 죽을 때 위키도 죽은 것으로
+보고된다), `/internal/**`(호출자가 잡 워커라 JWT 주체가 없다), `/graphql`·`/v3/api-docs`(사용자 계정
+격리의 대상이 아니다). `docs` 프로필에는 이 게이트 자체가 없다 — 거기에는 org 채널도 로그인도 없다.
+
 ## 공개 문서 인스턴스(docs 프로필)
 
 같은 이미지를 `SPRING_PROFILES_ACTIVE=docker,docs`로 한 번 더 띄우면 **로그인 없이 읽기만 되는**
@@ -250,7 +288,8 @@ Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·
 | `WIKI_DB_USERNAME` / `WIKI_DB_PASSWORD` | `keycloak` / `keycloak` | DB 자격증명 |
 | `AUTH_JWKS_URI` | `http://localhost:9000/.well-known/jwks.json` | JWT 공개키 |
 | `PLATFORM_ISSUER` / `PLATFORM_AUDIENCE` | `http://localhost:9000` / `platform-api` | JWT 검증 계약 |
-| `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | SPACE 권한 판정 |
+| `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | SPACE 권한 판정·계정 상태 조회 |
+| `ORG_GRPC_DEADLINE_SECONDS` | `5` | org gRPC 호출 데드라인(콜드 스타트 흡수) |
 | `WIKI_GRPC_ENABLED` / `WIKI_GRPC_PORT` | `true` / `9111` | 콘텐츠 조달 gRPC |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | 이벤트 스트림 |
 | `EVENTS_ENABLED` | `true` | 이벤트 발행 on/off |
@@ -289,11 +328,11 @@ src/main/java/com/platform/wikibackend/
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
 ├─ importapi/    이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
-├─ permission/   org-service gRPC 권한 어댑터
+├─ permission/   org-service gRPC 권한·사용자 디렉터리 어댑터
 ├─ grpc/         search-service용 WikiContentService
 ├─ event/        커밋 이후 Redis Streams 발행
 ├─ domain/       Space·Page·PageRevision·Attachment 엔티티
 ├─ repository/   JPA 저장소
-├─ security/     JWT audience 검증
+├─ security/     계정 상태 게이트(/api/wiki/** 인터셉터)
 └─ common/       예외·공통 응답 처리
 ```

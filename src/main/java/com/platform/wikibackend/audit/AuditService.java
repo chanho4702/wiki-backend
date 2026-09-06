@@ -58,8 +58,11 @@ public class AuditService {
      */
     @Transactional(readOnly = true)
     public List<AuditEntry> list(long userId, long spaceId) {
-        if (!permissions.isAllowed(userId, spaceId, WikiAction.ADMIN)) {
-            throw new ForbiddenException("감사 로그는 스페이스 관리자만 볼 수 있습니다");
+        com.platform.wikibackend.permission.PermissionDecision decision =
+                permissions.check(userId, spaceId, WikiAction.ADMIN);
+        if (!decision.allowed()) {
+            String message = decision.accountMessage();
+            throw new ForbiddenException(message == null ? "감사 로그는 스페이스 관리자만 볼 수 있습니다" : message);
         }
         return logs.findBySpace(spaceId, Limit.of(PAGE_SIZE)).stream()
                 .map(AuditEntry::from)

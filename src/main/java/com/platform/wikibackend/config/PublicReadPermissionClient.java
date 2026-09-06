@@ -2,6 +2,7 @@ package com.platform.wikibackend.config;
 
 import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.permission.PermissionDecision;
 import com.platform.wikibackend.permission.WikiAction;
 
 import java.util.Set;
@@ -16,10 +17,16 @@ import java.util.Set;
  */
 public class PublicReadPermissionClient implements PermissionClient {
 
+    /**
+     * 거부 사유는 언제나 빈 문자열이다 — 이 인스턴스에는 org 계정이 없어 "승인 대기"·"정지" 같은
+     * 상태가 존재하지 않는다. 호출부는 자기 맥락의 문구로 403을 낸다.
+     */
     @Override
-    public boolean isAllowed(long userId, long spaceId, WikiAction action) {
-        if (action == WikiAction.VIEW) return true;
-        return userId == DocsPrincipalFilter.IMPORTER_USER_ID;
+    public PermissionDecision check(long userId, long spaceId, WikiAction action) {
+        if (action == WikiAction.VIEW) return PermissionDecision.allow();
+        return userId == DocsPrincipalFilter.IMPORTER_USER_ID
+                ? PermissionDecision.allow()
+                : PermissionDecision.deny("");
     }
 
     /** 스페이스가 전부 공개다 — 목록·검색이 스페이스 화이트리스트로 걸리지 않게 all=true. */

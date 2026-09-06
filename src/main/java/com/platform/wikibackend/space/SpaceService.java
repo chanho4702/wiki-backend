@@ -9,6 +9,7 @@ import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.permission.PermissionDecision;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AttachmentRepository;
 import com.platform.wikibackend.repository.PageCommentRepository;
@@ -150,9 +151,15 @@ public class SpaceService {
     }
 
     public void require(long userId, long spaceId, WikiAction action) {
-        if (!permissions.isAllowed(userId, spaceId, action)) {
-            throw new ForbiddenException(action + " 권한이 필요합니다 (space " + spaceId + ")");
-        }
+        PermissionDecision decision = permissions.check(userId, spaceId, action);
+        if (decision.allowed()) return;
+        // 계정 상태로 막힌 것이면 그 사실을 그대로 말한다 — "EDIT 권한이 필요합니다"는 승인 대기 중인
+        // 사람에게 엉뚱한 조치(스페이스 관리자에게 권한 요청)를 시킨다. 문구는 org 상태와 한 곳에서
+        // 정한다(PermissionDecision.accountMessage).
+        String message = decision.accountMessage();
+        throw new ForbiddenException(message == null
+                ? action + " 권한이 필요합니다 (space " + spaceId + ")"
+                : message);
     }
 
     /**

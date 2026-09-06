@@ -156,8 +156,13 @@ public class CommentService {
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, page);
         boolean isAuthor = comment.getAuthorId().equals(userId);
-        if (!isAuthor && !permissions.isAllowed(userId, page.getSpaceId(), WikiAction.ADMIN)) {
-            throw new ForbiddenException("본인의 코멘트만 삭제할 수 있습니다");
+        if (!isAuthor) {
+            com.platform.wikibackend.permission.PermissionDecision decision =
+                    permissions.check(userId, page.getSpaceId(), WikiAction.ADMIN);
+            if (!decision.allowed()) {
+                String message = decision.accountMessage();
+                throw new ForbiddenException(message == null ? "본인의 코멘트만 삭제할 수 있습니다" : message);
+            }
         }
         // 리액션은 FK 없이 (type, id)로만 매달려 있다 — 지우기 전에 답글 것까지 걷어낸다.
         for (PageComment reply : comments.findByPageIdOrderByCreatedAtAscIdAsc(comment.getPageId())) {

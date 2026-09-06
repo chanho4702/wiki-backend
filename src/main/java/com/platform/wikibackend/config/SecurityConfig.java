@@ -1,8 +1,10 @@
 package com.platform.wikibackend.config;
 
 import com.platform.proto.org.v1.PermissionServiceGrpc;
+import com.platform.wikibackend.permission.GrpcMemberDirectory;
 import com.platform.wikibackend.permission.GrpcPermissionClient;
 import com.platform.wikibackend.permission.GrpcTeamDirectory;
+import com.platform.wikibackend.permission.MemberDirectory;
 import com.platform.wikibackend.permission.GrpcPrincipalDirectory;
 import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;
@@ -50,20 +52,40 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /** org gRPC 채널 — 권한 판정과 팀 멤버십(W18)이 공유한다. */
+    /** org gRPC 채널 — 권한 판정·팀 멤버십(W18)·사용자 디렉터리가 공유한다. */
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(name = "orgChannel")
     io.grpc.ManagedChannel orgChannel(
             @Value("${platform.org-grpc.host}") String host,
             @Value("${platform.org-grpc.port}") int port) {
-        return ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+        // 콜드 스타트 방지: 첫 요청이 이름 해석·연결 수립에 1초 넘게 걸려 DEADLINE_EXCEEDED(→503)가 나던 것을
+        // 시작 시 연결을 선점(getState(true))하고 keepalive로 유휴 끊김을 막아 없앤다(alm-backend 2026-09-05 실측).
+        io.grpc.ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port)
+                .usePlaintext()
+                .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
+                .keepAliveWithoutCalls(true)
+                .build();
+        channel.getState(true);
+        return channel;
     }
 
     /** 테스트는 FakePermissionClient 빈이 이 빈을 대체한다(@ConditionalOnMissingBean). */
     @Bean
     @ConditionalOnMissingBean(PermissionClient.class)
-    PermissionClient permissionClient(io.grpc.ManagedChannel orgChannel) {
-        return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    PermissionClient permissionClient(io.grpc.ManagedChannel orgChannel,
+                                      @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        // waitForReady: 연결이 아직 없으면 데드라인 안에서 기다린다(콜드 스타트에 즉시 UNAVAILABLE로 떨어지지 않게)
+        return new GrpcPermissionClient(
+                PermissionServiceGrpc.newBlockingStub(orgChannel).withWaitForReady(), deadlineSeconds);
+    }
+
+    /** 계정 상태 게이트가 읽는 사람의 원장 — 권한과 같은 채널을 쓴다. */
+    @Bean
+    @ConditionalOnMissingBean(MemberDirectory.class)
+    MemberDirectory memberDirectory(io.grpc.ManagedChannel orgChannel,
+                                    @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        return new GrpcMemberDirectory(
+                PermissionServiceGrpc.newBlockingStub(orgChannel).withWaitForReady(), deadlineSeconds);
     }
 
     /** W18 TEAM 주체 판정 — 테스트는 FakeTeamDirectory(@Primary)가 대체한다. */

@@ -26,11 +26,15 @@ class GrpcPermissionClientTest {
         volatile boolean allow = true;
         volatile boolean fail = false;
         volatile Status failStatus = Status.UNAVAILABLE;
+        volatile String deniedReason = "";
 
         @Override public void checkPermission(CheckPermissionRequest req, StreamObserver<CheckPermissionResponse> out) {
             checkCalls.incrementAndGet();
             if (fail) { out.onError(failStatus.asRuntimeException()); return; }
-            out.onNext(CheckPermissionResponse.newBuilder().setAllowed(allow).build());
+            out.onNext(CheckPermissionResponse.newBuilder()
+                    .setAllowed(allow)
+                    .setDeniedReason(deniedReason)
+                    .build());
             out.onCompleted();
         }
 
@@ -94,6 +98,63 @@ class GrpcPermissionClientTest {
         stubOrg.failStatus = Status.INTERNAL;
         assertThat(client.isAllowed(3L, 5L, WikiAction.VIEW)).isFalse();
         assertThat(client.accessibleSpaces(3L).all()).isFalse();
+    }
+
+    /** 0.16.0 denied_reason이 판정에 실려 온다 — 캐시도 사유째로 저장한다 */
+    @Test
+    void 거부_사유가_판정에_실려_오고_캐시된다() {
+        stubOrg.allow = false;
+        stubOrg.deniedReason = "SUSPENDED";
+
+        PermissionDecision first = client.check(7L, 5L, WikiAction.VIEW);
+        assertThat(first.allowed()).isFalse();
+        assertThat(first.deniedReason()).isEqualTo("SUSPENDED");
+        assertThat(first.accountMessage()).isEqualTo("정지된 계정입니다");
+
+        assertThat(client.check(7L, 5L, WikiAction.VIEW).deniedReason()).isEqualTo("SUSPENDED");
+        assertThat(stubOrg.checkCalls.get()).isEqualTo(1); // 사유째로 캐시 히트
+    }
+
+    /** 권한만 모자란 거부는 계정 문구를 만들지 않는다 — 호출부가 자기 맥락의 문구를 쓴다 */
+    @Test
+    void 권한_부족_사유는_계정_문구가_없다() {
+        stubOrg.allow = false;
+        stubOrg.deniedReason = "NO_GRANT";
+
+        assertThat(client.check(8L, 5L, WikiAction.EDIT).accountMessage()).isNull();
+    }
+
+    /** 모르는 사유는 일반 거부다 — 값은 뒤에 늘 수 있다 */
+    @Test
+    void 모르는_사유는_일반_거부로_다룬다() {
+        stubOrg.allow = false;
+        stubOrg.deniedReason = "SOME_FUTURE_REASON";
+
+        PermissionDecision decision = client.check(9L, 5L, WikiAction.EDIT);
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.accountMessage()).isNull();
+    }
+
+    /** 가용성 외 실패의 fail-closed는 <b>사유 없는</b> 거부다 — 장애를 "정지된 계정"으로 말하지 않는다 */
+    @Test
+    void fail_closed_거부에는_사유가_없다() {
+        stubOrg.fail = true;
+        stubOrg.failStatus = Status.INTERNAL;
+
+        PermissionDecision decision = client.check(10L, 5L, WikiAction.VIEW);
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.deniedReason()).isEmpty();
+        assertThat(decision.accountMessage()).isNull();
+    }
+
+    @Test
+    void 계정_상태_문구는_네_갈래다() {
+        assertThat(PermissionDecision.accountMessage("PENDING")).isEqualTo("승인 대기 중인 계정입니다");
+        assertThat(PermissionDecision.accountMessage("SUSPENDED")).isEqualTo("정지된 계정입니다");
+        assertThat(PermissionDecision.accountMessage("DEACTIVATED")).isEqualTo("비활성된 계정입니다");
+        assertThat(PermissionDecision.accountMessage("ACTIVE")).isNull();
+        assertThat(PermissionDecision.accountMessage("")).isNull();
+        assertThat(PermissionDecision.accountMessage(null)).isNull();
     }
 
     @Test

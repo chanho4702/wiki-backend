@@ -3,8 +3,10 @@ package com.platform.wikibackend.permission;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -24,12 +26,25 @@ public class FakePermissionClient implements PermissionClient {
     public final List<long[]> grantedAdmins = new ArrayList<>(); // [userId, spaceId] 기록
     public final List<Long> revokedSpaces = new ArrayList<>();   // 회수 호출된 spaceId 기록
 
+    /** 거부 사유(org denied_reason) — 넣지 않으면 빈 문자열이라 호출부의 기존 문구가 나온다 */
+    private final Map<Long, String> deniedReasons = new HashMap<>();
+
     public void allow(long userId, long spaceId, WikiAction action) { allowed.add(new Key(userId, spaceId, action)); }
     public void allowAll(long userId) { allowAllUsers.add(userId); }
-    public void reset() { allowed.clear(); allowAllUsers.clear(); grantedAdmins.clear(); revokedSpaces.clear(); }
+    /** 이 사용자의 모든 거부에 사유를 실는다 — PENDING/SUSPENDED/DEACTIVATED면 문구가 바뀐다 */
+    public void denyWithReason(long userId, String reason) { deniedReasons.put(userId, reason); }
+    public void reset() {
+        allowed.clear(); allowAllUsers.clear(); grantedAdmins.clear(); revokedSpaces.clear(); deniedReasons.clear();
+    }
 
     @Override
-    public boolean isAllowed(long userId, long spaceId, WikiAction action) {
+    public PermissionDecision check(long userId, long spaceId, WikiAction action) {
+        return allowedFor(userId, spaceId, action)
+                ? PermissionDecision.allow()
+                : PermissionDecision.deny(deniedReasons.getOrDefault(userId, ""));
+    }
+
+    private boolean allowedFor(long userId, long spaceId, WikiAction action) {
         if (allowAllUsers.contains(userId) || allowed.contains(new Key(userId, spaceId, action))) return true;
         // org-service의 계층(EDITOR·ADMIN ⊃ COMMENTER)을 흉내 낸다 — 편집자에게 COMMENT를 따로 주지 않아도 된다
         return action == WikiAction.COMMENT

@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -22,32 +23,50 @@ public class GrpcPermissionClient implements PermissionClient {
     private record CacheKey(long userId, long spaceId, WikiAction action) {}
 
     private final PermissionServiceGrpc.PermissionServiceBlockingStub stub;
-    private final Cache<CacheKey, Boolean> cache = Caffeine.newBuilder()
+    // 판정을 30초 캐시한다 — 매 요청 gRPC 왕복을 피하는 값이다. 대가는 반영 지연이고, grant 회수만이
+    // 아니라 **계정 상태 전이도 그만큼 늦는다**: 방금 정지·비활성된 사람이 최대 30초 더 하던 일을
+    // 이어갈 수 있다(그 사이 새 요청은 캐시된 allowed를 본다). 즉시 차단이 필요해지면 캐시를 줄이거나
+    // org가 무효화를 알리는 경로를 먼저 만든다 — 값만 늘리는 결정은 이 지연을 키운다.
+    private final Cache<CacheKey, PermissionDecision> cache = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(30))
             .maximumSize(10_000)
             .build();
 
+    private final long deadlineSeconds;
+
     public GrpcPermissionClient(PermissionServiceGrpc.PermissionServiceBlockingStub stub) {
+        this(stub, 2);
+    }
+
+    public GrpcPermissionClient(PermissionServiceGrpc.PermissionServiceBlockingStub stub, long deadlineSeconds) {
         this.stub = stub;
+        this.deadlineSeconds = deadlineSeconds;
     }
 
     @Override
-    public boolean isAllowed(long userId, long spaceId, WikiAction action) {
+    public PermissionDecision check(long userId, long spaceId, WikiAction action) {
         return cache.get(new CacheKey(userId, spaceId, action), k -> {
             try {
-                return stub.checkPermission(CheckPermissionRequest.newBuilder()
+                CheckPermissionResponse response = deadline().checkPermission(CheckPermissionRequest.newBuilder()
                         .setUserId(k.userId())
                         .setResourceType(ResourceType.SPACE)
                         .setResourceId(String.valueOf(k.spaceId()))
                         .setAction(toProto(k.action()))
-                        .build()).getAllowed();
+                        .build());
+                return response.getAllowed()
+                        ? PermissionDecision.allow()
+                        : PermissionDecision.deny(response.getDeniedReason());
             } catch (Exception e) {
+                // 가용성 장애만 503으로 올린다 — 나머지는 fail-closed다. 둘을 뭉뚱그리면
+                // org가 죽은 동안 사용자에게 "당신은 권한이 없다"고 거짓말하거나(전자),
+                // 진짜 거부를 열어 준다(후자).
                 if (isUnavailable(e)) {
                     log.error("권한 서비스 불가 — 503 전파: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
                     throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
                 }
                 log.warn("권한조회 실패 — fail-closed: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
-                return false;
+                // 사유 없는 거부 — org가 답을 못 준 것이지 "상태로 막힌 것"이 아니다
+                return PermissionDecision.deny("");
             }
         });
     }
@@ -55,7 +74,7 @@ public class GrpcPermissionClient implements PermissionClient {
     @Override
     public AccessScope accessibleSpaces(long userId) {
         try {
-            ListUserGrantsResponse res = stub.listUserGrants(
+            ListUserGrantsResponse res = deadline().listUserGrants(
                     ListUserGrantsRequest.newBuilder().setUserId(userId).build()); // UNSPECIFIED = 전체
             boolean global = res.getGrantsList().stream()
                     .anyMatch(g -> g.getResourceType() == ResourceType.GLOBAL);
@@ -78,7 +97,7 @@ public class GrpcPermissionClient implements PermissionClient {
     @Override
     public boolean grantSpaceAdmin(long userId, long spaceId) {
         try {
-            return stub.createGrant(CreateGrantRequest.newBuilder()
+            return deadline().createGrant(CreateGrantRequest.newBuilder()
                     .setUserId(userId)
                     .setResourceType(ResourceType.SPACE)
                     .setResourceId(String.valueOf(spaceId))
@@ -93,7 +112,7 @@ public class GrpcPermissionClient implements PermissionClient {
     @Override
     public int revokeSpaceGrants(long spaceId) {
         try {
-            return stub.revokeGrant(RevokeGrantRequest.newBuilder()
+            return deadline().revokeGrant(RevokeGrantRequest.newBuilder()
                     .setResourceType(ResourceType.SPACE)
                     .setResourceId(String.valueOf(spaceId))
                     .build()).getRevoked();
@@ -102,6 +121,10 @@ public class GrpcPermissionClient implements PermissionClient {
             log.warn("스페이스 grant 회수 실패(고아 grant 잔존): space={}", spaceId, e);
             return 0;
         }
+    }
+
+    private PermissionServiceGrpc.PermissionServiceBlockingStub deadline() {
+        return stub.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS);
     }
 
     /**

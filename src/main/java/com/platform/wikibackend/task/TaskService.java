@@ -128,8 +128,13 @@ public class TaskService {
      */
     public TaskView setDone(long userId, long pageId, int lineNo, boolean done) {
         Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
-        if (!permissions.isAllowed(userId, page.getSpaceId(), WikiAction.EDIT)) {
-            throw new com.platform.common.error.ForbiddenException("EDIT 권한이 필요합니다 (space " + page.getSpaceId() + ")");
+        com.platform.wikibackend.permission.PermissionDecision decision =
+                permissions.check(userId, page.getSpaceId(), WikiAction.EDIT);
+        if (!decision.allowed()) {
+            String message = decision.accountMessage();
+            throw new com.platform.common.error.ForbiddenException(message == null
+                    ? "EDIT 권한이 필요합니다 (space " + page.getSpaceId() + ")"
+                    : message);
         }
         effective.requireEdit(userId, page);
         if (page.isArchived()) throw new ConflictException("보관된 문서는 편집할 수 없습니다. 먼저 보관을 해제하세요");
