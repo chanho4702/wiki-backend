@@ -1,6 +1,6 @@
 package com.platform.wikibackend.security;
 
-import com.platform.wikibackend.permission.FakeMemberDirectory;
+import com.platform.wikibackend.directory.FakeMemberDirectory;
 import com.platform.wikibackend.permission.FakePermissionClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

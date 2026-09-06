@@ -13,7 +13,12 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 
-/** org 원장에서 USER/TEAM 실재 여부를 일괄 확인한다(common-proto 0.9.0). */
+/**
+ * org 원장에서 USER/TEAM 실재 여부를 일괄 확인한다({@code ValidatePrincipals}).
+ *
+ * <p>버전 표기는 이 리포가 무는 common-proto 버전(0.16.0)이다 — 이 RPC 자체는 0.9.0에 들어왔지만,
+ * 주석에 도입 버전을 적어 두니 아티팩트가 올라갈 때마다 사실과 어긋났다.
+ */
 @Slf4j
 @RequiredArgsConstructor
 public class GrpcPrincipalDirectory implements PrincipalDirectory {

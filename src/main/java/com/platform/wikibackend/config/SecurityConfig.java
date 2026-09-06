@@ -1,10 +1,10 @@
 package com.platform.wikibackend.config;
 
 import com.platform.proto.org.v1.PermissionServiceGrpc;
-import com.platform.wikibackend.permission.GrpcMemberDirectory;
+import com.platform.wikibackend.directory.GrpcMemberDirectory;
+import com.platform.wikibackend.directory.MemberDirectory;
 import com.platform.wikibackend.permission.GrpcPermissionClient;
 import com.platform.wikibackend.permission.GrpcTeamDirectory;
-import com.platform.wikibackend.permission.MemberDirectory;
 import com.platform.wikibackend.permission.GrpcPrincipalDirectory;
 import com.platform.wikibackend.permission.PrincipalDirectory;
 import com.platform.wikibackend.permission.TeamDirectory;

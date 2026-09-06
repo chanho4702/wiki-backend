@@ -15,8 +15,10 @@ import java.util.Optional;
 /**
  * 알림 설정(W23) — 사용자별 이메일 채널 스위치와 주소 스냅샷.
  *
- * 주소는 org 디렉터리가 아니라 요청 토큰(email 클레임)에서 온다. 발송 시점(다른 사용자의 저장
- * 트랜잭션 안)에는 수신자의 토큰이 없으므로, 수신자가 마지막으로 다녀갔을 때 본 주소를 쓴다.
+ * 스냅샷 주소는 요청 토큰(email 클레임)에서 온다. 발송 시점(다른 사용자의 저장 트랜잭션 안)에는
+ * 수신자의 토큰이 없기 때문이다. <b>정본은 org-service 디렉터리이고 이 값은 폴백이다</b> —
+ * {@link EmailNotifier}가 커밋 뒤 `GetMembers`로 주소를 읽고, 못 읽었을 때만 여기 남은 값을 쓴다.
+ * org에서 이메일을 바꾸면 이 스냅샷은 다음 방문까지 낡은 채로 남는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -51,19 +53,31 @@ public class NotificationPrefService {
         }
     }
 
-    /** 이 타입의 메일을 **바로** 받을 주소 — 요약 모드·원하지 않음·주소 모름이면 empty. */
+    /**
+     * 이 타입의 메일을 **바로** 받을 사람인가, 그리고 알던 주소는 무엇인가.
+     *
+     * <p>스냅샷이 없어도 empty가 아니다 — 주소는 발송 직전 디렉터리에서 읽으므로, 여기서 없다고
+     * 끊으면 org가 아는 주소로도 못 보낸다. 설정 행 자체가 없으면 empty다: 한 번도 다녀가지 않은
+     * 사람에게는 채널을 켜 준 적이 없다.
+     */
     @Transactional(readOnly = true)
-    public Optional<String> immediateEmailFor(long userId, Notification.Type type) {
+    public Optional<MailTarget> immediateTarget(long userId, Notification.Type type) {
         return prefs.findById(userId)
-                .filter(p -> p.getEmailMode() == NotificationPref.EmailMode.IMMEDIATE
-                        && p.wants(type) && p.getEmail() != null)
-                .map(NotificationPref::getEmail);
+                .filter(p -> p.getEmailMode() == NotificationPref.EmailMode.IMMEDIATE && p.wants(type))
+                .map(p -> new MailTarget(p.getEmail()));
     }
 
-    /** 하루 한 번 요약을 받는 사람들 — 채널이 켜져 있고 주소를 아는 경우만. */
+    /**
+     * 하루 한 번 요약을 받는 사람들 — 채널이 켜진 행 전부다. 스냅샷 주소가 없는 행도 포함한다:
+     * 주소는 발송 직전 디렉터리에서 읽고, 거기서도 못 찾으면 그때 건너뛴다.
+     */
     @Transactional(readOnly = true)
     public List<NotificationPref> dailyRecipients() {
-        return prefs.findByEmailModeAndEmailEnabledTrueAndEmailIsNotNull(NotificationPref.EmailMode.DAILY);
+        return prefs.findByEmailModeAndEmailEnabledTrue(NotificationPref.EmailMode.DAILY);
+    }
+
+    /** 발송 대상 — 주소는 정본(디렉터리)이 답을 못 줄 때 쓸 스냅샷이고, 없으면 null이다. */
+    public record MailTarget(String snapshotEmail) {
     }
 
     private NotificationPref ensure(long userId, String jwtEmail) {

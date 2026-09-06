@@ -34,8 +34,15 @@ public record CommentResponse(
 
     public static CommentResponse from(PageComment comment,
             java.util.List<com.platform.wikibackend.reaction.ReactionService.ReactionSummary> reactions) {
+        return from(comment, reactions, comment.getAuthorName());
+    }
+
+    /** 이름을 org 원장에서 채워 넣은 경우 — 저장된 스냅샷 대신 그 값을 싣는다(폴백 자리에만). */
+    public static CommentResponse from(PageComment comment,
+            java.util.List<com.platform.wikibackend.reaction.ReactionService.ReactionSummary> reactions,
+            String authorName) {
         return new CommentResponse(comment.getId(), comment.getPageId(), comment.getParentId(),
-                comment.getAuthorId(), comment.getAuthorName(), comment.getBody(),
+                comment.getAuthorId(), authorName, comment.getBody(),
                 comment.getCreatedAt(), comment.getEditedAt(),
                 comment.getAnchorType().toLowerCase(), comment.getAnchorQuote(),
                 comment.getAnchorOccurrence(), comment.getResolvedAt(), reactions);

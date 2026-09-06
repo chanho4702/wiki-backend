@@ -1,4 +1,4 @@
-package com.platform.wikibackend.permission;
+package com.platform.wikibackend.directory;
 
 import org.springframework.stereotype.Component;
 

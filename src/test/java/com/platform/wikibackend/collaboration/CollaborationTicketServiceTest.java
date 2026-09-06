@@ -115,6 +115,42 @@ class CollaborationTicketServiceTest {
                 .hasMessage("공동 편집 세션을 시작할 수 없습니다");
     }
 
+    /**
+     * presence 이름은 저장되지 않고 협업 세션 동안 상대 화면에 그대로 보인다 — 토큰에 name이 없으면
+     * 서로를 `사용자 #42`로 보게 되므로, 그때만 org 원장에 묻는다.
+     */
+    @Test
+    void 토큰에_이름이_없으면_원장에서_채운다() throws Exception {
+        stubTicketStorage();
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        com.platform.wikibackend.directory.FakeMemberDirectory found =
+                new com.platform.wikibackend.directory.FakeMemberDirectory();
+        found.put(42L, "김찬호", "c@org.example", "ACTIVE");
+        CollaborationTicketService withDirectory = new CollaborationTicketService(
+                pages, spaces, redis, json,
+                new com.platform.wikibackend.directory.DisplayNames(found),
+                Duration.ofMinutes(1), clock, random);
+
+        withDirectory.issue(42L, null, 7L);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(values).set(any(), payload.capture(), any());
+        assertThat(payload.getValue()).contains("김찬호");
+    }
+
+    /** 원장도 모르면 폴백이 그대로다 — 이름 하나 때문에 티켓 발급이 실패하지 않는다 */
+    @Test
+    void 원장도_이름을_모르면_폴백이_남는다() throws Exception {
+        stubTicketStorage();
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+
+        service.issue(42L, null, 7L);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(values).set(any(), payload.capture(), any());
+        assertThat(payload.getValue()).contains("사용자 #42");
+    }
+
     @Test
     void TTL이_5분을_넘거나_0이면_구성_오류로_거부한다() {
         assertThatThrownBy(() -> new CollaborationTicketService(

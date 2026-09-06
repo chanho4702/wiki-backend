@@ -1,5 +1,6 @@
-package com.platform.wikibackend.permission;
+package com.platform.wikibackend.directory;
 
+import com.platform.wikibackend.permission.GrpcPermissionClient;
 import com.platform.proto.org.v1.GetMembersRequest;
 import com.platform.proto.org.v1.GetMembersResponse;
 import com.platform.proto.org.v1.MemberInfo;
@@ -19,7 +20,8 @@ import java.util.concurrent.TimeUnit;
  * 맞추지 않는다. 한 요청의 id 상한이 200이라 그 단위로 끊어 보낸다.
  *
  * <p>여기서는 던지지 않는다 — 대신 {@link Outcome}으로 왜 비었는지 알리고, 그걸 403으로 볼지 503으로
- * 볼지는 호출측이 정한다({@link com.platform.wikibackend.security.AccountStatusInterceptor}는 503).
+ * 볼지는 호출측이 정한다({@link com.platform.wikibackend.security.AccountStatusInterceptor}는 503,
+ * 알림 메일과 이름 보강은 폴백).
  */
 @Slf4j
 public class GrpcMemberDirectory implements MemberDirectory {

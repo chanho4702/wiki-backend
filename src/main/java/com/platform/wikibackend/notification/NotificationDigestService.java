@@ -63,7 +63,7 @@ public class NotificationDigestService {
                         page.getSpaceId(), page.getId(), n.getNote()));
             }
             if (lines.isEmpty()) continue;
-            email.sendAfterCommit(email.composeDigest(pref.getEmail(), lines));
+            email.notifyDigest(pref.getUserId(), pref.getEmail(), lines);
             sent++;
         }
         if (sent > 0) log.info("알림 요약 메일 발송: {}통", sent);

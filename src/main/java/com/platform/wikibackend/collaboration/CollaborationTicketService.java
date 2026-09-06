@@ -3,6 +3,7 @@ package com.platform.wikibackend.collaboration;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.common.error.ServiceUnavailableException;
+import com.platform.wikibackend.directory.DisplayNames;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.page.PageService;
 import com.platform.wikibackend.permission.WikiAction;
@@ -43,6 +44,7 @@ public class CollaborationTicketService {
     private final SpaceService spaces;
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
+    private final DisplayNames displayNames;
     private final Duration ttl;
     private final Clock clock;
     private final SecureRandom random;
@@ -53,8 +55,9 @@ public class CollaborationTicketService {
             SpaceService spaces,
             StringRedisTemplate redis,
             ObjectMapper json,
+            DisplayNames displayNames,
             @Value("${platform.wiki.collaboration.ticket-ttl:PT1M}") Duration ttl) {
-        this(pages, spaces, redis, json, ttl, Clock.systemUTC(), new SecureRandom());
+        this(pages, spaces, redis, json, displayNames, ttl, Clock.systemUTC(), new SecureRandom());
     }
 
     CollaborationTicketService(
@@ -65,6 +68,18 @@ public class CollaborationTicketService {
             Duration ttl,
             Clock clock,
             SecureRandom random) {
+        this(pages, spaces, redis, json, DisplayNames.none(), ttl, clock, random);
+    }
+
+    CollaborationTicketService(
+            PageService pages,
+            SpaceService spaces,
+            StringRedisTemplate redis,
+            ObjectMapper json,
+            DisplayNames displayNames,
+            Duration ttl,
+            Clock clock,
+            SecureRandom random) {
         if (ttl.isZero() || ttl.isNegative() || ttl.compareTo(MAX_TTL) > 0) {
             throw new IllegalArgumentException("collaboration ticket TTL은 0초 초과 5분 이하여야 합니다");
         }
@@ -72,6 +87,7 @@ public class CollaborationTicketService {
         this.spaces = spaces;
         this.redis = redis;
         this.json = json;
+        this.displayNames = displayNames;
         this.ttl = ttl;
         this.clock = clock;
         this.random = random;
@@ -89,7 +105,7 @@ public class CollaborationTicketService {
                 CollaborationTicketPayload.SCHEMA_VERSION,
                 pageId,
                 userId,
-                normalizeDisplayName(displayName, userId),
+                normalizeDisplayName(presenceName(userId, displayName), userId),
                 room,
                 CollaborationTicketPayload.EDIT_PERMISSION,
                 issuedAt,
@@ -127,6 +143,16 @@ public class CollaborationTicketService {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("collaboration ticket payload 직렬화 실패", e);
         }
+    }
+
+    /**
+     * presence에 뜰 이름. 토큰에 {@code name}이 있으면 그대로 쓰고, 없을 때만 org 원장에 한 번 묻는다 —
+     * 이 이름은 저장되지 않고 협업 세션 동안 다른 사람 화면에 그대로 보이므로, 여기서 비면 함께
+     * 편집하는 사람들이 서로를 {@code 사용자 #7}로 본다. 원장도 모르면 그 폴백이 그대로 남는다.
+     */
+    private String presenceName(long userId, String displayName) {
+        if (displayName != null && !displayName.isBlank()) return displayName;
+        return displayNames.resolve(userId).orElse(displayName);
     }
 
     private static String normalizeDisplayName(String displayName, long userId) {

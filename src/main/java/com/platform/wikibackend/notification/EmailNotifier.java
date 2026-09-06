@@ -1,6 +1,8 @@
 package com.platform.wikibackend.notification;
 
 import com.platform.wikibackend.common.ActorNames;
+import com.platform.wikibackend.directory.DirectoryMember;
+import com.platform.wikibackend.directory.MemberDirectory;
 import com.platform.wikibackend.domain.Notification;
 import com.platform.wikibackend.domain.Page;
 import lombok.extern.slf4j.Slf4j;
@@ -13,8 +15,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -28,12 +34,21 @@ import java.util.concurrent.Executors;
  * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 SMTP를 기다리면 편집자의 저장이
  * 메일 서버 속도에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 로그로만 남긴다 — 메일은
  * 알림함의 사본이지 원본이 아니다.
+ *
+ * <p><b>주소는 커밋 뒤에 정한다</b>(alm-backend와 같은 구조). 정본은 org-service 디렉터리이고 개인
+ * 설정에 남은 주소는 로그인 때 찍힌 스냅샷이라, org에서 이메일을 바꾸면 낡는다. 한 트랜잭션에서
+ * 생긴 알림을 모아 두었다가 {@code GetMembers} <b>한 번</b>으로 전원의 주소를 읽는다 — 워처가 열 명인
+ * 문서를 고치면 왕복도 열 번이 되던 것을 막는다.
  */
 @Component
 @Slf4j
 public class EmailNotifier {
 
+    /** 한 트랜잭션에서 쌓이는 발송 대기함의 자리(스레드에 매인다) */
+    private static final String PENDING_KEY = EmailNotifier.class.getName() + ".pending";
+
     private final ObjectProvider<JavaMailSender> senders;
+    private final ObjectProvider<MemberDirectory> directory;
     private final NotificationPrefService prefs;
     private final ActorNames actorNames;
     private final String host;
@@ -46,12 +61,14 @@ public class EmailNotifier {
     });
 
     public EmailNotifier(ObjectProvider<JavaMailSender> senders,
+                         ObjectProvider<MemberDirectory> directory,
                          @Lazy NotificationPrefService prefs,
                          ActorNames actorNames,
                          @Value("${spring.mail.host:}") String host,
                          @Value("${platform.wiki.mail.from:wiki@localhost}") String from,
                          @Value("${platform.wiki.mail.public-url:http://localhost/wiki}") String publicUrl) {
         this.senders = senders;
+        this.directory = directory;
         this.prefs = prefs;
         this.actorNames = actorNames;
         this.host = host == null ? "" : host.trim();
@@ -72,55 +89,141 @@ public class EmailNotifier {
     public void notify(Notification saved, Page page, String note) {
         if (!configured()) return;
         Notification.Type type = saved.getType();
-        Optional<String> to = prefs.immediateEmailFor(saved.getUserId(), type);
-        if (to.isEmpty()) return;
+        // 스위치와 스냅샷 주소는 지금 읽는다 — 이미 열려 있는 트랜잭션의 DB 조회다. 밖으로 미루는 것은
+        // 남의 서비스를 부르는 일(디렉터리)뿐이다.
+        Optional<NotificationPrefService.MailTarget> target = prefs.immediateTarget(saved.getUserId(), type);
+        if (target.isEmpty()) return;
 
         String actor = Optional.ofNullable(actorNames.current()).orElse("누군가");
         saved.markEmailed(java.time.Instant.now()); // 나중에 요약 모드로 바꿔도 이 알림이 다시 나가지 않게
-        sendAfterCommit(compose(to.get(), type, page, actor, note));
+        enqueue(new Pending(saved.getUserId(), target.get().snapshotEmail(), compose(type, page, actor, note)));
     }
 
-    /** 커밋 뒤 별도 스레드로 보낸다. 트랜잭션 밖이면 바로. */
-    public void sendAfterCommit(SimpleMailMessage message) {
+    /** 하루 요약 한 통 — 주소는 다른 알림과 같은 규칙으로 커밋 뒤에 정해진다. */
+    public void notifyDigest(long userId, String snapshotEmail, List<DigestLine> lines) {
+        if (!configured() || lines.isEmpty()) return;
+        enqueue(new Pending(userId, snapshotEmail, composeDigest(lines)));
+    }
+
+    /**
+     * 트랜잭션 안이면 묶음에 쌓고 커밋 뒤 한 번에 보낸다(디렉터리 조회 1회). 트랜잭션 밖이면 바로 보낸다 —
+     * 그때는 롤백으로 되돌아갈 저장도, 묶을 형제 알림도 없다.
+     */
+    private void enqueue(Pending pending) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            dispatch(List.of(pending));
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        List<Pending> batch = (List<Pending>) TransactionSynchronizationManager.getResource(PENDING_KEY);
+        if (batch == null) {
+            List<Pending> created = new ArrayList<>();
+            TransactionSynchronizationManager.bindResource(PENDING_KEY, created);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { dispatch(List.copyOf(created)); }
+                // 롤백이든 커밋이든 자리를 비운다 — 안 비우면 같은 스레드의 다음 요청에 섞인다
+                @Override public void afterCompletion(int status) {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(PENDING_KEY);
+                }
+            });
+            batch = created;
+        }
+        batch.add(pending);
+    }
+
+    /**
+     * 메일 스레드에서 주소를 정하고 보낸다. 여기서만 org-service를 부른다 — 트랜잭션은 이미 끝났고,
+     * 수신자가 여럿이어도 왕복은 한 번이다.
+     */
+    private void dispatch(List<Pending> batch) {
         JavaMailSender sender = senders.getIfAvailable();
-        if (sender == null) return;
-        Runnable send = () -> executor.execute(() -> {
-            try {
-                sender.send(message);
-            } catch (Exception e) {
-                log.warn("알림 메일 발송 실패: to={} subject={}", String.join(",", message.getTo() == null ? new String[0] : message.getTo()), message.getSubject(), e);
+        if (sender == null || batch.isEmpty()) return;
+        executor.execute(() -> {
+            Set<Long> ids = new LinkedHashSet<>();
+            for (Pending pending : batch) ids.add(pending.userId());
+            Map<Long, DirectoryMember> found = members(ids);
+            for (Pending pending : batch) {
+                Optional<String> to = recipient(pending, found.get(pending.userId()));
+                if (to.isEmpty()) continue;
+                pending.message().setTo(to.get());
+                send(sender, pending.message());
             }
         });
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { send.run(); }
-            });
-        } else {
-            send.run();
+    }
+
+    /**
+     * org가 아는 사람들. 디렉터리 빈이 없거나(docs 프로필) 조회가 실패하면 빈 결과다 — 그러면
+     * 스냅샷으로 폴백한다. 메일은 부수 채널이라 org 불능이 발송을 멈출 이유가 되지 않는다.
+     */
+    private Map<Long, DirectoryMember> members(Set<Long> ids) {
+        MemberDirectory available = directory.getIfAvailable();
+        if (available == null) return Map.of();
+        try {
+            return available.members(ids);
+        } catch (Exception e) {
+            log.warn("사용자 디렉터리를 읽지 못해 스냅샷 주소로 보낸다: users={}", ids, e);
+            return Map.of();
         }
     }
 
-    /** 하루 요약 한 통 — 항목마다 한 줄(무슨 일 · 문서 제목 · 링크). */
-    public SimpleMailMessage composeDigest(String to, List<DigestLine> lines) {
+    /**
+     * 보낼 주소 — 정본은 org-service 디렉터리다. 개인 설정에 남은 주소는 로그인 때 찍힌 스냅샷이라
+     * org에서 이메일을 바꾸면 낡는다.
+     *
+     * <p>디렉터리가 답을 못 주면(org 불능 등) 스냅샷으로 폴백하고, 그것도 없으면 보내지 않는다 —
+     * 주소를 모르는 것은 조용히 넘어갈 일이지 문서 저장을 막을 일이 아니다. 다만 디렉터리가
+     * "이 계정은 막혀 있다"고 답하면 폴백하지 않는다({@link DirectoryMember#blockedFromMail()}).
+     */
+    private Optional<String> recipient(Pending pending, DirectoryMember member) {
+        if (member != null) {
+            if (member.blockedFromMail()) {
+                log.debug("막힌 계정이라 알림 메일을 보내지 않는다: user={} status={}",
+                        pending.userId(), member.status());
+                return Optional.empty();
+            }
+            if (member.hasEmail()) return Optional.of(member.email());
+        }
+        String snapshot = pending.snapshotEmail();
+        if (snapshot == null || snapshot.isBlank()) {
+            log.warn("보낼 주소를 몰라 알림 메일을 생략한다: user={}", pending.userId());
+            return Optional.empty();
+        }
+        return Optional.of(snapshot);
+    }
+
+    private void send(JavaMailSender sender, SimpleMailMessage message) {
+        try {
+            sender.send(message);
+        } catch (Exception e) {
+            String to = message.getTo() == null ? "" : String.join(",", message.getTo());
+            log.warn("알림 메일 발송 실패: to={} subject={}", to, message.getSubject(), e);
+        }
+    }
+
+    /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch}가 채운다 */
+    SimpleMailMessage composeDigest(List<DigestLine> lines) {
         StringBuilder body = new StringBuilder();
         body.append("지난 하루 동안 위키에서 있었던 일 ").append(lines.size()).append("건입니다.\n\n");
         for (DigestLine line : lines) {
             body.append("- ").append(line.what()).append(": '").append(line.title()).append("'\n  ")
                     .append(publicUrl).append("/spaces/").append(line.spaceId()).append("/pages/").append(line.pageId());
-            if (line.note() != null && !line.note().isBlank()) body.append("\n  \u201c").append(line.note().trim()).append("\u201d");
+            if (line.note() != null && !line.note().isBlank()) body.append("\n  “").append(line.note().trim()).append("”");
             body.append("\n");
         }
         body.append("\n이 메일은 위키 알림 설정(하루 한 번 요약)에 따라 보내졌습니다. 바꾸려면: ")
                 .append(publicUrl).append("/settings/notifications\n");
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(from);
-        message.setTo(to);
         message.setSubject("[Wiki] 오늘의 알림 요약 — " + lines.size() + "건");
         message.setText(body.toString());
         return message;
     }
 
     public record DigestLine(String what, String title, long spaceId, long pageId, String note) {
+    }
+
+    /** 커밋 뒤 주소가 정해질 때까지 들고 있는 한 통 */
+    private record Pending(long userId, String snapshotEmail, SimpleMailMessage message) {
     }
 
     public static String describe(Notification.Type type) {
@@ -133,7 +236,8 @@ public class EmailNotifier {
         };
     }
 
-    SimpleMailMessage compose(String to, Notification.Type type, Page page, String actor, String note) {
+    /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch}가 채운다 */
+    SimpleMailMessage compose(Notification.Type type, Page page, String actor, String note) {
         String title = page.getTitle();
         String subject = switch (type) {
             case MENTIONED -> actor + "님이 '" + title + "'에서 나를 멘션했습니다";
@@ -144,7 +248,7 @@ public class EmailNotifier {
         };
         StringBuilder body = new StringBuilder();
         body.append(subject).append("\n\n");
-        if (note != null && !note.isBlank()) body.append("\u201c").append(note.trim()).append("\u201d\n\n");
+        if (note != null && !note.isBlank()) body.append("“").append(note.trim()).append("”\n\n");
         body.append("문서 열기: ").append(publicUrl).append("/spaces/").append(page.getSpaceId())
                 .append("/pages/").append(page.getId()).append("\n\n");
         body.append("이 메일은 위키 알림 설정에 따라 보내졌습니다. 받지 않으려면: ")
@@ -152,7 +256,6 @@ public class EmailNotifier {
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(from);
-        message.setTo(to);
         message.setSubject("[Wiki] " + subject);
         message.setText(body.toString());
         return message;

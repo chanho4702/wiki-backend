@@ -37,6 +37,7 @@ public class CommentService {
     private final com.platform.wikibackend.permission.EffectivePermissionService effective;
     private final com.platform.wikibackend.watch.WatchService watches;
     private final com.platform.wikibackend.reaction.ReactionService reactions;
+    private final com.platform.wikibackend.directory.DisplayNames displayNames;
 
     @Transactional(readOnly = true)
     public List<CommentResponse> list(long userId, long pageId) {
@@ -45,8 +46,17 @@ public class CommentService {
         effective.requireView(userId, page);
         List<PageComment> found = comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId);
         var reactionsById = reactions.forComments(userId, found.stream().map(PageComment::getId).toList());
+        // 작성 시점에 토큰 name이 없어 `사용자 #7`로 저장된 옛 댓글만 원장에서 채운다 — 목록당 조회 1회.
+        // 진짜 이름이 남아 있는 댓글은 건드리지 않는다: 그때 그 사람의 서명이다.
+        java.util.Map<Long, String> names = displayNames.resolve(found.stream()
+                .filter(c -> com.platform.wikibackend.directory.DisplayNames
+                        .needsFill(c.getAuthorName(), c.getAuthorId()))
+                .map(PageComment::getAuthorId)
+                .distinct()
+                .toList());
         return found.stream()
-                .map(c -> CommentResponse.from(c, reactionsById.getOrDefault(c.getId(), List.of())))
+                .map(c -> CommentResponse.from(c, reactionsById.getOrDefault(c.getId(), List.of()),
+                        authorName(c, names)))
                 .toList();
     }
 
@@ -182,6 +192,13 @@ public class CommentService {
     private PageComment requireComment(long commentId) {
         return comments.findById(commentId)
                 .orElseThrow(() -> new NotFoundException("코멘트를 찾을 수 없습니다: " + commentId));
+    }
+
+    /** 폴백 자리에만 원장 이름을 넣는다 — 못 찾으면 저장된 `사용자 #N`이 그대로 나간다 */
+    private static String authorName(PageComment comment, java.util.Map<Long, String> names) {
+        String stored = comment.getAuthorName();
+        if (!com.platform.wikibackend.directory.DisplayNames.needsFill(stored, comment.getAuthorId())) return stored;
+        return names.getOrDefault(comment.getAuthorId(), stored);
     }
 
     private static String normalizeAuthorName(String userName, long userId) {

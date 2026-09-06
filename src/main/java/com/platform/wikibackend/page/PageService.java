@@ -70,6 +70,7 @@ public class PageService {
     private final com.platform.wikibackend.watch.WatchService watches;
     private final com.platform.wikibackend.common.ActorNames actorNames;
     private final com.platform.wikibackend.task.TaskService taskSync;
+    private final com.platform.wikibackend.directory.DisplayNames displayNames;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -650,12 +651,24 @@ public class PageService {
         effective.requireEdit(userId, parent);
     }
 
+    /**
+     * 이력 목록. 편집자 이름은 저장 시점 스냅샷(V28)이고, 그 값이 없는 옛 리비전만 org 원장에서
+     * 채운다 — 목록 하나에 조회 <b>한 번</b>이다. 못 채우면 이름 없이 나가고 화면이 id로 폴백한다.
+     */
     @Transactional(readOnly = true)
     public List<RevisionMeta> listRevisions(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
-        return revisions.findByPageIdOrderByVersionDesc(pageId).stream().map(RevisionMeta::from).toList();
+        List<PageRevision> rows = revisions.findByPageIdOrderByVersionDesc(pageId);
+        Map<Long, String> names = displayNames.resolve(rows.stream()
+                .filter(r -> com.platform.wikibackend.directory.DisplayNames.needsFill(
+                        r.getEditedByName(), r.getEditedBy() == null ? 0L : r.getEditedBy()))
+                .map(PageRevision::getEditedBy)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList());
+        return rows.stream().map(r -> RevisionMeta.from(r, filled(r.getEditedByName(), r.getEditedBy(), names))).toList();
     }
 
     @Transactional(readOnly = true)
@@ -663,9 +676,25 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
-        return revisions.findByPageIdAndVersion(pageId, version)
-                .map(RevisionResponse::from)
+        PageRevision revision = revisions.findByPageIdAndVersion(pageId, version)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
+        Long editor = revision.getEditedBy();
+        // 이름이 이미 있으면 원장을 부르지 않는다 — 대부분의 리비전이 여기서 끝난다
+        Map<Long, String> names =
+                editor != null && com.platform.wikibackend.directory.DisplayNames.needsFill(revision.getEditedByName(), editor)
+                        ? displayNames.resolve(List.of(editor))
+                        : Map.of();
+        return RevisionResponse.from(revision, filled(revision.getEditedByName(), editor, names));
+    }
+
+    /**
+     * 스냅샷이 있으면 그대로 — 그때 그 사람이 쓰던 이름이라 지금 이름으로 덮지 않는다.
+     * 비어 있을 때만 원장의 이름을 넣고, 그것도 없으면 null로 두어 화면이 id로 폴백하게 한다.
+     */
+    private static String filled(String stored, Long userId, Map<Long, String> names) {
+        if (userId == null) return stored;
+        if (!com.platform.wikibackend.directory.DisplayNames.needsFill(stored, userId)) return stored;
+        return names.getOrDefault(userId, stored);
     }
 
     /** 복원 = 해당 리비전 내용으로 새 버전 생성(이력 보존 — 스펙). */

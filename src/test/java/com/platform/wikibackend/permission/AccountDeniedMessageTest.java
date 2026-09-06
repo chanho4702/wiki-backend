@@ -1,6 +1,7 @@
 package com.platform.wikibackend.permission;
 
 import com.platform.wikibackend.TestPages;
+import com.platform.wikibackend.directory.FakeMemberDirectory;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.Space;
