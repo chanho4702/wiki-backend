@@ -9,8 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -27,12 +25,14 @@ import java.util.concurrent.Executors;
 /**
  * 이메일 알림 채널(W23) — 알림함에 한 건이 새로 생길 때 같은 내용을 메일로도 보낸다.
  *
- * OpenSearch와 같은 **선택 옵션**이다: `WIKI_MAIL_HOST`가 비면 발송기가 없고 알림함만 남는다.
- * 설정 화면은 {@link #configured()}로 그 사실을 먼저 알린다 — 스위치를 켰는데 아무것도 오지
- * 않는 것이 최악의 경험이다.
+ * <p><b>발송기는 org-service다</b>(M4, 2026-09-07 플랫폼 메일 설계). 위키는 SMTP를 직접 말하지 않고
+ * {@link OrgMailClient}로 "누구에게 어떤 제목과 본문을"만 넘긴다 — 서버·자격증명·TLS·보내는 주소는
+ * 관리 화면이 정하고, 재시도와 발송 로그도 허브가 가진다. 허브가 꺼져 있으면(설정 스위치 off 또는
+ * `ORG_INTERNAL_TOKEN` 미설정) 아무것도 나가지 않고 알림함만 남는다 — 설정 화면은 {@link #enabled()}로
+ * 그 사실을 먼저 알린다. 스위치를 켰는데 아무것도 오지 않는 것이 최악의 경험이다.
  *
- * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 SMTP를 기다리면 편집자의 저장이
- * 메일 서버 속도에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 로그로만 남긴다 — 메일은
+ * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 허브를 기다리면 편집자의 저장이
+ * 메일 경로에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 로그로만 남긴다 — 메일은
  * 알림함의 사본이지 원본이 아니다.
  *
  * <p><b>주소는 커밋 뒤에 정한다</b>(alm-backend와 같은 구조). 정본은 org-service 디렉터리이고 개인
@@ -47,12 +47,10 @@ public class EmailNotifier {
     /** 한 트랜잭션에서 쌓이는 발송 대기함의 자리(스레드에 매인다) */
     private static final String PENDING_KEY = EmailNotifier.class.getName() + ".pending";
 
-    private final ObjectProvider<JavaMailSender> senders;
+    private final OrgMailClient orgMail;
     private final ObjectProvider<MemberDirectory> directory;
     private final NotificationPrefService prefs;
     private final ActorNames actorNames;
-    private final String host;
-    private final String from;
     private final String publicUrl;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "wiki-mail");
@@ -60,37 +58,39 @@ public class EmailNotifier {
         return t;
     });
 
-    public EmailNotifier(ObjectProvider<JavaMailSender> senders,
+    public EmailNotifier(OrgMailClient orgMail,
                          ObjectProvider<MemberDirectory> directory,
                          @Lazy NotificationPrefService prefs,
                          ActorNames actorNames,
-                         @Value("${spring.mail.host:}") String host,
-                         @Value("${platform.wiki.mail.from:wiki@localhost}") String from,
                          @Value("${platform.wiki.mail.public-url:http://localhost/wiki}") String publicUrl) {
-        this.senders = senders;
+        this.orgMail = orgMail;
         this.directory = directory;
         this.prefs = prefs;
         this.actorNames = actorNames;
-        this.host = host == null ? "" : host.trim();
-        this.from = from;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
     }
 
-    /** host가 비어 있으면 Boot가 빈 host의 발송기를 만들어 두므로 빈 존재만으로 판단하지 않는다. */
-    public boolean configured() {
-        return !host.isEmpty() && senders.getIfAvailable() != null;
+    /**
+     * 메일 채널이 살아 있는가 — 허브의 {@code /internal/org/mail/status}를 60초 캐시로 본다.
+     * 설정 화면이 이 값으로 "지금 켜도 아무것도 오지 않는다"를 미리 말한다.
+     */
+    public boolean enabled() {
+        return orgMail.enabled();
     }
 
     /**
      * 알림함에 새 행이 생긴 직후 호출 — 합쳐진(refresh) 알림에는 보내지 않는다(아직 안 읽은 사람에게
      * 또 보내는 것). 요약(DAILY) 모드인 사람은 여기서 보내지 않고 행을 그대로 둔다 — 요약 작업이
      * `emailed_at`이 빈 행을 모은다.
+     *
+     * <p>여기서 허브 상태를 묻지 않는다. 이 메서드는 저장 요청 스레드에서 돌기 때문이다 — 채널이
+     * 켜졌는지 확인하려고 남의 서비스에 HTTP를 거는 순간 편집자의 저장이 그 왕복에 묶인다.
+     * 판단은 커밋 뒤 메일 스레드({@link #dispatch})가 한다.
      */
     public void notify(Notification saved, Page page, String note) {
-        if (!configured()) return;
         Notification.Type type = saved.getType();
         // 스위치와 스냅샷 주소는 지금 읽는다 — 이미 열려 있는 트랜잭션의 DB 조회다. 밖으로 미루는 것은
-        // 남의 서비스를 부르는 일(디렉터리)뿐이다.
+        // 남의 서비스를 부르는 일(디렉터리·메일 허브)뿐이다.
         Optional<NotificationPrefService.MailTarget> target = prefs.immediateTarget(saved.getUserId(), type);
         if (target.isEmpty()) return;
 
@@ -101,7 +101,7 @@ public class EmailNotifier {
 
     /** 하루 요약 한 통 — 주소는 다른 알림과 같은 규칙으로 커밋 뒤에 정해진다. */
     public void notifyDigest(long userId, String snapshotEmail, List<DigestLine> lines) {
-        if (!configured() || lines.isEmpty()) return;
+        if (lines.isEmpty()) return;
         enqueue(new Pending(userId, snapshotEmail, composeDigest(lines)));
     }
 
@@ -132,21 +132,23 @@ public class EmailNotifier {
     }
 
     /**
-     * 메일 스레드에서 주소를 정하고 보낸다. 여기서만 org-service를 부른다 — 트랜잭션은 이미 끝났고,
-     * 수신자가 여럿이어도 왕복은 한 번이다.
+     * 메일 스레드에서 주소를 정하고 허브에 넘긴다. 여기서만 남의 서비스를 부른다 — 트랜잭션은 이미
+     * 끝났고, 수신자가 여럿이어도 디렉터리 왕복은 한 번이다.
+     *
+     * <p>허브가 꺼져 있으면 디렉터리도 읽지 않는다. 메일을 쓰지 않는 설치에서 문서를 고칠 때마다
+     * org에 GetMembers를 거는 것은 그냥 낭비다.
      */
     private void dispatch(List<Pending> batch) {
-        JavaMailSender sender = senders.getIfAvailable();
-        if (sender == null || batch.isEmpty()) return;
+        if (batch.isEmpty()) return;
         executor.execute(() -> {
+            if (!orgMail.enabled()) return;
             Set<Long> ids = new LinkedHashSet<>();
             for (Pending pending : batch) ids.add(pending.userId());
             Map<Long, DirectoryMember> found = members(ids);
             for (Pending pending : batch) {
                 Optional<String> to = recipient(pending, found.get(pending.userId()));
                 if (to.isEmpty()) continue;
-                pending.message().setTo(to.get());
-                send(sender, pending.message());
+                orgMail.send(List.of(to.get()), pending.draft().subject(), pending.draft().text());
             }
         });
     }
@@ -191,17 +193,8 @@ public class EmailNotifier {
         return Optional.of(snapshot);
     }
 
-    private void send(JavaMailSender sender, SimpleMailMessage message) {
-        try {
-            sender.send(message);
-        } catch (Exception e) {
-            String to = message.getTo() == null ? "" : String.join(",", message.getTo());
-            log.warn("알림 메일 발송 실패: to={} subject={}", to, message.getSubject(), e);
-        }
-    }
-
     /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch}가 채운다 */
-    SimpleMailMessage composeDigest(List<DigestLine> lines) {
+    Draft composeDigest(List<DigestLine> lines) {
         StringBuilder body = new StringBuilder();
         body.append("지난 하루 동안 위키에서 있었던 일 ").append(lines.size()).append("건입니다.\n\n");
         for (DigestLine line : lines) {
@@ -212,18 +205,18 @@ public class EmailNotifier {
         }
         body.append("\n이 메일은 위키 알림 설정(하루 한 번 요약)에 따라 보내졌습니다. 바꾸려면: ")
                 .append(publicUrl).append("/settings/notifications\n");
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(from);
-        message.setSubject("[Wiki] 오늘의 알림 요약 — " + lines.size() + "건");
-        message.setText(body.toString());
-        return message;
+        return new Draft("[Wiki] 오늘의 알림 요약 — " + lines.size() + "건", body.toString());
     }
 
     public record DigestLine(String what, String title, long spaceId, long pageId, String note) {
     }
 
+    /** 보내는 주소는 허브(관리 화면)가 정한다 — 위키가 만드는 것은 제목과 본문뿐이다. */
+    record Draft(String subject, String text) {
+    }
+
     /** 커밋 뒤 주소가 정해질 때까지 들고 있는 한 통 */
-    private record Pending(long userId, String snapshotEmail, SimpleMailMessage message) {
+    private record Pending(long userId, String snapshotEmail, Draft draft) {
     }
 
     public static String describe(Notification.Type type) {
@@ -237,7 +230,7 @@ public class EmailNotifier {
     }
 
     /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch}가 채운다 */
-    SimpleMailMessage compose(Notification.Type type, Page page, String actor, String note) {
+    Draft compose(Notification.Type type, Page page, String actor, String note) {
         String title = page.getTitle();
         String subject = switch (type) {
             case MENTIONED -> actor + "님이 '" + title + "'에서 나를 멘션했습니다";
@@ -253,11 +246,6 @@ public class EmailNotifier {
                 .append("/pages/").append(page.getId()).append("\n\n");
         body.append("이 메일은 위키 알림 설정에 따라 보내졌습니다. 받지 않으려면: ")
                 .append(publicUrl).append("/settings/notifications\n");
-
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(from);
-        message.setSubject("[Wiki] " + subject);
-        message.setText(body.toString());
-        return message;
+        return new Draft("[Wiki] " + subject, body.toString());
     }
 }

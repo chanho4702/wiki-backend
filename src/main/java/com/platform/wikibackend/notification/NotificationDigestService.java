@@ -42,7 +42,7 @@ public class NotificationDigestService {
     /** 보낸 요약 통 수. */
     @Transactional
     public int run() {
-        if (!email.configured()) return 0;
+        if (!email.enabled()) return 0;
         Instant since = Instant.now().minus(LOOKBACK);
         int sent = 0;
         for (NotificationPref pref : prefs.dailyRecipients()) {

@@ -16,8 +16,6 @@ spring:
     # 주체는 DocsPrincipalFilter가 직접 심는다. Boot 쪽까지 제외하려 들지 말 것(클래스명이
     # Boot 버전마다 옮겨 다녀 오타 하나로 부팅이 깨진다).
     exclude: com.platform.common.security.PlatformResourceServerAutoConfiguration
-  mail:
-    host: ""   # 공개 인스턴스는 메일을 보내지 않는다(구독자도 없다)
 
 eureka:
   client:
@@ -33,6 +31,9 @@ platform:
   events:
     enabled: false
   wiki:
+    org:
+      # 공개 인스턴스는 메일을 보내지 않는다(구독자도 없다). 토큰을 비우면 허브를 부르지도 않는다.
+      internal-token: ""
     storage:
       write-backend: local   # 노트에 이미지가 없다 — S3/MinIO를 붙이지 않는다
     # 스케줄러 4종 정지: 쓰기가 임포터뿐이라 정리할 것이 생기지 않는다.

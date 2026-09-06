@@ -252,6 +252,18 @@ org 불능은 `503`이고, 그 밖의 조회 실패는 warn만 남기고 통과�
 묶음 하나라도 실패하면 결과 전체를 실패로 표시한다 — 부분 성공을 성공으로 읽으면 빠진 사람이
 "없는 사람"이 되고, 계정 상태 게이트에서 그 오해는 정지된 계정을 통과시키는 것과 같다.
 
+**알림 메일 발송기도 org-service다.** 위키는 SMTP를 직접 말하지 않고 허브의 내부 API에 제목과 본문을
+넘긴다 — `POST /internal/org/mail`(`{to[], subject, text, source:"wiki"}` → 202 `{accepted, disabled}`),
+`GET /internal/org/mail/status`(→ `{enabled}`, 60초 캐시). 인증은 사용자 JWT가 아니라 공유 비밀
+`X-Internal-Token`(`ORG_INTERNAL_TOKEN`)이고, 타임아웃은 연결 2초·읽기 5초다. SMTP 서버·자격증명·TLS·
+보내는 주소는 org의 관리 화면이 플랫폼 전체를 하나로 정하고, 재시도와 발송 로그(outbox)도 거기 있다.
+서비스마다 `WIKI_MAIL_*`·`ALM_MAIL_*`로 갈라져 있던 설정이 한 곳으로 모인 결과다.
+
+허브가 꺼져 있거나(`disabled`) `ORG_INTERNAL_TOKEN`이 비면 아무것도 나가지 않고 알림함만 남는다 —
+설정 화면은 응답의 `emailConfigured`로 그 사실을 먼저 알린다. 발송 실패는 warn 로그로만 남는다.
+**허브 상태는 요청 스레드에서 묻지 않는다**: 확인하려고 남의 서비스에 HTTP를 걸면 편집자의 저장이
+그 왕복에 묶인다. 판단은 커밋 뒤 `wiki-mail` 스레드가 한다.
+
 **알림 메일 주소**는 원장이 정본이고 개인 설정에 남은 주소는 폴백이다. 예전에는 스냅샷만 봐서,
 org에서 이메일을 바꾸면 그 사람이 다시 다녀갈 때까지 옛 주소로 계속 보냈다. 지금은 커밋 뒤 발송
 직전에 원장을 읽는다.
@@ -323,6 +335,11 @@ Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·
 | `PLATFORM_ISSUER` / `PLATFORM_AUDIENCE` | `http://localhost:9000` / `platform-api` | JWT 검증 계약 |
 | `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | SPACE 권한 판정·계정 상태 조회 |
 | `ORG_GRPC_DEADLINE_SECONDS` | `5` | org gRPC 호출 데드라인(콜드 스타트 흡수) |
+| `ORG_INTERNAL_URI` | `http://localhost:9130` | 플랫폼 메일 허브(org-service) 내부 API 주소 |
+| `ORG_INTERNAL_TOKEN` | 빈 값 | 허브 내부 API 공유 비밀(`X-Internal-Token`). 비면 메일 채널 자체가 꺼진다 |
+| `WIKI_PUBLIC_URL` | `http://localhost/wiki` | 알림 메일 본문의 링크가 가리킬 위키 주소(브라우저 기준) |
+| `WIKI_MAIL_DIGEST_ENABLED` | `true` | "하루 한 번 요약" 시계 on/off |
+| `WIKI_MAIL_DIGEST_CRON` | `0 0 9 * * *` | 요약 발송 시각(서버 시간, cron 6자리). 인스턴스 하나만 켜 둔다 |
 | `WIKI_GRPC_ENABLED` / `WIKI_GRPC_PORT` | `true` / `9111` | 콘텐츠 조달 gRPC |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | 이벤트 스트림 |
 | `EVENTS_ENABLED` | `true` | 이벤트 발행 on/off |

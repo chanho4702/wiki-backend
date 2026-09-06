@@ -30,13 +30,13 @@ public class NotificationPrefService {
 
     /** 설정 화면 — 없으면 기본값을 만들어 돌려준다(주소를 이때 처음 알게 된다). */
     public NotificationPrefResponse view(long userId, String jwtEmail) {
-        return NotificationPrefResponse.from(ensure(userId, jwtEmail), email.configured());
+        return NotificationPrefResponse.from(ensure(userId, jwtEmail), email.enabled());
     }
 
     public NotificationPrefResponse update(long userId, String jwtEmail, NotificationPrefUpdate req) {
         NotificationPref pref = ensure(userId, jwtEmail);
         pref.update(req.emailEnabled(), req.emailMode(), req.mentioned(), req.pageUpdated(), req.comment(), req.shared());
-        return NotificationPrefResponse.from(pref, email.configured());
+        return NotificationPrefResponse.from(pref, email.enabled());
     }
 
     /**

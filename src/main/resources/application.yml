@@ -13,18 +13,6 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
-  mail:
-    # 이메일 알림 채널(W23). host가 비면 아무것도 발송하지 않고 알림함만 남는다 — OpenSearch와 같은 선택 옵션.
-    host: ${WIKI_MAIL_HOST:}
-    port: ${WIKI_MAIL_PORT:587}
-    username: ${WIKI_MAIL_USERNAME:}
-    password: ${WIKI_MAIL_PASSWORD:}
-    properties:
-      mail.smtp.auth: ${WIKI_MAIL_SMTP_AUTH:true}
-      mail.smtp.starttls.enable: ${WIKI_MAIL_STARTTLS:true}
-      mail.smtp.connectiontimeout: 5000
-      mail.smtp.timeout: 10000
-      mail.smtp.writetimeout: 10000
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -97,6 +85,12 @@ platform:
     enabled: ${WIKI_GRPC_ENABLED:true}
     port: ${WIKI_GRPC_PORT:9111}
   wiki:
+    org:
+      # 플랫폼 메일 허브(org-service)의 내부 API. 메일 발송은 여기 한 곳에 모인다 —
+      # SMTP 설정·자격증명·재시도·발송 로그는 org의 관리 화면이 가지고, 위키는 제목과 본문만 넘긴다.
+      # 토큰이 비면 채널은 꺼진 것이다(호출도 하지 않는다) — 예전의 빈 WIKI_MAIL_HOST와 같은 자리.
+      internal-uri: ${ORG_INTERNAL_URI:http://localhost:9130}
+      internal-token: ${ORG_INTERNAL_TOKEN:}
     # 이관 엔진(migration-service)이 /internal/wiki/import/**를 부를 때 실어 보내는 공유 비밀.
     # 비어 있으면 그 경로는 전부 403이다 — 설정을 깜빡한 인스턴스가 열린 채로 뜨지 않게.
     internal-token: ${WIKI_INTERNAL_TOKEN:}
@@ -136,7 +130,7 @@ platform:
       # Access Token을 WebSocket query에 싣지 않기 위한 1회용 Redis ticket. 5분 초과는 부팅 시 거부한다.
       ticket-ttl: ${WIKI_COLLABORATION_TICKET_TTL:PT1M}
     mail:
-      from: ${WIKI_MAIL_FROM:wiki@localhost}
+      # 보내는 주소(from)는 여기 없다 — 허브(org-service)의 관리 화면이 플랫폼 전체를 하나로 정한다.
       # 메일 본문의 링크가 가리킬 위키 주소(브라우저 기준).
       public-url: ${WIKI_PUBLIC_URL:http://localhost/wiki}
       # "하루 한 번 요약" 모드의 발송 시각(서버 시간, cron 6자리). 여러 인스턴스가 떠 있으면 각자 돈다 —

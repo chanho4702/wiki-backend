@@ -17,17 +17,19 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.List;
+
 import static com.platform.wikibackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -44,7 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 계속 보냈고, 떠난 계정에도 계속 보냈다. 여기서 보는 것은 그 세 가지다 — 디렉터리 우선, 막힌 계정
  * 제외, org를 못 읽으면 스냅샷 폴백(메일 때문에 저장이 막히지는 않는다).
  */
-@SpringBootTest(properties = "spring.mail.host=smtp.test")
+@SpringBootTest
 @ActiveProfiles("test")
 class EmailDirectoryTest {
 
@@ -62,13 +64,15 @@ class EmailDirectoryTest {
     @Autowired AccountStatusInterceptor gate;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired NotificationDigestService digest;
-    @MockitoBean JavaMailSender mailSender;
+    @MockitoBean OrgMailClient orgMail;
 
     MockMvc mvc;
     Space space;
 
     @BeforeEach
     void setup() {
+        given(orgMail.enabled()).willReturn(true);
+        given(orgMail.send(anyList(), any(), any())).willReturn(true);
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         notifications.deleteAll();
         prefs.deleteAll();
@@ -122,9 +126,9 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) 확인 부탁", 1);
 
-        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender, timeout(5000)).send(sent.capture());
-        assertThat(sent.getValue().getTo()).containsExactly("bob.new@org.example");
+        ArgumentCaptor<List<String>> sent = ArgumentCaptor.captor();
+        verify(orgMail, timeout(5000)).send(sent.capture(), any(), any());
+        assertThat(sent.getValue()).containsExactly("bob.new@org.example");
     }
 
     /** 떠난 사람에게 계속 보내지 않는다 — 스냅샷이 남아 있어도 폴백하지 않는다 */
@@ -135,7 +139,7 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) 확인 부탁", 1);
 
-        verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+        verify(orgMail, after(500).never()).send(anyList(), any(), any());
         assertThat(notifications.findByUserIdAndReadAtIsNull(BOB)).hasSize(1); // 알림함에는 남는다
     }
 
@@ -150,7 +154,7 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) 확인 부탁", 1);
 
-        verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+        verify(orgMail, after(500).never()).send(anyList(), any(), any());
     }
 
     /** org 불능은 메일을 멈출 이유가 아니다 — 알던 주소로 보낸다 */
@@ -165,9 +169,9 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) 확인 부탁", 1);
 
-        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender, timeout(5000)).send(sent.capture());
-        assertThat(sent.getValue().getTo()).containsExactly("bob@test.com");
+        ArgumentCaptor<List<String>> sent = ArgumentCaptor.captor();
+        verify(orgMail, timeout(5000)).send(sent.capture(), any(), any());
+        assertThat(sent.getValue()).containsExactly("bob@test.com");
     }
 
     /** org가 이메일을 비워 둔 사람도 스냅샷으로 간다 — "사람은 있는데 주소를 모른다"는 거부가 아니다 */
@@ -178,9 +182,9 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) 확인 부탁", 1);
 
-        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender, timeout(5000)).send(sent.capture());
-        assertThat(sent.getValue().getTo()).containsExactly("bob@test.com");
+        ArgumentCaptor<List<String>> sent = ArgumentCaptor.captor();
+        verify(orgMail, timeout(5000)).send(sent.capture(), any(), any());
+        assertThat(sent.getValue()).containsExactly("bob@test.com");
     }
 
     /** 요약 메일도 같은 규칙을 탄다 — 발송 직전에 주소를 정하고 막힌 계정은 건너뛴다 */
@@ -196,7 +200,7 @@ class EmailDirectoryTest {
         directory.put(BOB, "Bob", "bob@org.example", "DEACTIVATED");
 
         assertThat(digest.run()).isEqualTo(1); // 요약을 만들기는 한다 — 주소 판정은 발송 직전이다
-        verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+        verify(orgMail, after(500).never()).send(anyList(), any(), any());
     }
 
     /**
@@ -221,9 +225,9 @@ class EmailDirectoryTest {
         directory.put(BOB, "Bob", "bob@org.example", "ACTIVE");
 
         assertThat(digest.run()).isEqualTo(1);
-        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender, timeout(5000)).send(sent.capture());
-        assertThat(sent.getValue().getTo()).containsExactly("bob@org.example");
+        ArgumentCaptor<List<String>> sent = ArgumentCaptor.captor();
+        verify(orgMail, timeout(5000)).send(sent.capture(), any(), any());
+        assertThat(sent.getValue()).containsExactly("bob@org.example");
     }
 
     /**
@@ -241,7 +245,7 @@ class EmailDirectoryTest {
 
         mention("[@Bob](user:2) [@Carol](user:3) 확인 부탁", 1);
 
-        verify(mailSender, timeout(5000).times(2)).send(any(SimpleMailMessage.class));
+        verify(orgMail, timeout(5000).times(2)).send(anyList(), any(), any());
         // 게이트가 Alice를 한 번 묻고, 메일 발송이 Bob·Carol을 한 번에 묻는다 — 수신자당 왕복이 아니다
         assertThat(directory.calls()).anyMatch(ids -> ids.size() == 2 && ids.containsAll(java.util.List.of(BOB, CAROL)));
         assertThat(directory.calls().stream().filter(ids -> ids.size() > 1)).hasSize(1);
