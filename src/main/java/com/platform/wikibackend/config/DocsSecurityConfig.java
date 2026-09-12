@@ -70,13 +70,12 @@ public class DocsSecurityConfig {
                         .requestMatchers("/api/wiki/stars", "/api/wiki/stars/**").denyAll()
                         .requestMatchers("/api/wiki/recent").denyAll()
                         .requestMatchers("/api/wiki/tasks", "/api/wiki/tasks/**").denyAll()
-                        // 전역 감사 로그는 accessibleSpaces().all()로 전역 관리자를 판정한다 —
-                        // PublicReadPermissionClient가 all=true를 주므로 익명에게 열려 버린다.
+                        // 전역 감사 로그·관리자 현황(설계 §4.1)은 전역 관리자 전용이다. 이 인스턴스에는
+                        // 전역 관리자가 없어 PublicReadPermissionClient.checkGlobal이 늘 거부하므로 권한
+                        // 계층에서도 닫히지만, 경로째로 막아 둔다(이중 방어) — 그 숫자는 팀 위키가 아니라
+                        // 이 인스턴스의 것이라 임포터에게조차 공개할 뜻이 없다.
                         // 스페이스별 감사(/spaces/*/audit)는 ADMIN 판정이라 이미 닫혀 있다.
                         .requestMatchers("/api/wiki/audit/**").denyAll()
-                        // 관리자 현황(설계 §4.1)도 같은 이유로 닫는다 — accessibleSpaces().all()로
-                        // 전역 관리자를 판정하는데 여기서는 그게 익명에게도 true다. 게다가 그 숫자는
-                        // 팀 위키가 아니라 이 인스턴스의 것이라 공개해도 뜻이 없다.
                         .requestMatchers("/api/wiki/admin/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/api/wiki/**").permitAll()
                         // 라이트 검색 GraphQL — 읽기 질의만 있는 스키마다(mutation 없음).

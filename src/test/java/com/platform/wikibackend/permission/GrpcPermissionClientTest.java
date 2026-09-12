@@ -27,9 +27,11 @@ class GrpcPermissionClientTest {
         volatile boolean fail = false;
         volatile Status failStatus = Status.UNAVAILABLE;
         volatile String deniedReason = "";
+        volatile CheckPermissionRequest lastCheck;
 
         @Override public void checkPermission(CheckPermissionRequest req, StreamObserver<CheckPermissionResponse> out) {
             checkCalls.incrementAndGet();
+            lastCheck = req;
             if (fail) { out.onError(failStatus.asRuntimeException()); return; }
             out.onNext(CheckPermissionResponse.newBuilder()
                     .setAllowed(allow)
@@ -155,6 +157,54 @@ class GrpcPermissionClientTest {
         assertThat(PermissionDecision.accountMessage("ACTIVE")).isNull();
         assertThat(PermissionDecision.accountMessage("")).isNull();
         assertThat(PermissionDecision.accountMessage(null)).isNull();
+    }
+
+    /** 전역 관리자 판정은 CheckPermission(GLOBAL, ADMIN)이다 — resource_id는 빈 값(proto 계약) */
+    @Test
+    void checkGlobal은_GLOBAL_리소스로_묻는다() {
+        assertThat(client.checkGlobal(1L, WikiAction.ADMIN).allowed()).isTrue();
+
+        assertThat(stubOrg.lastCheck.getResourceType()).isEqualTo(ResourceType.GLOBAL);
+        assertThat(stubOrg.lastCheck.getResourceId()).isEmpty();
+        assertThat(stubOrg.lastCheck.getAction()).isEqualTo(Action.ADMIN);
+        assertThat(stubOrg.lastCheck.getUserId()).isEqualTo(1L);
+    }
+
+    /**
+     * 캐시 키에 리소스 종류가 들어간다 — 안 들어가면 스페이스 하나의 ADMIN 판정이 전역 관리자
+     * 판정으로 재사용되어 권한 상승이 된다.
+     */
+    @Test
+    void 전역_판정과_스페이스_판정은_캐시를_공유하지_않는다() {
+        client.check(1L, 5L, WikiAction.ADMIN);
+        client.checkGlobal(1L, WikiAction.ADMIN);
+
+        assertThat(stubOrg.checkCalls.get()).isEqualTo(2);
+        assertThat(stubOrg.lastCheck.getResourceType()).isEqualTo(ResourceType.GLOBAL);
+
+        client.checkGlobal(1L, WikiAction.ADMIN); // 전역 판정도 제 키로 캐시된다
+        assertThat(stubOrg.checkCalls.get()).isEqualTo(2);
+    }
+
+    /** 전역 판정도 거부 사유를 싣는다 — 옛 accessibleSpaces().all() 판정에는 없던 정보다 */
+    @Test
+    void checkGlobal도_거부_사유를_싣는다() {
+        stubOrg.allow = false;
+        stubOrg.deniedReason = "PENDING";
+
+        PermissionDecision decision = client.checkGlobal(5L, WikiAction.ADMIN);
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.accountMessage()).isEqualTo("승인 대기 중인 계정입니다");
+    }
+
+    /** org 불능이면 전역 판정도 503이다 — fail-closed로 "관리자가 아니다"라고 말하지 않는다 */
+    @Test
+    void checkGlobal은_org_불능에_503을_전파한다() {
+        stubOrg.fail = true;
+        stubOrg.failStatus = Status.DEADLINE_EXCEEDED;
+
+        assertThatThrownBy(() -> client.checkGlobal(6L, WikiAction.ADMIN))
+                .isInstanceOf(ServiceUnavailableException.class);
     }
 
     @Test

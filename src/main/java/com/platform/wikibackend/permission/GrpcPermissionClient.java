@@ -20,7 +20,11 @@ import java.util.stream.Collectors;
 @Slf4j
 public class GrpcPermissionClient implements PermissionClient {
 
-    private record CacheKey(long userId, long spaceId, WikiAction action) {}
+    /**
+     * 리소스 종류까지 키에 넣는다 — GLOBAL과 SPACE를 같은 키로 묶으면 스페이스 하나의 ADMIN 판정이
+     * 전역 관리자 판정으로 재사용된다(권한 상승). GLOBAL이면 resourceId는 빈 문자열이다(proto 계약).
+     */
+    private record CacheKey(long userId, ResourceType type, String resourceId, WikiAction action) {}
 
     private final PermissionServiceGrpc.PermissionServiceBlockingStub stub;
     // 판정을 30초 캐시한다 — 매 요청 gRPC 왕복을 피하는 값이다. 대가는 반영 지연이고, grant 회수만이
@@ -45,12 +49,21 @@ public class GrpcPermissionClient implements PermissionClient {
 
     @Override
     public PermissionDecision check(long userId, long spaceId, WikiAction action) {
-        return cache.get(new CacheKey(userId, spaceId, action), k -> {
+        return decide(new CacheKey(userId, ResourceType.SPACE, String.valueOf(spaceId), action));
+    }
+
+    @Override
+    public PermissionDecision checkGlobal(long userId, WikiAction action) {
+        return decide(new CacheKey(userId, ResourceType.GLOBAL, "", action));
+    }
+
+    private PermissionDecision decide(CacheKey key) {
+        return cache.get(key, k -> {
             try {
                 CheckPermissionResponse response = deadline().checkPermission(CheckPermissionRequest.newBuilder()
                         .setUserId(k.userId())
-                        .setResourceType(ResourceType.SPACE)
-                        .setResourceId(String.valueOf(k.spaceId()))
+                        .setResourceType(k.type())
+                        .setResourceId(k.resourceId())
                         .setAction(toProto(k.action()))
                         .build());
                 return response.getAllowed()
@@ -61,10 +74,12 @@ public class GrpcPermissionClient implements PermissionClient {
                 // org가 죽은 동안 사용자에게 "당신은 권한이 없다"고 거짓말하거나(전자),
                 // 진짜 거부를 열어 준다(후자).
                 if (isUnavailable(e)) {
-                    log.error("권한 서비스 불가 — 503 전파: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
+                    log.error("권한 서비스 불가 — 503 전파: user={} resource={}/{} action={}",
+                            k.userId(), k.type(), k.resourceId(), k.action(), e);
                     throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
                 }
-                log.warn("권한조회 실패 — fail-closed: user={} space={} action={}", k.userId(), k.spaceId(), k.action(), e);
+                log.warn("권한조회 실패 — fail-closed: user={} resource={}/{} action={}",
+                        k.userId(), k.type(), k.resourceId(), k.action(), e);
                 // 사유 없는 거부 — org가 답을 못 준 것이지 "상태로 막힌 것"이 아니다
                 return PermissionDecision.deny("");
             }

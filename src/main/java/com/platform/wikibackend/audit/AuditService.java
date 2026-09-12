@@ -4,6 +4,7 @@ import com.platform.wikibackend.domain.AuditAction;
 import com.platform.wikibackend.domain.AuditLog;
 import com.platform.wikibackend.domain.Page;
 import com.platform.common.error.ForbiddenException;
+import com.platform.wikibackend.permission.GlobalAdminGuard;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AuditLogRepository;
@@ -41,6 +42,8 @@ public class AuditService {
      * 서비스는 기록기이지 상위 서비스가 아니다 — 판정에 필요한 최소한만 들고 있는다.
      */
     private final PermissionClient permissions;
+    /** 전역 관리자 판정(GLOBAL·ADMIN) — 스페이스 감사와 달리 스페이스가 없는 경로가 쓴다. */
+    private final GlobalAdminGuard globalAdmin;
 
     public void record(long spaceId, long actorId, AuditAction action, String targetType,
                        Long targetId, String targetLabel, String detail) {
@@ -70,14 +73,14 @@ public class AuditService {
     }
 
     /**
-     * 스페이스 삭제 기록 — 전역 관리자(GLOBAL grant)만. 스페이스가 없으니 스페이스 ADMIN으로는
-     * 판정할 수 없고, 지워진 스페이스의 이름은 그 조직을 관리하는 사람만 볼 일이다.
+     * 스페이스 삭제 기록 — 전역 관리자만. 스페이스가 없으니 스페이스 ADMIN으로는 판정할 수 없고,
+     * 지워진 스페이스의 이름은 그 조직을 관리하는 사람만 볼 일이다. 판정은 org
+     * {@code CheckPermission(GLOBAL, ADMIN)}이다({@link GlobalAdminGuard}) — grant 목록을 훑던
+     * 옛 방식과 달리 승인 대기·정지된 계정에게는 그 사실을 403 문구로 말한다.
      */
     @Transactional(readOnly = true)
     public List<AuditEntry> listSpaceDeletions(long userId) {
-        if (!permissions.accessibleSpaces(userId).all()) {
-            throw new ForbiddenException("스페이스 삭제 기록은 전역 관리자만 볼 수 있습니다");
-        }
+        globalAdmin.require(userId, "스페이스 삭제 기록은 전역 관리자만 볼 수 있습니다");
         return logs.findByAction(AuditAction.SPACE_DELETED.name(), Limit.of(PAGE_SIZE)).stream()
                 .map(AuditEntry::from)
                 .toList();

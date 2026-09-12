@@ -2,10 +2,9 @@ package com.platform.wikibackend.admin;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.platform.common.error.ForbiddenException;
 import com.platform.wikibackend.attachment.AttachmentLifecycleStatus;
 import com.platform.wikibackend.domain.PageStatus;
-import com.platform.wikibackend.permission.PermissionClient;
+import com.platform.wikibackend.permission.GlobalAdminGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,11 +17,11 @@ import java.time.Instant;
  *
  * 두 가지 규율이 있다.
  *
- * <p><b>전역 관리자만.</b> 판정은 {@code accessibleSpaces(userId).all()} — 전역 grant 보유자만
- * true다. 스페이스 삭제 기록(`/api/wiki/audit/space-deletions`)과 같은 기준을 쓴다: 전 스페이스를
- * 가로지르는 숫자는 스페이스 하나의 ADMIN이 볼 것이 아니다. org-service가 불능이면
- * {@code accessibleSpaces}가 던지는 {@code ServiceUnavailableException}이 그대로 503으로 나간다
- * (fail-closed — 판정을 못 하면 열지 않는다).
+ * <p><b>전역 관리자만.</b> 판정은 {@link GlobalAdminGuard} — org {@code CheckPermission(GLOBAL, ADMIN)}
+ * 하나다. 스페이스 삭제 기록(`/api/wiki/audit/space-deletions`)과 같은 기준을 쓴다: 전 스페이스를
+ * 가로지르는 숫자는 스페이스 하나의 ADMIN이 볼 것이 아니다. 막힌 이유가 계정 상태면(승인 대기·정지)
+ * 403 문구가 그 사실을 말하고, org-service가 불능이면 {@code ServiceUnavailableException}이 그대로
+ * 503으로 나간다(fail-closed — 판정을 못 하면 열지 않는다).
  *
  * <p><b>60초 캐시.</b> 화면이 몇 개 떠 있든 DB가 받는 집계는 60초에 한 번을 넘지 않는다.
  * 캐시는 사용자별이 아니다 — 결과가 전역 숫자라 누가 물어도 같고, 권한 판정은 캐시 앞에서
@@ -39,7 +38,7 @@ public class AdminStatsService {
     /** 전역 집계라 키가 하나뿐이다 — Caffeine을 단일 슬롯 메모이저로 쓴다. */
     private static final String KEY = "wiki";
 
-    private final PermissionClient permissions;
+    private final GlobalAdminGuard globalAdmin;
     private final AdminStatsRepository stats;
 
     private final Cache<String, WikiAdminStats> cache = Caffeine.newBuilder()
@@ -53,9 +52,7 @@ public class AdminStatsService {
      */
     @Transactional(readOnly = true)
     public WikiAdminStats stats(long userId) {
-        if (!permissions.accessibleSpaces(userId).all()) {
-            throw new ForbiddenException("플랫폼 현황은 전역 관리자만 볼 수 있습니다");
-        }
+        globalAdmin.require(userId, "플랫폼 현황은 전역 관리자만 볼 수 있습니다");
         return cache.get(KEY, key -> compute());
     }
 

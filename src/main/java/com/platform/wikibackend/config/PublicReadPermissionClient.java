@@ -29,6 +29,18 @@ public class PublicReadPermissionClient implements PermissionClient {
                 : PermissionDecision.deny("");
     }
 
+    /**
+     * 이 인스턴스에는 전역 관리자가 없다 — 언제나 거부다.
+     *
+     * <p>임포터에게도 주지 않는다: 전역 관리자 경로(관리자 현황·스페이스 삭제 기록)는 팀 위키의
+     * 운영 정보이고 여기서는 숫자가 뜻이 없다. {@code DocsSecurityConfig}가 경로째로 닫아 두지만
+     * 권한 계층에서도 닫는다 — 새 전역 경로가 생겨 경로 규칙에서 빠지더라도 조용히 열리지 않게.
+     */
+    @Override
+    public PermissionDecision checkGlobal(long userId, WikiAction action) {
+        return PermissionDecision.deny("");
+    }
+
     /** 스페이스가 전부 공개다 — 목록·검색이 스페이스 화이트리스트로 걸리지 않게 all=true. */
     @Override
     public AccessScope accessibleSpaces(long userId) {

@@ -74,7 +74,7 @@ class AdminStatsApiTest {
         TestPages.deleteAll(jdbc);
         spaces.deleteAllInBatch();
         perms.reset();
-        // 전역 grant 보유자 = accessibleSpaces().all() — 감사 로그와 같은 판정이다.
+        // 전역 관리자 = CheckPermission(GLOBAL, ADMIN) — 감사 로그와 같은 판정이다.
         perms.allowAll(ADMIN);
         // 캐시는 전역이라 앞선 테스트의 값이 남는다. 테스트 사이에는 비운다.
         service.invalidate();

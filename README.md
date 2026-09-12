@@ -227,6 +227,12 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 `ACTION 권한이 필요합니다 (space N)`, 감사 로그는 `감사 로그는 스페이스 관리자만 볼 수 있습니다`,
 남의 코멘트 삭제는 `본인의 코멘트만 삭제할 수 있습니다`.
 
+**전역 관리자 판정은 org `CheckPermission(GLOBAL, ADMIN)` 하나다**(`GlobalAdminGuard`, 2026-09-12 —
+alm-backend와 같은 판정). 관리자 현황(`/api/wiki/admin/stats`)과 스페이스 삭제 기록
+(`/api/wiki/audit/space-deletions`)이 그 경로이고, 전 스페이스가 보이는 것
+(`accessibleSpaces().all()` — 목록·검색 필터 전용)은 전역 관리자라는 뜻이 **아니다**. 그래서 승인 대기·정지된
+계정도 위 표의 문구를 받는다(옛 grant 목록 판정에는 사유가 없어 전부 "전역 관리자만 볼 수 있습니다"였다).
+
 판정은 30초 캐시된다(`GrpcPermissionClient`). grant 회수뿐 아니라 **계정 정지·비활성도 그만큼 늦게**
 반영된다.
 
