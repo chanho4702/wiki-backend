@@ -137,7 +137,7 @@ public class AuditService {
      */
     @Transactional(readOnly = true)
     public AuditFeedPage feed(long userId, Integer page, Integer size, String type, Instant since) {
-        globalAdmin.require(userId, "전역 감사 로그는 전역 관리자만 볼 수 있습니다");
+        globalAdmin.require(userId, "전역 감사 피드는 전역 관리자만 볼 수 있습니다");
         int pageNumber = page == null || page < 0 ? 0 : page;
         int pageSize = size == null || size <= 0 ? FEED_DEFAULT_SIZE : Math.min(size, FEED_MAX_SIZE);
         String action = action(type);

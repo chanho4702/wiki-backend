@@ -5,6 +5,7 @@ import com.platform.wikibackend.domain.AuditAction;
 import com.platform.wikibackend.domain.AuditLog;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.permission.FakePermissionClient;
+import com.platform.wikibackend.permission.WikiAction;
 import com.platform.wikibackend.repository.AuditLogRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 
 import static com.platform.wikibackend.TestAuth.asUser;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -90,6 +92,9 @@ class GlobalAuditFeedTest {
 
         mvc.perform(get("/api/wiki/audit").with(asUser(OTHER, "남")))
                 .andExpect(status().isForbidden());
+        // grant 목록이 아니라 GLOBAL 판정을 실제로 탔는지까지 본다(결과만 같은 우회를 막는다).
+        assertThat(perms.globalChecks)
+                .containsExactly(new FakePermissionClient.GlobalCheck(OTHER, WikiAction.ADMIN));
     }
 
     /** org가 죽은 동안 "당신은 관리자가 아닙니다"라고 답하면 사람이 잘못된 조치를 한다. */
