@@ -203,7 +203,11 @@ class DocsSecurityTest {
             "/api/wiki/stars",
             "/api/wiki/recent",
             "/api/wiki/tasks/mine",
-            "/api/wiki/audit/space-deletions"})
+            "/api/wiki/audit/space-deletions",
+            // 전역 감사 피드. `/api/wiki/audit/**` 규칙이 하위 세그먼트 없는 이 경로까지
+            // 덮는지가 관건이라 별도로 못 박는다 — 안 덮으면 익명에게 전 스페이스의
+            // 문서 제목이 흘러 나간다(PublicReadPermissionClient가 all=true를 준다).
+            "/api/wiki/audit"})
     void 사용자_범위_경로는_익명_GET도_403이다(String path) throws Exception {
         mvc.perform(get(path)).andExpect(status().isForbidden());
     }

@@ -71,6 +71,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 공동 편집 ticket | `POST /api/wiki/pages/{pageId}/collaboration-ticket` | EDIT |
 | 댓글 | `GET/POST /api/wiki/pages/{pageId}/comments` | VIEW |
 | 댓글 | `PUT/DELETE /api/wiki/comments/{id}` | 작성자 (삭제는 스페이스 ADMIN도) |
+| 감사 로그 | `GET /api/wiki/spaces/{spaceId}/audit` | 스페이스 ADMIN |
+| 감사 로그 | `GET /api/wiki/audit`, `GET /api/wiki/audit/space-deletions` | 전역 관리자 |
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -88,6 +90,52 @@ org-service에 COMMENT action이 생기기 전까지의 기준선 — 수정은 
 스페이스 ADMIN(moderation)이 한다. 최상위 댓글을 지우면 답글도 함께 사라진다. `authorName`은
 작성 시점 표시 이름 스냅샷이고, `updatedAt`은 본문이 실제로 수정된 시각이라 수정 전에는 null이다
 (무변경 재저장은 "(수정됨)"을 남기지 않는다). `anchor_type`은 후속 인라인 댓글 확장 자리다.
+
+### 전역 감사 피드 (`GET /api/wiki/audit`)
+
+플랫폼 관리자 대시보드의 "최근 활동"이 읽는다. 스페이스 스코프 조회와 판정 기준이 다르다 —
+org `CheckPermission(GLOBAL, ADMIN)`(`GlobalAdminGuard`)이며, 스페이스 삭제 기록·관리자 현황과 같은
+기준이다. 전 스페이스를 가로지르는 목록에는 제한된 문서의 제목이 그대로 들어 있어 스페이스 하나의
+ADMIN에게 열 수 없다. 거부는 공통 계약 `{"error": …}`의 403(계정이 승인 대기·정지·비활성이면 그
+사실을 문구로 말한다), org-service가 불능이면 503이다 — 권한 없음으로 오인하지 않는다.
+
+쿼리 파라미터는 넷 다 선택이다.
+
+| 파라미터 | 기본 | 뜻 |
+|---|---|---|
+| `page` | 0 | 0부터 세는 페이지 번호. 음수는 0으로 본다 |
+| `size` | 20 | 페이지 크기. 상한 100 — 넘겨도 거절하지 않고 자르며, 응답의 `size`가 실제 적용값이다 |
+| `type` | 없음 | `eventType` 필터. 모르는 값은 400(오타를 "기록 없음"으로 돌려주지 않는다) |
+| `since` | 없음 | 이 시각 이후만. ISO-8601(`2026-09-01T00:00:00Z`) |
+
+```json
+{
+  "items": [
+    {
+      "id": 123, "eventType": "PAGE_TRASHED", "actorId": 7,
+      "spaceId": 3, "spaceKey": "DOCS", "pageId": 55,
+      "targetTitle": "설계 문서", "summary": "페이지 휴지통 이동",
+      "occurredAt": "2026-09-12T01:02:03Z"
+    }
+  ],
+  "page": 0, "size": 20, "total": 1234
+}
+```
+
+`occurredAt` 내림차순이고, 같은 시각은 id 내림차순으로 갈린다. 필드 이름은 프론트 어댑터와 맞춘
+계약이라 엔티티 컬럼명과 다르다: `eventType`=`action`, `targetTitle`=`target_label`,
+`occurredAt`=`created_at`. `pageId`는 페이지 대상 기록에만 있고(그 외 null), `spaceKey`는 이미 지워진
+스페이스면 null이다 — 감사 기록은 스페이스보다 오래 산다(V30). `summary`는 조작의 한국어 라벨이고
+상세가 있으면 `라벨 — 상세`로 붙는다. 라벨의 정본은 `AuditAction` enum 하나다.
+
+`eventType` 값은 `AuditAction`의 값 집합이다: `PAGE_TRASHED`, `PAGE_RESTORED`, `PAGE_PURGED`,
+`PAGE_ARCHIVED`, `PAGE_UNARCHIVED`, `PAGE_RESTRICTIONS_CHANGED`, `PAGE_OWNER_CHANGED`,
+`PAGE_VERIFIED`, `PAGE_UNVERIFIED`, `ATTACHMENT_DELETED`, `SPACE_UPDATED`, `SPACE_DELETED`,
+`TEMPLATE_CREATED`, `TEMPLATE_UPDATED`, `TEMPLATE_DELETED`, `IMPORTED`. **본문 수정은 없다** —
+리비전이 이미 남기므로 감사 로그에 넣지 않는다.
+
+정렬을 받치는 인덱스는 V39가 만든다(`created_at DESC, id DESC`와 `action, created_at DESC, id DESC`).
+기존 인덱스는 스페이스 스코프용 하나뿐이라 전역 최신순에는 쓰이지 않았다.
 
 ### OpenAPI
 
@@ -308,6 +356,11 @@ org에서 이메일을 바꾸면 그 사람이 다시 다녀갈 때까지 옛 �
 - 경로 인가는 기본 거부다: `OPTIONS` · `GET /api/wiki/**` · `POST /graphql`만 열고,
   `X-Docs-Import-Token`이 맞은 요청에만 `/api/wiki/**` 쓰기를 연다. 나머지는 403
   (`{"error": "읽기 전용 문서 인스턴스입니다."}`). 조회수 기록은 임포터에게도 닫혀 있다.
+- 사용자 범위·전역 관리자 경로는 GET이어도 그 앞에서 닫는다(`/notifications`, `/stars`,
+  `/recent`, `/tasks`, `/audit/**`, `/admin/**`). 이 인스턴스에는 전역 관리자가 없지만
+  (`PublicReadPermissionClient`가 전역 판정을 항상 거부한다) 인가를 서비스 계층 하나에만
+  맡기지 않는다 — 경로에서도 닫는다. 하위 세그먼트 없는 `/api/wiki/audit`도 같은 규칙에
+  걸린다(`DocsSecurityTest`가 못 박는다).
 - 권한 판정은 org-service를 부르지 않는다 — `PublicReadPermissionClient`가 VIEW를 항상 허용하고
   그 위 등급은 임포터에게만 준다. gRPC 채널·Eureka·색인 gRPC·이벤트 발행·스케줄러 5종은 꺼진다.
 - `DOCS_IMPORT_TOKEN`이 비어 있으면 임포트 경로도 닫혀 어떤 경로로도 쓰기가 되지 않는다.
