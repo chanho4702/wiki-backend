@@ -292,7 +292,12 @@ public interface PageRepository extends JpaRepository<Page, Long> {
      *
      * 권한은 여기서 스페이스까지만 거른다 — 페이지 단위 제한(W18)은 후필터가 맡는다.
      */
-    @Query("""
+    /**
+     * 페이지 후보의 select/where — 정렬만 다른 세 질의가 공유한다. **ORDER BY는 요청 정렬과 같아야 한다**:
+     * 후보 창(LiteSearchService.CANDIDATE_WINDOW)이 여기서 잘리므로, 관련도순으로 자른 뒤 메모리에서
+     * 오래된순으로 다시 세우면 500건 밖의 진짜 오래된 문서가 빠진다(2026-09-13 결함).
+     */
+    String LITE_PAGE_CANDIDATES = """
             select new com.platform.wikibackend.search.SearchRow(
                 com.platform.wikibackend.search.DocType.PAGE,
                 p.id, p.id, p.spaceId, s.key, s.name,
@@ -307,9 +312,40 @@ public interface PageRepository extends JpaRepository<Page, Long> {
               and (:before is null or p.updatedAt <= :before)
               and (:anyLabel = true
                    or exists (select 1 from PageLabel l where l.pageId = p.id and l.name in :labels))
-            order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id desc
-            """)
+            """;
+
+    /** 관련도순 — 제목 일치(3)가 본문 일치(1)보다 위, 같으면 최신순. */
+    @Query(LITE_PAGE_CANDIDATES
+            + " order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id desc")
     List<com.platform.wikibackend.search.SearchRow> searchPages(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("includeDrafts") boolean includeDrafts,
+            @Param("anyAuthor") boolean anyAuthor,
+            @Param("authorIds") Collection<Long> authorIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("anyLabel") boolean anyLabel,
+            @Param("labels") Collection<String> labels,
+            org.springframework.data.domain.Limit limit);
+
+    /** 최신순(UPDATED_DESC) — 관련도를 보지 않는다. 관련도 낮은 최신 문서도 창 안에 들어야 한다. */
+    @Query(LITE_PAGE_CANDIDATES + " order by p.updatedAt desc, p.id desc")
+    List<com.platform.wikibackend.search.SearchRow> searchPagesNewest(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("includeDrafts") boolean includeDrafts,
+            @Param("anyAuthor") boolean anyAuthor,
+            @Param("authorIds") Collection<Long> authorIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("anyLabel") boolean anyLabel,
+            @Param("labels") Collection<String> labels,
+            org.springframework.data.domain.Limit limit);
+
+    /** 오래된순(UPDATED_ASC). */
+    @Query(LITE_PAGE_CANDIDATES + " order by p.updatedAt asc, p.id asc")
+    List<com.platform.wikibackend.search.SearchRow> searchPagesOldest(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
             @Param("includeDrafts") boolean includeDrafts,
@@ -327,7 +363,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
      * 첨부에는 작성자·라벨이 없다. 그 필터가 걸린 질의는 첨부를 아예 찾지 않는다(호출부 판단) —
      * 여기서 조용히 무시하면 "작성자로 걸렀는데 남의 첨부가 나온다"가 된다.
      */
-    @Query("""
+    String LITE_ATTACHMENT_CANDIDATES = """
             select new com.platform.wikibackend.search.SearchRow(
                 com.platform.wikibackend.search.DocType.ATTACHMENT,
                 a.id, a.pageId, p.spaceId, s.key, s.name,
@@ -341,9 +377,20 @@ public interface PageRepository extends JpaRepository<Page, Long> {
               and lower(a.filename) like :q
               and (:after is null or a.createdAt >= :after)
               and (:before is null or a.createdAt <= :before)
-            order by a.createdAt desc, a.id desc
-            """)
+            """;
+
+    /** 관련도순·최신순 — 첨부는 점수가 상수(3)라 둘 다 최신순이다. */
+    @Query(LITE_ATTACHMENT_CANDIDATES + " order by a.createdAt desc, a.id desc")
     List<com.platform.wikibackend.search.SearchRow> searchAttachments(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            org.springframework.data.domain.Limit limit);
+
+    /** 오래된순(UPDATED_ASC). */
+    @Query(LITE_ATTACHMENT_CANDIDATES + " order by a.createdAt asc, a.id asc")
+    List<com.platform.wikibackend.search.SearchRow> searchAttachmentsOldest(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
             @Param("after") java.time.Instant after,

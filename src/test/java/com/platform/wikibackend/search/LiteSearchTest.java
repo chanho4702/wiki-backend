@@ -231,6 +231,61 @@ class LiteSearchTest {
                 .andExpect(jsonPath("$.data.search.total").value(0));
     }
 
+    // ── 후보 창(CANDIDATE_WINDOW=500) 초과 회귀 — 정렬은 SQL에서 자르기 전에 적용돼야 한다(2026-09-13) ──
+
+    /** 창보다 많은 후보를 만든다: 전부 제목 일치(관련도 3), updatedAt은 2026-01-01부터 1분 간격. */
+    private void fillWindow(String titlePrefix) {
+        for (int i = 0; i < LiteSearchService.CANDIDATE_WINDOW + 5; i++) {
+            touch(page(titlePrefix + " " + i, "본문"), java.time.Instant.parse("2026-01-01T00:00:00Z")
+                    .plusSeconds(60L * i).toString());
+        }
+    }
+
+    private static Map<String, Object> sorted(String query, String sort) {
+        Map<String, Object> input = input(query);
+        input.put("sort", sort);
+        input.put("size", 1);
+        return input;
+    }
+
+    @Test
+    void 후보창_초과에서_오래된순은_창_밖의_진짜_오래된_문서를_준다() throws Exception {
+        fillWindow("창고 문서");
+        Page oldest = page("창고 문서 최초", "본문");
+        touch(oldest, "2020-01-01T00:00:00Z");
+
+        search(USER, sorted("창고", "UPDATED_ASC"))
+                .andExpect(jsonPath("$.data.search.totalExact").value(false))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(oldest.getId())));
+    }
+
+    @Test
+    void 후보창_초과에서_최신순은_관련도_낮은_최신_문서를_놓치지_않는다() throws Exception {
+        fillWindow("창고 문서");
+        // 제목에는 검색어가 없고 본문에만 있다(관련도 1) — 관련도순으로 자르면 창 밖으로 밀리는 문서.
+        Page newest = page("전혀 다른 제목", "창고 관련 최신 메모");
+        touch(newest, "2027-01-01T00:00:00Z");
+
+        search(USER, sorted("창고", "UPDATED_DESC"))
+                .andExpect(jsonPath("$.data.search.totalExact").value(false))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(newest.getId())));
+    }
+
+    @Test
+    void 후보창_초과에서도_관련도순은_제목_일치를_먼저_준다() throws Exception {
+        // 본문 일치(관련도 1)가 창보다 많고 전부 더 최신이어도, 오래된 제목 일치(관련도 3)가 첫 결과다.
+        for (int i = 0; i < LiteSearchService.CANDIDATE_WINDOW + 5; i++) {
+            touch(page("메모 " + i, "창고 이야기"), java.time.Instant.parse("2026-01-01T00:00:00Z")
+                    .plusSeconds(60L * i).toString());
+        }
+        Page titled = page("창고 안내", "본문");
+        touch(titled, "2020-01-01T00:00:00Z");
+
+        search(USER, sorted("창고", "RELEVANCE"))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(titled.getId())))
+                .andExpect(jsonPath("$.data.search.hits[0].score").value(3));
+    }
+
     /** updatedAt을 못 박는다 — 도메인에는 시각을 지정해 저장하는 길이 없다(있어서도 안 된다). */
     private void touch(Page page, String instant) {
         jdbc.update("update page set updated_at = ? where id = ?",
