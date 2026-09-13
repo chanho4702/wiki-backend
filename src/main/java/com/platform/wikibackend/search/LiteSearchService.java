@@ -117,28 +117,36 @@ public class LiteSearchService {
             SearchInput input, String query, Set<Long> spaceIds, Instant after, Instant before) {
         String like = "%" + query.toLowerCase(Locale.ROOT) + "%";
         Limit window = Limit.of(CANDIDATE_WINDOW);
+        SearchSort sort = input.normalizedSort();
         List<SearchRow> rows = new ArrayList<>();
 
+        // 후보 창은 **요청 정렬과 같은 순서**로 잘라야 한다. 관련도순으로 500건을 자른 뒤 메모리에서
+        // 오래된순으로 다시 세우면 "가장 최신 500건 중 오래된 순"이 되어 진짜 오래된 문서가 빠진다
+        // (2026-09-13 결함). 관련도 의미(제목 일치 우선)는 RELEVANCE 질의에만 있고 나머지는 시각만 본다.
         if (input.wants(DocType.PAGE)) {
             Set<Long> authors = input.requestedAuthorIds();
             List<String> labels = input.normalizedLabels();
-            rows.addAll(pageRepository.searchPages(
-                    like,
-                    spaceIds,
-                    input.draftsIncluded(),
-                    authors.isEmpty(),
-                    // in 절은 비어 있을 수 없다 — 쓰이지 않는 자리에 넣는 자리표시자다.
-                    authors.isEmpty() ? Set.of(-1L) : authors,
-                    after,
-                    before,
-                    labels.isEmpty(),
-                    labels.isEmpty() ? List.of("") : labels,
-                    window));
+            boolean anyAuthor = authors.isEmpty();
+            // in 절은 비어 있을 수 없다 — 쓰이지 않는 자리에 넣는 자리표시자다.
+            Set<Long> authorIds = anyAuthor ? Set.of(-1L) : authors;
+            boolean anyLabel = labels.isEmpty();
+            List<String> labelNames = anyLabel ? List.of("") : labels;
+            boolean drafts = input.draftsIncluded();
+            rows.addAll(switch (sort) {
+                case RELEVANCE -> pageRepository.searchPages(
+                        like, spaceIds, drafts, anyAuthor, authorIds, after, before, anyLabel, labelNames, window);
+                case UPDATED_DESC -> pageRepository.searchPagesNewest(
+                        like, spaceIds, drafts, anyAuthor, authorIds, after, before, anyLabel, labelNames, window);
+                case UPDATED_ASC -> pageRepository.searchPagesOldest(
+                        like, spaceIds, drafts, anyAuthor, authorIds, after, before, anyLabel, labelNames, window);
+            });
         }
         // 첨부에는 작성자·라벨이 없다 — 그 필터가 걸렸으면 첨부는 애초에 대상이 아니다.
         boolean pageOnlyFilter = !input.requestedAuthorIds().isEmpty() || !input.normalizedLabels().isEmpty();
         if (input.wants(DocType.ATTACHMENT) && !pageOnlyFilter) {
-            rows.addAll(pageRepository.searchAttachments(like, spaceIds, after, before, window));
+            rows.addAll(sort == SearchSort.UPDATED_ASC
+                    ? pageRepository.searchAttachmentsOldest(like, spaceIds, after, before, window)
+                    : pageRepository.searchAttachments(like, spaceIds, after, before, window));
         }
         return rows;
     }
