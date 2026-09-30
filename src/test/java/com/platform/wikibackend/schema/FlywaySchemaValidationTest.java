@@ -1,5 +1,6 @@
 package com.platform.wikibackend.schema;
 
+import com.platform.wikibackend.collaboration.CollaborationDraftReset;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.PageStatus;
@@ -73,6 +74,8 @@ class FlywaySchemaValidationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired WebApplicationContext context;
     @Autowired ObjectMapper json;
+    @Autowired CollaborationDraftReset collaborationReset;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     /**
      * 컨텍스트가 떴다는 것 자체가 "마이그레이션 결과 스키마 == 엔티티 매핑"의 증거다
@@ -152,6 +155,42 @@ class FlywaySchemaValidationTest {
 
         assertThat(pages.findById(page.getId()).orElseThrow().getImportedAuthorName())
                 .isEqualTo("Jane Confluence");
+    }
+
+    // ── V40 공동 초안 리셋 ──
+
+    /**
+     * 리셋은 엔티티가 매핑하지 않는 state/version/updated_at까지 네이티브로 쓴다 — H2(create-drop)에는
+     * 그 열이 원래 없어서, bytea 바인딩·NOT NULL·CHECK가 실제 스키마에서 통하는지는 여기서만 확인된다.
+     */
+    @Test
+    void V40_리셋은_실제_스키마에서_base_generation_state를_제자리로_되돌린다() {
+        Space space = spaces.save(Space.of("collabreset", "리셋", null, 1L));
+        Page page = pages.saveAndFlush(Page.of(space.getId(), null, "제목", "본문", 1L));
+        String room = "page:" + page.getId();
+        // collaboration-service처럼 reset_pending 없이 넣는다 — V40 기본값 false가 채워져야 한다
+        jdbc.update("insert into collaboration_document (room, state, base_page_version, generation)"
+                + " values (?, ?, 1, 3)", room, new byte[] {9, 9, 9});
+        assertThat(jdbc.queryForObject("select reset_pending from collaboration_document where room = ?",
+                Boolean.class, room)).isFalse();
+        assertThat(jdbc.queryForObject("select reset_epoch from collaboration_document where room = ?",
+                Long.class, room)).isZero();
+
+        new org.springframework.transaction.support.TransactionTemplate(txManager).executeWithoutResult(tx -> {
+            Page locked = pages.findByIdForUpdate(page.getId()).orElseThrow();
+            locked.edit("새 제목", "새 본문", 1L);
+            assertThat(collaborationReset.afterExternalWrite(locked)).contains(1L); // 리셋 후 epoch
+        });
+
+        var row = jdbc.queryForMap("select base_page_version, generation, reset_pending, reset_epoch, state, version"
+                + " from collaboration_document where room = ?", room);
+        assertThat(((Number) row.get("base_page_version")).longValue()).isEqualTo(2L);
+        assertThat(((Number) row.get("generation")).longValue()).isEqualTo(4L);
+        assertThat(row.get("reset_pending")).isEqualTo(true);
+        assertThat(((Number) row.get("reset_epoch")).longValue()).isEqualTo(1L);
+        assertThat((byte[]) row.get("state")).containsExactly(0, 0);
+        assertThat(((Number) row.get("version")).longValue()).isEqualTo(2L);
+        assertThat(pages.findById(page.getId()).orElseThrow().getVersion()).isEqualTo(2);
     }
 
     private boolean exists(String table) {

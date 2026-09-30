@@ -7,6 +7,8 @@ import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.page.PageService;
 import com.platform.wikibackend.permission.WikiAction;
+import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
+import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.space.SpaceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,7 @@ class CollaborationTicketServiceTest {
 
     @Mock PageService pages;
     @Mock SpaceService spaces;
+    @Mock CollaborationDraftMetadataRepository drafts;
     @Mock StringRedisTemplate redis;
     @Mock ValueOperations<String, String> values;
     @Mock SecureRandom random;
@@ -46,7 +49,7 @@ class CollaborationTicketServiceTest {
     @BeforeEach
     void setup() {
         service = new CollaborationTicketService(
-                pages, spaces, redis, json, Duration.ofMinutes(1), clock, random);
+                pages, spaces, drafts, redis, json, Duration.ofMinutes(1), clock, random);
     }
 
     private void stubTicketStorage() {
@@ -62,7 +65,9 @@ class CollaborationTicketServiceTest {
     void EDIT_권한을_확인하고_원문이_아닌_SHA256_key에_60초_payload를_저장한다() throws Exception {
         stubTicketStorage();
         // W18: 권한(스페이스 EDIT + 페이지 제한)은 PageService.getEditable이 한 번에 판정한다
-        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        // 발급 시점 버전(v4)이 payload와 응답에 그대로 실려야 한다(v2 계약)
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.imported(3L, null, "문서", "본문", 1L,
+                Instant.EPOCH, Instant.EPOCH, null, 4));
 
         CollaborationTicketResponse response = service.issue(42L, " Alice\nKim ", 7L);
 
@@ -76,19 +81,45 @@ class CollaborationTicketServiceTest {
         assertThat(response.room()).isEqualTo("page:7");
         assertThat(response.websocketPath()).isEqualTo("/api/wiki/collaboration");
         assertThat(response.expiresAt()).isEqualTo(Instant.parse("2026-08-16T12:01:00Z"));
+        assertThat(response.pageVersion()).isEqualTo(4L);
+        assertThat(response.draftEpoch()).isZero(); // 초안 행이 없으면 0
         assertThat(key.getValue()).isEqualTo(
                 CollaborationTicketService.KEY_PREFIX + CollaborationTicketService.sha256(response.ticket()));
         assertThat(key.getValue()).doesNotContain(response.ticket());
         assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(1));
 
         JsonNode stored = json.readTree(payload.getValue());
-        assertThat(stored.path("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(stored.path("schemaVersion").asInt()).isEqualTo(2);
+        assertThat(stored.path("pageVersion").isIntegralNumber()).isTrue();
+        assertThat(stored.path("pageVersion").asLong()).isEqualTo(4L);
+        assertThat(stored.path("draftEpoch").isIntegralNumber()).isTrue();
+        assertThat(stored.path("draftEpoch").asLong()).isZero();
+        // 필드 10개 — collaboration-service가 추가 필드 없이 엄격 검증한다
+        assertThat(stored.size()).isEqualTo(10);
         assertThat(stored.path("pageId").asLong()).isEqualTo(7L);
         assertThat(stored.path("userId").asLong()).isEqualTo(42L);
         assertThat(stored.path("displayName").asText()).isEqualTo("Alice Kim");
         assertThat(stored.path("room").asText()).isEqualTo("page:7");
         assertThat(stored.path("permission").asText()).isEqualTo("EDIT");
         assertThat(payload.getValue()).doesNotContain(response.ticket());
+    }
+
+    @Test
+    void 초안_행이_있으면_그_reset_epoch를_draftEpoch로_싣는다() throws Exception {
+        stubTicketStorage();
+        when(pages.getEditable(42L, 7L)).thenReturn(Page.of(3L, null, "문서", "본문", 1L));
+        CollaborationDraftMetadata draft = CollaborationDraftMetadata.of(7L, 1, 9);
+        org.springframework.test.util.ReflectionTestUtils.setField(draft, "resetEpoch", 3L);
+        when(drafts.findById("page:7")).thenReturn(java.util.Optional.of(draft));
+
+        CollaborationTicketResponse response = service.issue(42L, "Alice", 7L);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(values).set(any(), payload.capture(), any());
+        JsonNode stored = json.readTree(payload.getValue());
+        // generation(9)이 아니라 reset_epoch(3)이다 — 게시로 오르는 값을 실으면 접속이 오거부된다(C-1)
+        assertThat(stored.path("draftEpoch").asLong()).isEqualTo(3L);
+        assertThat(response.draftEpoch()).isEqualTo(3L);
     }
 
     @Test
@@ -127,7 +158,7 @@ class CollaborationTicketServiceTest {
                 new com.platform.wikibackend.directory.FakeMemberDirectory();
         found.put(42L, "김찬호", "c@org.example", "ACTIVE");
         CollaborationTicketService withDirectory = new CollaborationTicketService(
-                pages, spaces, redis, json,
+                pages, spaces, drafts, redis, json,
                 new com.platform.wikibackend.directory.DisplayNames(found),
                 Duration.ofMinutes(1), clock, random);
 
@@ -154,10 +185,10 @@ class CollaborationTicketServiceTest {
     @Test
     void TTL이_5분을_넘거나_0이면_구성_오류로_거부한다() {
         assertThatThrownBy(() -> new CollaborationTicketService(
-                pages, spaces, redis, json, Duration.ZERO, clock, random))
+                pages, spaces, drafts, redis, json, Duration.ZERO, clock, random))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new CollaborationTicketService(
-                pages, spaces, redis, json, Duration.ofMinutes(6), clock, random))
+                pages, spaces, drafts, redis, json, Duration.ofMinutes(6), clock, random))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

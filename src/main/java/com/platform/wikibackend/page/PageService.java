@@ -71,6 +71,7 @@ public class PageService {
     private final com.platform.wikibackend.common.ActorNames actorNames;
     private final com.platform.wikibackend.task.TaskService taskSync;
     private final com.platform.wikibackend.directory.DisplayNames displayNames;
+    private final com.platform.wikibackend.collaboration.CollaborationDraftReset collaborationReset;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
@@ -394,7 +395,8 @@ public class PageService {
     }
 
     public PageResponse update(long userId, long pageId, PageUpdateRequest req) {
-        Page p = getOwned(pageId);
+        // page → 공동 초안 순서로 잠근다(게시와 같은 순서) — 동시 게시와 같은 버전 리비전을 두 번 만들지 않는다.
+        Page p = lockOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
         if (p.isArchived()) {
@@ -410,6 +412,7 @@ public class PageService {
         }
         String oldBody = p.getContent();
         p.edit(req.title(), req.content(), userId);
+        collaborationReset.afterExternalWrite(p); // 공동 초안이 옛 base에 묶이지 않게(차단-1)
         revisions.save(PageRevision.snapshotOf(p, req.changeNote()).withEditorName(actorNames.current()));
         labelService.reindexLinks(p);
         watches.autoWatch(pageId, userId); // 고친 문서는 자동 구독(W21-4)
@@ -619,6 +622,11 @@ public class PageService {
         return pages.findById(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
     }
 
+    /** 버전을 올리는 쓰기용 — page 행을 잠근다. 공동 초안을 건드리는 경로는 모두 page를 먼저 잠근다. */
+    private Page lockOwned(long pageId) {
+        return pages.findByIdForUpdate(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
+    }
+
     /** parent는 같은 스페이스 + (이동 시) 자기 자신·자손 금지. */
     private void validateParent(Long spaceId, Long parentId, Long movingPageId) {
         if (parentId == null) return;
@@ -710,12 +718,13 @@ public class PageService {
      * 서버가 알 수 없고, 그 문장이 다음 사람에게 더 쓸모 있다.
      */
     public PageResponse restore(long userId, long pageId, int version, String changeNote) {
-        Page p = getOwned(pageId);
+        Page p = lockOwned(pageId); // page → 공동 초안 잠금 순서(update와 같다)
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
         PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);
+        collaborationReset.afterExternalWrite(p); // 복원도 새 버전이다 — 공동 초안을 새 기준으로(차단-1)
         // 복원도 이력에 남는다 — 어느 버전에서 되돌렸는지가 다음 사람에게 가장 중요한 정보다.
         String note = changeNote == null || changeNote.isBlank()
                 ? "v" + version + " 버전으로 복원"

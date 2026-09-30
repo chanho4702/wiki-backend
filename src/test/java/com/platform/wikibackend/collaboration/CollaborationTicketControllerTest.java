@@ -37,7 +37,7 @@ class CollaborationTicketControllerTest {
     void JWT_주체로_페이지_편집_ticket을_발급한다() throws Exception {
         Instant expiresAt = Instant.parse("2026-08-16T12:01:00Z");
         when(tickets.issue(42L, "Alice", 7L)).thenReturn(
-                new CollaborationTicketResponse("opaque-ticket", "page:7", "/api/wiki/collaboration", expiresAt));
+                new CollaborationTicketResponse("opaque-ticket", "page:7", "/api/wiki/collaboration", expiresAt, 5L, 2L));
 
         mvc.perform(post("/api/wiki/pages/7/collaboration-ticket")
                         .with(asUser(42L, "Alice"))
@@ -47,7 +47,10 @@ class CollaborationTicketControllerTest {
                 .andExpect(jsonPath("$.ticket").value("opaque-ticket"))
                 .andExpect(jsonPath("$.room").value("page:7"))
                 .andExpect(jsonPath("$.websocketPath").value("/api/wiki/collaboration"))
-                .andExpect(jsonPath("$.expiresAt").value("2026-08-16T12:01:00Z"));
+                .andExpect(jsonPath("$.expiresAt").value("2026-08-16T12:01:00Z"))
+                // 프론트가 세션 기준 버전과 대조한다 — 숫자여야 한다(문자열이면 검사가 조용히 꺼진다)
+                .andExpect(jsonPath("$.pageVersion").value(5))
+                .andExpect(jsonPath("$.draftEpoch").value(2));
 
         verify(tickets).issue(42L, "Alice", 7L);
     }

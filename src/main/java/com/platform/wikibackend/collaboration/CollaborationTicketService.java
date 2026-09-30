@@ -4,9 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.directory.DisplayNames;
+import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.page.PageService;
 import com.platform.wikibackend.permission.WikiAction;
+import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
 import com.platform.wikibackend.space.SpaceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +44,7 @@ public class CollaborationTicketService {
 
     private final PageService pages;
     private final SpaceService spaces;
+    private final CollaborationDraftMetadataRepository drafts;
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final DisplayNames displayNames;
@@ -53,27 +56,30 @@ public class CollaborationTicketService {
     public CollaborationTicketService(
             PageService pages,
             SpaceService spaces,
+            CollaborationDraftMetadataRepository drafts,
             StringRedisTemplate redis,
             ObjectMapper json,
             DisplayNames displayNames,
             @Value("${platform.wiki.collaboration.ticket-ttl:PT1M}") Duration ttl) {
-        this(pages, spaces, redis, json, displayNames, ttl, Clock.systemUTC(), new SecureRandom());
+        this(pages, spaces, drafts, redis, json, displayNames, ttl, Clock.systemUTC(), new SecureRandom());
     }
 
     CollaborationTicketService(
             PageService pages,
             SpaceService spaces,
+            CollaborationDraftMetadataRepository drafts,
             StringRedisTemplate redis,
             ObjectMapper json,
             Duration ttl,
             Clock clock,
             SecureRandom random) {
-        this(pages, spaces, redis, json, DisplayNames.none(), ttl, clock, random);
+        this(pages, spaces, drafts, redis, json, DisplayNames.none(), ttl, clock, random);
     }
 
     CollaborationTicketService(
             PageService pages,
             SpaceService spaces,
+            CollaborationDraftMetadataRepository drafts,
             StringRedisTemplate redis,
             ObjectMapper json,
             DisplayNames displayNames,
@@ -85,6 +91,7 @@ public class CollaborationTicketService {
         }
         this.pages = pages;
         this.spaces = spaces;
+        this.drafts = drafts;
         this.redis = redis;
         this.json = json;
         this.displayNames = displayNames;
@@ -101,6 +108,13 @@ public class CollaborationTicketService {
         Instant expiresAt = issuedAt.plus(ttl);
         String room = "page:" + pageId;
         String ticket = newToken();
+        // 발급 시점 버전. 이 뒤에 다른 경로 저장이 끼면 collaboration-service bootstrap이 409로 걸러 낸다.
+        long pageVersion = page.getVersion();
+        // 발급 시점 초안의 리셋 카운터(행 없으면 0). 발급과 접속 사이에 리셋이 끼면 collaboration-service가
+        // 현재 reset_epoch와 달라진 것을 보고 인증을 거부한다(fail-closed).
+        long draftEpoch = drafts.findById(CollaborationDraftMetadata.room(pageId))
+                .map(CollaborationDraftMetadata::getResetEpoch)
+                .orElse(0L);
         CollaborationTicketPayload payload = new CollaborationTicketPayload(
                 CollaborationTicketPayload.SCHEMA_VERSION,
                 pageId,
@@ -108,6 +122,8 @@ public class CollaborationTicketService {
                 normalizeDisplayName(presenceName(userId, displayName), userId),
                 room,
                 CollaborationTicketPayload.EDIT_PERMISSION,
+                pageVersion,
+                draftEpoch,
                 issuedAt,
                 expiresAt);
 
@@ -117,8 +133,9 @@ public class CollaborationTicketService {
             // Redis가 없는데 ticket을 발급한 척하면 WebSocket에서 뒤늦게 실패한다. 발급 단계에서 fail-closed.
             throw new ServiceUnavailableException("공동 편집 세션을 시작할 수 없습니다", e);
         }
-        log.info("collaboration ticket 발급: page={} user={} expiresAt={}", pageId, userId, expiresAt);
-        return new CollaborationTicketResponse(ticket, room, WEBSOCKET_PATH, expiresAt);
+        log.info("collaboration ticket 발급: page={} version={} epoch={} user={} expiresAt={}",
+                pageId, pageVersion, draftEpoch, userId, expiresAt);
+        return new CollaborationTicketResponse(ticket, room, WEBSOCKET_PATH, expiresAt, pageVersion, draftEpoch);
     }
 
     static String sha256(String ticket) {

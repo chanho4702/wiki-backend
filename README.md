@@ -85,6 +85,14 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 generation을 함께 한 단계 전진시키므로, 동시 저장 중 하나만 성공하고 이전 세션의 늦은 요청은
 `409 Conflict`로 끝난다. Yjs binary state 자체는 계속 collaboration-service만 읽고 쓴다.
 
+게시가 아닌 경로(일반 저장·복원·재이관·링크 정리 pass·작업 체크 토글)가 버전을 올리면 같은 transaction에서
+공동 초안을 **제자리 리셋**한다(V40): page → draft 순서로 잠근 뒤 `base_page_version`=새 버전,
+`generation`+1, `reset_epoch`+1, `reset_pending=true`, state=빈 Y.Doc update. `reset_epoch`는 리셋에서만
+오르는 카운터로 collaboration-service store 가드가 본다(`generation`은 게시에서도 오르므로 가드로 쓰지 않는다). 행을 지우지 않는 이유는 collaboration-service가
+메모리의 옛 Y.Doc을 다음 저장에서 되살리기 때문이다. 커밋 후 Redis pub/sub `wiki:collaboration:reset`에
+`{"room":"page:<id>","resetEpoch":<n>}`을 발행해 열린 세션을 즉시 끊게 한다(실패는 WARN 비차단 —
+정확성은 collaboration-service의 세대 가드가 보장한다). 이 리셋은 Yjs state를 건드리는 유일한 예외 경계다.
+
 댓글은 1단 답글까지 허용한다(답글의 답글은 400). 읽기·쓰기 모두 스페이스 VIEW 기준이며 —
 org-service에 COMMENT action이 생기기 전까지의 기준선 — 수정은 작성자만, 삭제는 작성자 또는
 스페이스 ADMIN(moderation)이 한다. 최상위 댓글을 지우면 답글도 함께 사라진다. `authorName`은
@@ -251,9 +259,10 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
 - 에디터 선업로드는 `PENDING`으로 저장한 뒤 페이지 본문 저장 후 확정한다. 저장 전에 이탈한 객체는
   스케줄러가 최신 본문 참조를 대조해 확정하거나 보존기간 뒤 제거한다.
 - 공동 편집 WebSocket에는 Access Token을 query로 보내지 않는다. 기존 JWT로 EDIT 권한을 확인해
-  60초 opaque ticket을 발급하고, Redis에는 원문이 아닌 SHA-256 key와 v1 payload만 TTL로 저장한다.
+  60초 opaque ticket을 발급하고, Redis에는 원문이 아닌 SHA-256 key와 v2 payload만 TTL로 저장한다.
   collaboration service는 `GETDEL`로 ticket을 원자적으로 한 번만 소비한다. payload 계약은
-  `schema/collaboration-ticket-v1.schema.json`이 정본이다.
+  `schema/collaboration-ticket-v2.schema.json`이 정본이다(v1에 발급 시점 `pageVersion`과 초안
+  `draftEpoch`(reset_epoch, 행 없으면 0)를 더함 — 응답에도 두 값이 실린다). v1 스키마는 배포 전환기 호환 참고용으로 남긴다.
 
 ### 권한 거부 응답 계약
 
@@ -436,7 +445,7 @@ src/main/java/com/platform/wikibackend/
 ├─ space/        스페이스 REST·서비스·DTO
 ├─ page/         페이지·revision REST와 도메인 로직
 ├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
-├─ collaboration/ 단기 WebSocket ticket 발급·Redis v1 계약
+├─ collaboration/ 단기 WebSocket ticket 발급·Redis v2 계약·공동 초안 리셋(차단-1)
 ├─ importapi/    이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
 ├─ permission/   org-service gRPC 권한 어댑터(판정·팀·제한 주체)
 ├─ directory/    org-service 사용자 원장 어댑터(GetMembers — 주소·이름·상태)

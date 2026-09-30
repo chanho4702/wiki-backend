@@ -1,5 +1,6 @@
 package com.platform.wikibackend.importapi;
 
+import com.platform.wikibackend.collaboration.CollaborationDraftReset;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageLabel;
 import com.platform.wikibackend.domain.PageRevision;
@@ -59,6 +60,7 @@ public class ImportedPageWriter {
     private final LabelService labelService;
     private final TaskService tasks;
     private final EventRelay events;
+    private final CollaborationDraftReset collaborationReset;
 
     /**
      * 새 문서를 만든다.
@@ -101,9 +103,11 @@ public class ImportedPageWriter {
     public ImportResult update(long pageId, ImportedPage source, String changeNote) {
         List<WikiImportResponses.Issue> issues = new ArrayList<>();
         String title = truncateTitle(source.title(), issues);
-        Page page = pages.findById(pageId).orElseThrow();
+        // 재이관도 새 버전이다 — page를 먼저 잠그고 공동 초안을 새 기준으로 리셋한다(차단-1).
+        Page page = pages.findByIdForUpdate(pageId).orElseThrow();
 
         page.reimport(title, source.markdown(), source.authorId(), source.updatedAt());
+        collaborationReset.afterExternalWrite(page);
         applyImportedAuthor(page, source);
         if (source.siblingOrder() != null) {
             // 원본에서 순서만 바뀐 경우다. movePage가 아니라 sortOrder만 눌러 준다 —
@@ -134,12 +138,14 @@ public class ImportedPageWriter {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean rewriteBody(long pageId, String markdown) {
-        Page page = pages.findById(pageId).orElseThrow();
+        Page page = pages.findByIdForUpdate(pageId).orElseThrow(); // page → 공동 초안 잠금 순서
         if (page.getContent().equals(markdown)) {
             return false;
         }
         page.rewriteImportedContent(markdown);
         pages.flush();
+        // 버전은 그대로지만 본문이 바뀐다. 옛 본문의 공동 초안을 두면 다음 게시가 정리된 URL을 되덮는다.
+        collaborationReset.afterExternalWrite(page);
         revisions.findByPageIdAndVersion(pageId, page.getVersion())
                 .ifPresent(revision -> {
                     revision.replaceContent(markdown);
@@ -162,11 +168,12 @@ public class ImportedPageWriter {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean rewriteBodyAsRevision(long pageId, String markdown, long editorId, String changeNote) {
-        Page page = pages.findById(pageId).orElseThrow();
+        Page page = pages.findByIdForUpdate(pageId).orElseThrow(); // page → 공동 초안 잠금 순서
         if (page.getContent().equals(markdown)) {
             return false;
         }
         page.edit(page.getTitle(), markdown, editorId);
+        collaborationReset.afterExternalWrite(page); // 링크 정리 pass도 새 버전이다(차단-1)
         pages.flush();
         revisions.save(PageRevision.snapshotOf(page, changeNote));
         tasks.sync(page);

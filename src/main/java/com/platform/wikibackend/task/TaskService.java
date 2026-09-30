@@ -62,6 +62,7 @@ public class TaskService {
     private final EffectivePermissionService effective;
     private final com.platform.wikibackend.common.ActorNames actorNames;
     private final EventRelay events;
+    private final com.platform.wikibackend.collaboration.CollaborationDraftReset collaborationReset;
 
     /** 본문이 바뀐 뒤 호출 — 그 페이지의 작업 표를 본문에서 다시 만든다. */
     public void sync(Page page) {
@@ -127,7 +128,8 @@ public class TaskService {
      * 줄이 이미 다른 내용이면(동시 편집) 엉뚱한 줄을 건드리지 않고 409로 끝낸다.
      */
     public TaskView setDone(long userId, long pageId, int lineNo, boolean done) {
-        Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
+        // 버전을 올리는 쓰기라 page를 먼저 잠근다(page → 공동 초안 순서).
+        Page page = pages.findByIdForUpdate(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
         com.platform.wikibackend.permission.PermissionDecision decision =
                 permissions.check(userId, page.getSpaceId(), WikiAction.EDIT);
         if (!decision.allowed()) {
@@ -145,6 +147,7 @@ public class TaskService {
         }
         lines[lineNo - 1] = lines[lineNo - 1].replaceFirst("\\[( |x|X)\\]", done ? "[x]" : "[ ]");
         page.edit(page.getTitle(), String.join("\n", lines), userId);
+        collaborationReset.afterExternalWrite(page); // 체크 토글도 새 버전 — 공동 초안을 새 기준으로(차단-1)
         revisions.save(PageRevision.snapshotOf(page, done ? "작업 완료 표시" : "작업 다시 열기").withEditorName(actorNames.current()));
         sync(page);
         events.afterCommit(WikiEvents.pageUpdated(userId, page));
