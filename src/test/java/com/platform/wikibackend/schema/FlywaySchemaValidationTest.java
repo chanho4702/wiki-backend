@@ -193,6 +193,31 @@ class FlywaySchemaValidationTest {
         assertThat(pages.findById(page.getId()).orElseThrow().getVersion()).isEqualTo(2);
     }
 
+    // ── 라이트 검색 날짜 필터 ──
+
+    /**
+     * pgjdbc는 시각 타입 null을 타입 미지정으로 보낸다 — `:after is null`만 있으면 Postgres가
+     * "could not determine data type of parameter"로 질의 자체를 거부했다(H2는 통과, 2026-10-16).
+     * 날짜 필터가 없는 검색이 기본이라 라이트 검색 전체가 막히던 결함이다.
+     */
+    @Test
+    void 라이트_검색은_날짜_필터가_비어도_Postgres에서_질의된다() {
+        Space space = spaces.save(Space.of("lite", "라이트", null, 1L));
+        Page page = pages.saveAndFlush(Page.of(space.getId(), null, "검색 대상", "본문", 1L));
+        List<Long> none = List.of(-1L);
+        List<String> noLabels = List.of("");
+
+        assertThat(pages.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
+                null, null, true, noLabels, true, none)).isEqualTo(1);
+        assertThat(pages.searchPageKeys("%검색%", List.of(space.getId()), true, true, none,
+                null, null, true, noLabels, true, none, org.springframework.data.domain.Limit.of(10)))
+                .extracting(k -> k.id()).containsExactly(page.getId());
+        assertThat(pages.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
+                Instant.now().plusSeconds(3600), null, true, noLabels, true, none)).isZero();
+        assertThat(pages.countAttachmentMatches("%검색%", List.of(space.getId()), null, null, true, none))
+                .isZero();
+    }
+
     private boolean exists(String table) {
         Boolean found = jdbc.queryForObject(
                 "select exists (select 1 from information_schema.tables"

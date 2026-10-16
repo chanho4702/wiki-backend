@@ -337,8 +337,8 @@ public interface PageRepository extends JpaRepository<Page, Long> {
               and (:includeDrafts = true or p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED)
               and (lower(p.title) like :q or lower(p.content) like :q)
               and (:anyAuthor = true or p.updatedBy in :authorIds)
-              and (:after is null or p.updatedAt >= :after)
-              and (:before is null or p.updatedAt <= :before)
+              and (cast(:after as java.time.Instant) is null or p.updatedAt >= :after)
+              and (cast(:before as java.time.Instant) is null or p.updatedAt <= :before)
               and (:anyLabel = true
                    or exists (select 1 from PageLabel l where l.pageId = p.id and l.name in :labels))
               and (:noHidden = true or p.id not in :hiddenIds)
@@ -440,8 +440,8 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             where p.spaceId in :spaceIds
               and a.lifecycleStatus = com.platform.wikibackend.attachment.AttachmentLifecycleStatus.CONFIRMED
               and lower(a.filename) like :q
-              and (:after is null or a.createdAt >= :after)
-              and (:before is null or a.createdAt <= :before)
+              and (cast(:after as java.time.Instant) is null or a.createdAt >= :after)
+              and (cast(:before as java.time.Instant) is null or a.createdAt <= :before)
               and (:noHidden = true or a.pageId not in :hiddenIds)
             """;
 
