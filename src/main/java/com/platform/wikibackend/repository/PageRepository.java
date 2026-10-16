@@ -101,6 +101,25 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> findTreeItemsByIds(@Param("ids") Collection<Long> ids);
 
+    /** 같은 스페이스로 한정한 id 묶음 조회 — 다른 스페이스 id를 섞어 제목을 캐내지 못하게 질의에서 거른다. */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.PageTreeItem(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
+              from Page p
+             where p.spaceId = :spaceId and p.id in (:ids)
+            """)
+    List<com.platform.wikibackend.page.dto.PageTreeItem> findTreeItemsByIdsInSpace(
+            @Param("spaceId") Long spaceId, @Param("ids") Collection<Long> ids);
+
+    /** (id, spaceId)만 — 여러 스페이스에 걸친 id 묶음의 권한 판정이 본문 없이 끝나게. */
+    @Query("select p.id as id, p.spaceId as spaceId from Page p where p.id in (:ids)")
+    List<IdSpace> findIdSpaceByIds(@Param("ids") Collection<Long> ids);
+
+    interface IdSpace {
+        Long getId();
+        Long getSpaceId();
+    }
+
     /** 자식 수 — 트리가 펼침 화살표를 그릴지 정하려면 자식을 불러오기 전에 알아야 한다. */
     @Query("select p.parentId as parentId, count(p) as count from Page p"
             + " where p.parentId in (:parentIds) and p.archivedAt is null group by p.parentId")
@@ -123,7 +142,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
              order by p.updatedAt desc, p.id desc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> findRecentlyUpdated(
-            @Param("spaceId") Long spaceId, org.springframework.data.domain.Limit limit);
+            @Param("spaceId") Long spaceId, org.springframework.data.domain.Pageable page);
 
     /** 제목 정확 일치(대소문자 무시) — `[[제목]]` 링크 해석용. 렌더러와 같은 기준이다. */
     @Query("""
@@ -157,7 +176,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
              order by p.title asc, p.id asc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> searchByTitle(
-            @Param("spaceId") Long spaceId, @Param("q") String q, org.springframework.data.domain.Limit limit);
+            @Param("spaceId") Long spaceId, @Param("q") String q, org.springframework.data.domain.Pageable page);
 
     /**
      * 후손 폐포 — 내보내기·서브트리 판정이 쓴다. 재귀 CTE 한 번이고 depth로 순환을 막는다.
@@ -221,6 +240,18 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             """, nativeQuery = true)
     List<Object[]> findAncestorClosure(@Param("ids") Collection<Long> ids);
 
+    /**
+     * 부모가 다른 스페이스에 있는 페이지를 가진 스페이스(휴지통 포함) — 라이트 검색의 숨김 판정이
+     * 스페이스 인덱스 밖의 조상 제한을 놓치지 않게 한다. 정상 경로에서는 생기지 않지만(이동은 서브트리째),
+     * 부모를 옮긴 뒤 휴지통에서 하위를 되살리면 생길 수 있다.
+     */
+    @Query(value = """
+            select distinct c.space_id from page c
+              join page p on p.id = c.parent_id
+             where c.space_id in (:spaceIds) and p.space_id <> c.space_id
+            """, nativeQuery = true)
+    List<Long> findSpaceIdsWithForeignParents(@Param("spaceIds") Collection<Long> spaceIds);
+
     /** 휴지통 포함 단건 조회. */
     @Query(value = "select * from page where id = :id", nativeQuery = true)
     Optional<Page> findAnyById(@Param("id") Long id);
@@ -283,27 +314,25 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     List<Page> findByIdGreaterThanOrderByIdAsc(Long afterId, Limit limit);
     List<Page> findBySpaceIdAndIdGreaterThanOrderByIdAsc(Long spaceId, Long afterId, Limit limit);
 
-    /**
-     * 라이트 검색 후보(OpenSearch 없는 배포) — 제목·본문 부분 일치.
-     *
+    /*
+     * ── 라이트 검색(OpenSearch 없는 배포) ────────────────────────────────────────────
      * 형태소 분석이 없어 `like '%q%'`로 찾는다. 한국어는 교착어라 Postgres 기본 tsvector(simple)로는
      * "설정을"이 "설정"에 걸리지 않는데, 부분 문자열은 걸린다 — 소규모 설치에서는 이쪽이 실제로 쓸모 있다.
      * 인덱스는 V18의 pg_trgm GIN이 받는다(만들지 못한 DB에서는 순차 스캔으로 동작한다).
      *
-     * 권한은 여기서 스페이스까지만 거른다 — 페이지 단위 제한(W18)은 후필터가 맡는다.
+     * 권한: 스페이스는 spaceIds로, 페이지 단위 제한(W18)은 **숨길 페이지 집합(hiddenIds)을 SQL에서
+     * 제외**한다. 예전에는 후보를 500건으로 자른 뒤 메모리에서 걸렀고, 앞쪽 500건이 전부 제한
+     * 문서면 그 뒤의 볼 수 있는 문서가 0건으로 사라졌다(2026-10-16 결함). 이제 건수(count)와
+     * 페이지 경계가 권한 적용 뒤의 값이다.
+     *
+     * 세 갈래(키·건수·본문)로 나눈 이유: 정렬·건수·페이지 자르기에는 본문이 필요 없다. 본문은 화면에
+     * 나갈 한 페이지만 id로 다시 읽어 스니펫을 만든다 — 후보 수만큼 본문을 메모리에 올리지 않는다.
+     *
+     * 정렬은 LiteSearchService.comparator와 **같아야 한다**: SQL이 자른 앞부분과 메모리 병합 순서가
+     * 다르면 페이지를 넘길 때 항목이 겹치거나 빠진다(2026-09-13 결함과 같은 계열).
      */
-    /**
-     * 페이지 후보의 select/where — 정렬만 다른 세 질의가 공유한다. **ORDER BY는 요청 정렬과 같아야 한다**:
-     * 후보 창(LiteSearchService.CANDIDATE_WINDOW)이 여기서 잘리므로, 관련도순으로 자른 뒤 메모리에서
-     * 오래된순으로 다시 세우면 500건 밖의 진짜 오래된 문서가 빠진다(2026-09-13 결함).
-     */
-    String LITE_PAGE_CANDIDATES = """
-            select new com.platform.wikibackend.search.SearchRow(
-                com.platform.wikibackend.search.DocType.PAGE,
-                p.id, p.id, p.spaceId, s.key, s.name,
-                cast(p.type as string), p.title, p.content, cast(null as string), p.updatedAt,
-                case when lower(p.title) like :q then 3 else 1 end)
-            from Page p join Space s on s.id = p.spaceId
+    String LITE_PAGE_WHERE = """
+             from Page p
             where p.spaceId in :spaceIds and p.archivedAt is null
               and (:includeDrafts = true or p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED)
               and (lower(p.title) like :q or lower(p.content) like :q)
@@ -312,12 +341,19 @@ public interface PageRepository extends JpaRepository<Page, Long> {
               and (:before is null or p.updatedAt <= :before)
               and (:anyLabel = true
                    or exists (select 1 from PageLabel l where l.pageId = p.id and l.name in :labels))
+              and (:noHidden = true or p.id not in :hiddenIds)
             """;
 
-    /** 관련도순 — 제목 일치(3)가 본문 일치(1)보다 위, 같으면 최신순. */
-    @Query(LITE_PAGE_CANDIDATES
-            + " order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id desc")
-    List<com.platform.wikibackend.search.SearchRow> searchPages(
+    String LITE_PAGE_KEYS = """
+            select new com.platform.wikibackend.search.SearchKey(
+                com.platform.wikibackend.search.DocType.PAGE, p.id, p.id, p.updatedAt,
+                case when lower(p.title) like :q then 3 else 1 end)
+            """ + LITE_PAGE_WHERE;
+
+    /** 관련도순 — 제목 일치(3)가 본문 일치(1)보다 위, 같으면 최신순, 그다음 id 오름차순. */
+    @Query(LITE_PAGE_KEYS
+            + " order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id asc")
+    List<com.platform.wikibackend.search.SearchKey> searchPageKeys(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
             @Param("includeDrafts") boolean includeDrafts,
@@ -327,11 +363,13 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
 
-    /** 최신순(UPDATED_DESC) — 관련도를 보지 않는다. 관련도 낮은 최신 문서도 창 안에 들어야 한다. */
-    @Query(LITE_PAGE_CANDIDATES + " order by p.updatedAt desc, p.id desc")
-    List<com.platform.wikibackend.search.SearchRow> searchPagesNewest(
+    /** 최신순(UPDATED_DESC) — 관련도를 보지 않는다. 같은 시각이면 나중에 만든 쪽(큰 id)이 위. */
+    @Query(LITE_PAGE_KEYS + " order by p.updatedAt desc, p.id desc")
+    List<com.platform.wikibackend.search.SearchKey> searchPageKeysNewest(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
             @Param("includeDrafts") boolean includeDrafts,
@@ -341,11 +379,13 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
 
     /** 오래된순(UPDATED_ASC). */
-    @Query(LITE_PAGE_CANDIDATES + " order by p.updatedAt asc, p.id asc")
-    List<com.platform.wikibackend.search.SearchRow> searchPagesOldest(
+    @Query(LITE_PAGE_KEYS + " order by p.updatedAt asc, p.id asc")
+    List<com.platform.wikibackend.search.SearchKey> searchPageKeysOldest(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
             @Param("includeDrafts") boolean includeDrafts,
@@ -355,15 +395,104 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
 
+    /** 권한 적용 뒤의 정확한 건수 — total이 "앞쪽 후보 중 남은 수"가 아니라 진짜 수가 된다. */
+    @Query("select count(p)" + LITE_PAGE_WHERE)
+    long countPageMatches(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("includeDrafts") boolean includeDrafts,
+            @Param("anyAuthor") boolean anyAuthor,
+            @Param("authorIds") Collection<Long> authorIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("anyLabel") boolean anyLabel,
+            @Param("labels") Collection<String> labels,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds);
+
+    /** 고른 한 페이지의 본문 — 스니펫 재료. 순서는 호출부가 키 순서로 맞춘다. */
+    @Query("""
+            select new com.platform.wikibackend.search.SearchRow(
+                com.platform.wikibackend.search.DocType.PAGE,
+                p.id, p.id, p.spaceId, s.key, s.name,
+                cast(p.type as string), p.title, p.content, cast(null as string), p.updatedAt,
+                case when lower(p.title) like :q then 3 else 1 end)
+            from Page p join Space s on s.id = p.spaceId
+            where p.id in :ids
+            """)
+    List<com.platform.wikibackend.search.SearchRow> findSearchRowsByIds(
+            @Param("q") String q, @Param("ids") Collection<Long> ids);
+
     /**
-     * 라이트 검색 후보 — 첨부 파일명.
+     * 첨부 파일명 후보.
      *
      * 첨부에는 작성자·라벨이 없다. 그 필터가 걸린 질의는 첨부를 아예 찾지 않는다(호출부 판단) —
-     * 여기서 조용히 무시하면 "작성자로 걸렀는데 남의 첨부가 나온다"가 된다.
+     * 여기서 조용히 무시하면 "작성자로 걸렀는데 남의 첨부가 나온다"가 된다. 페이지 단위 제한은
+     * 소속 페이지 기준이다.
      */
-    String LITE_ATTACHMENT_CANDIDATES = """
+    String LITE_ATTACHMENT_WHERE = """
+             from Attachment a
+              join Page p on p.id = a.pageId
+            where p.spaceId in :spaceIds
+              and a.lifecycleStatus = com.platform.wikibackend.attachment.AttachmentLifecycleStatus.CONFIRMED
+              and lower(a.filename) like :q
+              and (:after is null or a.createdAt >= :after)
+              and (:before is null or a.createdAt <= :before)
+              and (:noHidden = true or a.pageId not in :hiddenIds)
+            """;
+
+    String LITE_ATTACHMENT_KEYS = """
+            select new com.platform.wikibackend.search.SearchKey(
+                com.platform.wikibackend.search.DocType.ATTACHMENT, a.id, a.pageId, a.createdAt, 3)
+            """ + LITE_ATTACHMENT_WHERE;
+
+    /** 관련도순 — 첨부는 점수가 상수(3)라 최신순이고, 동률은 서비스 비교자처럼 id 오름차순이다. */
+    @Query(LITE_ATTACHMENT_KEYS + " order by a.createdAt desc, a.id asc")
+    List<com.platform.wikibackend.search.SearchKey> searchAttachmentKeys(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
+            org.springframework.data.domain.Limit limit);
+
+    /** 최신순(UPDATED_DESC). */
+    @Query(LITE_ATTACHMENT_KEYS + " order by a.createdAt desc, a.id desc")
+    List<com.platform.wikibackend.search.SearchKey> searchAttachmentKeysNewest(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
+            org.springframework.data.domain.Limit limit);
+
+    /** 오래된순(UPDATED_ASC). */
+    @Query(LITE_ATTACHMENT_KEYS + " order by a.createdAt asc, a.id asc")
+    List<com.platform.wikibackend.search.SearchKey> searchAttachmentKeysOldest(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds,
+            org.springframework.data.domain.Limit limit);
+
+    @Query("select count(a)" + LITE_ATTACHMENT_WHERE)
+    long countAttachmentMatches(
+            @Param("q") String q,
+            @Param("spaceIds") Collection<Long> spaceIds,
+            @Param("after") java.time.Instant after,
+            @Param("before") java.time.Instant before,
+            @Param("noHidden") boolean noHidden,
+            @Param("hiddenIds") Collection<Long> hiddenIds);
+
+    @Query("""
             select new com.platform.wikibackend.search.SearchRow(
                 com.platform.wikibackend.search.DocType.ATTACHMENT,
                 a.id, a.pageId, p.spaceId, s.key, s.name,
@@ -372,28 +501,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             from Attachment a
               join Page p on p.id = a.pageId
               join Space s on s.id = p.spaceId
-            where p.spaceId in :spaceIds
-              and a.lifecycleStatus = com.platform.wikibackend.attachment.AttachmentLifecycleStatus.CONFIRMED
-              and lower(a.filename) like :q
-              and (:after is null or a.createdAt >= :after)
-              and (:before is null or a.createdAt <= :before)
-            """;
-
-    /** 관련도순·최신순 — 첨부는 점수가 상수(3)라 둘 다 최신순이다. */
-    @Query(LITE_ATTACHMENT_CANDIDATES + " order by a.createdAt desc, a.id desc")
-    List<com.platform.wikibackend.search.SearchRow> searchAttachments(
-            @Param("q") String q,
-            @Param("spaceIds") Collection<Long> spaceIds,
-            @Param("after") java.time.Instant after,
-            @Param("before") java.time.Instant before,
-            org.springframework.data.domain.Limit limit);
-
-    /** 오래된순(UPDATED_ASC). */
-    @Query(LITE_ATTACHMENT_CANDIDATES + " order by a.createdAt asc, a.id asc")
-    List<com.platform.wikibackend.search.SearchRow> searchAttachmentsOldest(
-            @Param("q") String q,
-            @Param("spaceIds") Collection<Long> spaceIds,
-            @Param("after") java.time.Instant after,
-            @Param("before") java.time.Instant before,
-            org.springframework.data.domain.Limit limit);
+            where a.id in :ids
+            """)
+    List<com.platform.wikibackend.search.SearchRow> findAttachmentSearchRowsByIds(@Param("ids") Collection<Long> ids);
 }

@@ -17,6 +17,37 @@ public interface PageCommentRepository extends JpaRepository<PageComment, Long> 
     List<PageComment> findByParentIdOrderByCreatedAtAscIdAsc(long parentId);
 
     /**
+     * 스레드 한 쪽 — 최상위 댓글을 최신부터(작성 시각, id) 키셋으로 자른다. 오프셋이 아니라서
+     * 읽는 사이에 새 댓글이 달려도 다음 쪽에서 겹치거나 빠지지 않는다. 시각만으로 자르지 않는 이유:
+     * 이관 댓글은 원본 시각을 되돌려 써서(W29) 같은 시각이 여럿일 수 있다.
+     */
+    @Query("""
+            select c from PageComment c
+             where c.pageId = :pageId and c.parentId is null and c.anchorType = :anchorType
+               and (:first = true or c.createdAt < :at or (c.createdAt = :at and c.id < :id))
+             order by c.createdAt desc, c.id desc
+            """)
+    List<PageComment> findThreadRoots(@Param("pageId") long pageId,
+                                      @Param("anchorType") String anchorType,
+                                      @Param("first") boolean first,
+                                      @Param("at") java.time.Instant at,
+                                      @Param("id") long id,
+                                      org.springframework.data.domain.Limit limit);
+
+    List<PageComment> findByParentIdInOrderByCreatedAtAscIdAsc(java.util.Collection<Long> parentIds);
+
+    long countByPageIdAndParentIdIsNullAndAnchorType(long pageId, String anchorType);
+
+    /** 그 종류(page/inline) 스레드에 달린 답글 수 — 답글 자신의 anchorType은 언제나 PAGE다. */
+    @Query("""
+            select count(c) from PageComment c
+             where c.pageId = :pageId and c.parentId in (
+                   select r.id from PageComment r
+                    where r.pageId = :pageId and r.parentId is null and r.anchorType = :anchorType)
+            """)
+    long countRepliesOfKind(@Param("pageId") long pageId, @Param("anchorType") String anchorType);
+
+    /**
      * 단일 bulk DELETE — 파생 deleteBy는 행을 하나씩 지워서, 운영 PG에서 최상위 댓글 삭제가
      * 답글을 cascade로 먼저 지운 뒤 이어지는 답글 개별 DELETE가 0행 → StaleStateException을 낸다.
      */

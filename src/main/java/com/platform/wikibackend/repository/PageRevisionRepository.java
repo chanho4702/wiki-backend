@@ -11,6 +11,33 @@ import java.util.Optional;
 public interface PageRevisionRepository extends JpaRepository<PageRevision, Long> {
     List<PageRevision> findByPageIdOrderByVersionDesc(Long pageId);
 
+    /**
+     * 이력 목록용 메타만 — 본문(content)·압축 본문(content_gzip)을 읽지 않는다.
+     * 엔티티로 읽으면 목록 한 번에 모든 버전의 본문 바이트가 실려, 비용이 문서 크기 × 버전 수가 된다.
+     */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.RevisionMeta(
+                r.version, r.editedBy, r.createdAt, r.changeNote, r.editedByName)
+              from PageRevision r
+             where r.pageId = :pageId
+             order by r.version desc
+            """)
+    List<com.platform.wikibackend.page.dto.RevisionMeta> findMetaByPageId(@Param("pageId") Long pageId);
+
+    /** 이력 한 쪽 — before보다 작은 번호부터 내림차순(커서). before가 null이면 최신부터. */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.RevisionMeta(
+                r.version, r.editedBy, r.createdAt, r.changeNote, r.editedByName)
+              from PageRevision r
+             where r.pageId = :pageId and (:before is null or r.version < :before)
+             order by r.version desc
+            """)
+    List<com.platform.wikibackend.page.dto.RevisionMeta> findMetaPage(
+            @Param("pageId") Long pageId, @Param("before") Integer before,
+            org.springframework.data.domain.Limit limit);
+
+    long countByPageId(Long pageId);
+
     /** 보관 정리(W25) 후보 — 리비전이 keep보다 많은 페이지만. 대부분의 페이지는 여기 걸리지 않는다. */
     @Query("select r.pageId from PageRevision r group by r.pageId having count(r) > :keep")
     List<Long> findPageIdsWithMoreRevisionsThan(@Param("keep") long keep);

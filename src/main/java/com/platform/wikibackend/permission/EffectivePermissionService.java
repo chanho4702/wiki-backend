@@ -58,15 +58,67 @@ public class EffectivePermissionService {
 
     /** 여러 스페이스의 알림 목록처럼 페이지 묶음을 판정할 때 스페이스별 인덱스를 한 번만 만든다. */
     public Set<Long> viewablePageIds(long userId, Collection<Page> targets) {
-        if (targets.isEmpty()) return Set.of();
+        return viewableIds(userId, targets.stream().map(Page::getId).toList());
+    }
+
+    /**
+     * id만으로 묶음 판정 — 판정에 필요한 것은 id와 조상 체인뿐이다. 트리 항목·검색 후보처럼
+     * 이미 가벼운 행을 들고 있는 호출부가 판정 때문에 본문(content)까지 든 엔티티를 다시 읽지 않게 한다.
+     */
+    public Set<Long> viewableIds(long userId, Collection<Long> pageIds) {
+        if (pageIds.isEmpty()) return Set.of();
         Principals me = principalsOf(userId);
         // 스페이스가 섞여 있어도 폐포 한 번이면 된다 — 체인은 스페이스를 넘지 않는다.
-        SpaceIndex idx = chainIndex(targets.stream().map(Page::getId).toList());
+        SpaceIndex idx = chainIndex(pageIds);
         Set<Long> visible = new HashSet<>();
-        for (Page page : targets) {
-            if (idx.canView(me, page.getId())) visible.add(page.getId());
+        for (Long id : pageIds) {
+            if (id != null && idx.canView(me, id)) visible.add(id);
         }
         return visible;
+    }
+
+    /**
+     * 여러 스페이스에서 이 사용자가 **볼 수 없는** 페이지 id(휴지통 포함 인덱스 기준).
+     *
+     * 라이트 검색이 쓴다: 후보를 상한까지 잘라 놓고 뒤에서 거르면, 앞쪽 후보가 전부 제한 문서일 때
+     * 그 뒤의 볼 수 있는 문서가 통째로 사라진다(2026-10-16 결함). 숨길 집합을 먼저 알면 SQL이
+     * 처음부터 제외하고 세므로 정렬·페이지 경계·건수가 권한 적용 뒤의 값이 된다.
+     *
+     * VIEW 제한이 하나도 없는 스페이스는 인덱스를 만들지 않는다(질의 1회로 골라낸다) — 제한 없는
+     * 설치에서 검색 비용이 늘지 않게. 판정은 {@link SpaceIndex#canView}를 그대로 쓴다: 규칙을
+     * "제한 노드의 후손" 같은 두 번째 표현으로 옮겨 적으면 둘이 언젠가 갈린다. 캐시하지 않는다.
+     */
+    public Set<Long> hiddenPageIds(long userId, Collection<Long> spaceIds) {
+        if (spaceIds.isEmpty()) return Set.of();
+        // 판정이 필요한 스페이스: 자체 VIEW 제한이 있거나, 조상 체인이 다른 스페이스로 넘어가는 페이지가
+        // 있는 곳(부모가 다른 스페이스로 옮겨진 뒤 휴지통에서 되살린 하위 등 — 그 조상의 제한도 상속된다).
+        Set<Long> targets = new java.util.LinkedHashSet<>(restrictions.findSpaceIdsWithViewRestrictions(spaceIds));
+        targets.addAll(pages.findSpaceIdsWithForeignParents(spaceIds));
+        if (targets.isEmpty()) return Set.of();
+        Principals me = principalsOf(userId);
+        Set<Long> hidden = new HashSet<>();
+        for (Long spaceId : targets) {
+            SpaceIndex idx = index(spaceId);
+            // 스페이스 밖 조상: 그 조상부터 루트까지는 체인 폐포로 따로 판정한다(스페이스 인덱스에 없다).
+            Map<Long, Long> exitOf = new HashMap<>();
+            for (Long pageId : idx.pageIds()) {
+                Long exit = idx.exitOf(pageId);
+                if (exit != null) exitOf.put(pageId, exit);
+            }
+            Set<Long> blockedExits = new HashSet<>();
+            if (!exitOf.isEmpty()) {
+                Set<Long> exits = new HashSet<>(exitOf.values());
+                SpaceIndex outside = chainIndex(exits);
+                for (Long exit : exits) {
+                    if (!outside.canView(me, exit)) blockedExits.add(exit);
+                }
+            }
+            for (Long pageId : idx.pageIds()) {
+                Long exit = exitOf.get(pageId);
+                if (!idx.canView(me, pageId) || (exit != null && blockedExits.contains(exit))) hidden.add(pageId);
+            }
+        }
+        return hidden;
     }
 
     public void requireEdit(long userId, Page page) {
@@ -166,9 +218,10 @@ public class EffectivePermissionService {
             parentOf.put(((Number) row[0]).longValue(),
                     row[1] == null ? null : ((Number) row[1]).longValue());
         }
-        return new SpaceIndex(parentOf, byPage(restrictions.findByPageIdIn(parentOf.keySet()),
-                PageRestriction.Type.VIEW), byPage(restrictions.findByPageIdIn(parentOf.keySet()),
-                PageRestriction.Type.EDIT));
+        // 한 번 읽어 VIEW/EDIT로 나눈다 — 같은 행을 종류별로 두 번 조회할 이유가 없다.
+        List<PageRestriction> rows = restrictions.findByPageIdIn(parentOf.keySet());
+        return new SpaceIndex(parentOf, byPage(rows, PageRestriction.Type.VIEW),
+                byPage(rows, PageRestriction.Type.EDIT));
     }
 
     private static Map<Long, List<PageRestriction>> byPage(List<PageRestriction> rows,
@@ -239,6 +292,21 @@ public class EffectivePermissionService {
                 cursor = parentOf.get(cursor);
             }
             return true;
+        }
+
+        /**
+         * 이 인덱스(한 스페이스) 밖으로 나가는 첫 조상 id — 체인이 스페이스 안에서 끝나면 null.
+         * 스페이스 전량 인덱스는 그 스페이스의 행만 키로 가지므로, 키에 없는 부모가 곧 밖이다.
+         */
+        Long exitOf(long pageId) {
+            Set<Long> visited = new HashSet<>();
+            Long cursor = parentOf.get(pageId);
+            visited.add(pageId);
+            while (cursor != null && visited.add(cursor)) {
+                if (!parentOf.containsKey(cursor)) return cursor;
+                cursor = parentOf.get(cursor);
+            }
+            return null;
         }
 
         boolean canEdit(Principals me, long pageId) {

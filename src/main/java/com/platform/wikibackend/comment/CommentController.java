@@ -37,6 +37,21 @@ public class CommentController {
         return comments.list(userId(jwt), pageId);
     }
 
+    /** 스레드 단위 쪽 목록 — 위 전량 목록은 기존 호출자를 위해 그대로 둔다. */
+    @Operation(summary = "페이지의 댓글 스레드를 한 쪽씩 조회한다(스레드 최신순, 답글 포함)")
+    @GetMapping("/api/wiki/pages/{pageId}/comments/threads")
+    public com.platform.wikibackend.comment.dto.CommentPage threads(
+            @Parameter(description = "페이지 ID") @PathVariable long pageId,
+            @Parameter(description = "page(하단 댓글) 또는 inline(본문 구간 댓글). 기본 page")
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String kind,
+            @Parameter(description = "이전 응답의 nextBefore. 생략하면 최신 스레드부터")
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String before,
+            @Parameter(description = "한 쪽 스레드 수(1~100, 기본 20)")
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Integer limit,
+            @AuthenticationPrincipal Jwt jwt) {
+        return comments.listThreads(userId(jwt), pageId, kind, before, limit);
+    }
+
     @Operation(summary = "페이지에 댓글을 단다 — 인용 구간을 주면 인라인 댓글이다")
     @PostMapping("/api/wiki/pages/{pageId}/comments")
     @ResponseStatus(HttpStatus.CREATED)

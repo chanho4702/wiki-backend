@@ -73,6 +73,7 @@ class LiteSearchTest {
     @Autowired PageRepository pages;
     @Autowired PageLabelRepository labels;
     @Autowired PageRestrictionRepository restrictions;
+    @Autowired com.platform.wikibackend.repository.AttachmentRepository attachments;
     @Autowired FakePermissionClient permissions;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
 
@@ -86,6 +87,7 @@ class LiteSearchTest {
                 .build();
         restrictions.deleteAll();
         labels.deleteAll();
+        jdbc.update("delete from attachment");
         TestPages.deleteAll(jdbc);
         spaces.deleteAll();
         permissions.reset();
@@ -231,11 +233,15 @@ class LiteSearchTest {
                 .andExpect(jsonPath("$.data.search.total").value(0));
     }
 
-    // ── 후보 창(CANDIDATE_WINDOW=500) 초과 회귀 — 정렬은 SQL에서 자르기 전에 적용돼야 한다(2026-09-13) ──
+    // ── 예전 후보 창(500건) 초과 회귀 — 정렬은 SQL에서 자르기 전에 적용돼야 한다(2026-09-13) ──
+    // 지금은 창 없이 SQL이 권한까지 적용해 세므로 total이 정확하다(totalExact=true).
 
-    /** 창보다 많은 후보를 만든다: 전부 제목 일치(관련도 3), updatedAt은 2026-01-01부터 1분 간격. */
+    /** 예전 후보 창(500)보다 많은 수 — 창이 다시 생기면 이 테스트들이 잡는다. */
+    private static final int WIDE = 505;
+
+    /** WIDE건을 만든다: 전부 제목 일치(관련도 3), updatedAt은 2026-01-01부터 1분 간격. */
     private void fillWindow(String titlePrefix) {
-        for (int i = 0; i < LiteSearchService.CANDIDATE_WINDOW + 5; i++) {
+        for (int i = 0; i < WIDE; i++) {
             touch(page(titlePrefix + " " + i, "본문"), java.time.Instant.parse("2026-01-01T00:00:00Z")
                     .plusSeconds(60L * i).toString());
         }
@@ -255,7 +261,8 @@ class LiteSearchTest {
         touch(oldest, "2020-01-01T00:00:00Z");
 
         search(USER, sorted("창고", "UPDATED_ASC"))
-                .andExpect(jsonPath("$.data.search.totalExact").value(false))
+                .andExpect(jsonPath("$.data.search.total").value(WIDE + 1))
+                .andExpect(jsonPath("$.data.search.totalExact").value(true))
                 .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(oldest.getId())));
     }
 
@@ -267,14 +274,15 @@ class LiteSearchTest {
         touch(newest, "2027-01-01T00:00:00Z");
 
         search(USER, sorted("창고", "UPDATED_DESC"))
-                .andExpect(jsonPath("$.data.search.totalExact").value(false))
+                .andExpect(jsonPath("$.data.search.total").value(WIDE + 1))
+                .andExpect(jsonPath("$.data.search.totalExact").value(true))
                 .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(newest.getId())));
     }
 
     @Test
     void 후보창_초과에서도_관련도순은_제목_일치를_먼저_준다() throws Exception {
         // 본문 일치(관련도 1)가 창보다 많고 전부 더 최신이어도, 오래된 제목 일치(관련도 3)가 첫 결과다.
-        for (int i = 0; i < LiteSearchService.CANDIDATE_WINDOW + 5; i++) {
+        for (int i = 0; i < WIDE; i++) {
             touch(page("메모 " + i, "창고 이야기"), java.time.Instant.parse("2026-01-01T00:00:00Z")
                     .plusSeconds(60L * i).toString());
         }
@@ -284,6 +292,164 @@ class LiteSearchTest {
         search(USER, sorted("창고", "RELEVANCE"))
                 .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(titled.getId())))
                 .andExpect(jsonPath("$.data.search.hits[0].score").value(3));
+    }
+
+    // ── 권한 후필터 누락 회귀(2026-10-16) — 앞쪽 후보가 전부 제한 문서여도 뒤의 볼 수 있는 문서가 나와야 한다 ──
+
+    /** OTHER가 볼 수 없도록 USER 전용 VIEW 제한을 건다. */
+    private void restrictToUser(Page page) {
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(
+                page.getId(),
+                com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER,
+                USER, USER));
+    }
+
+    @Test
+    void 앞쪽_후보가_전부_제한_문서여도_뒤의_볼_수_있는_문서를_찾는다() throws Exception {
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+        // 제목 일치(관련도 3) + 더 최신인 제한 문서가 WIDE건 — 어떤 정렬로도 볼 수 있는 문서보다 앞이다.
+        Page parent = page("기밀 상위", "본문");
+        restrictToUser(parent);
+        for (int i = 0; i < WIDE; i++) {
+            Page child = pages.save(Page.of(space.getId(), parent.getId(), "보고서 기밀 " + i, "본문", USER));
+            touch(child, java.time.Instant.parse("2026-06-01T00:00:00Z").plusSeconds(60L * i).toString());
+        }
+        Page visible = page("공개 메모", "보고서 요약"); // 본문 일치(관련도 1), 가장 오래됨
+        touch(visible, "2020-01-01T00:00:00Z");
+
+        for (String sort : List.of("RELEVANCE", "UPDATED_DESC", "UPDATED_ASC")) {
+            Map<String, Object> in = input("보고서");
+            in.put("sort", sort);
+            search(OTHER, in)
+                    .andExpect(jsonPath("$.data.search.total").value(1))
+                    .andExpect(jsonPath("$.data.search.totalExact").value(true))
+                    .andExpect(jsonPath("$.data.search.hits.length()").value(1))
+                    .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(visible.getId())));
+        }
+        // 제한 대상자 본인에게는 상속된 제한 문서가 그대로 다 보인다 — 거르기가 과하면 안 된다.
+        search(USER, input("보고서"))
+                .andExpect(jsonPath("$.data.search.total").value(WIDE + 1));
+    }
+
+    @Test
+    void 제한_문서_사이의_결과를_페이지로_끝까지_넘길_수_있다() throws Exception {
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+        List<Long> expected = new java.util.ArrayList<>();
+        // 제한 문서와 볼 수 있는 문서를 섞어 최신순으로 늘어놓는다: 볼 수 있는 것 25건이 제한 문서 사이사이에 있다.
+        for (int i = 0; i < WIDE + 25; i++) {
+            Page p = page("분기 보고서 " + i, "본문");
+            touch(p, java.time.Instant.parse("2026-01-01T00:00:00Z").plusSeconds(60L * i).toString());
+            if (i % 21 == 0 && expected.size() < 25) expected.add(0, p.getId()); // 최신순이므로 앞에 넣는다
+            else restrictToUser(p);
+        }
+        int total = expected.size();
+
+        List<String> seen = new java.util.ArrayList<>();
+        for (int pageNo = 0; pageNo * 10 < total; pageNo++) {
+            Map<String, Object> in = input("보고서");
+            in.put("sort", "UPDATED_DESC");
+            in.put("size", 10);
+            in.put("page", pageNo);
+            String body = search(OTHER, in)
+                    .andExpect(jsonPath("$.data.search.total").value(total))
+                    .andExpect(jsonPath("$.data.search.totalExact").value(true))
+                    .andReturn().getResponse().getContentAsString();
+            com.fasterxml.jackson.databind.JsonNode hits = json.readTree(body).at("/data/search/hits");
+            hits.forEach(h -> seen.add(h.get("id").asText()));
+        }
+        // 겹침·빠짐 없이 요청 정렬 그대로 전부 — 마지막 쪽 뒤는 비어 있다.
+        org.assertj.core.api.Assertions.assertThat(seen)
+                .containsExactlyElementsOf(expected.stream().map(String::valueOf).toList());
+        Map<String, Object> beyond = input("보고서");
+        beyond.put("sort", "UPDATED_DESC");
+        beyond.put("size", 10);
+        beyond.put("page", 3);
+        search(OTHER, beyond).andExpect(jsonPath("$.data.search.hits.length()").value(0));
+    }
+
+    @Test
+    void 제한된_페이지의_첨부는_빠지고_페이지와_첨부가_한_목록으로_정렬된다() throws Exception {
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+        Page open = page("설계 개요", "본문");
+        Page closed = page("설계 기밀", "본문");
+        restrictToUser(closed);
+        com.platform.wikibackend.domain.Attachment openFile = attachments.save(
+                com.platform.wikibackend.domain.Attachment.of(open.getId(), "설계도.pdf", "application/pdf", 10L, "k1", USER));
+        attachments.save(
+                com.platform.wikibackend.domain.Attachment.of(closed.getId(), "설계-비밀.pdf", "application/pdf", 10L, "k2", USER));
+        touch(open, "2026-01-01T00:00:00Z");
+        jdbc.update("update attachment set created_at = ? where id = ?",
+                java.sql.Timestamp.from(java.time.Instant.parse("2026-02-01T00:00:00Z")), openFile.getId());
+
+        Map<String, Object> in = input("설계");
+        in.put("sort", "UPDATED_DESC");
+        search(OTHER, in)
+                .andExpect(jsonPath("$.data.search.total").value(2))
+                .andExpect(jsonPath("$.data.search.hits[0].docType").value("ATTACHMENT"))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(openFile.getId())))
+                .andExpect(jsonPath("$.data.search.hits[0].pageId").value(String.valueOf(open.getId())))
+                .andExpect(jsonPath("$.data.search.hits[1].id").value(String.valueOf(open.getId())));
+    }
+
+    /**
+     * 부모가 다른 스페이스에 있는 페이지(부모를 옮긴 뒤 휴지통에서 하위를 되살린 경우) — 그 부모의 VIEW 제한도
+     * 상속된다. 스페이스 단위 숨김 계산이 스페이스 밖 조상을 못 보면 본문은 막아도 total이 존재를 흘린다.
+     */
+    @Test
+    void 다른_스페이스의_조상_제한도_건수와_결과에서_숨긴다() throws Exception {
+        Space other = spaces.save(Space.of("OPS", "운영", null, USER));
+        Page foreignParent = pages.save(Page.of(other.getId(), null, "운영 기밀 상위", "본문", USER));
+        restrictToUser(foreignParent);
+        Page child = pages.save(Page.of(space.getId(), foreignParent.getId(), "분기 감사 결과", "본문", USER));
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+
+        search(OTHER, input("감사"))
+                .andExpect(jsonPath("$.data.search.total").value(0))
+                .andExpect(jsonPath("$.data.search.hits.length()").value(0));
+        // 제한 대상자 본인에게는 보인다
+        permissions.allow(USER, space.getId(), WikiAction.VIEW);
+        search(USER, input("감사"))
+                .andExpect(jsonPath("$.data.search.total").value(1))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(child.getId())));
+    }
+
+    @Test
+    void 제한을_풀면_다음_검색에_바로_나온다() throws Exception {
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+        Page closed = page("배포 기밀", "본문");
+        restrictToUser(closed);
+        search(OTHER, input("배포")).andExpect(jsonPath("$.data.search.total").value(0));
+
+        restrictions.deleteAll(); // 캐시가 있으면 여기서 낡은 판정이 남는다
+        search(OTHER, input("배포"))
+                .andExpect(jsonPath("$.data.search.total").value(1))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(closed.getId())));
+    }
+
+    @Test
+    void 숨길_문서가_아주_많아도_메모리_거르기로_같은_결과를_낸다() throws Exception {
+        permissions.allow(OTHER, space.getId(), WikiAction.VIEW);
+        Page parent = page("기밀 묶음", "본문");
+        restrictToUser(parent);
+        // 상속으로 숨는 문서가 SQL 인라인 상한을 넘는다 → 키 스캔 경로.
+        List<Page> hidden = new java.util.ArrayList<>();
+        for (int i = 0; i < LiteSearchService.HIDDEN_INLINE_LIMIT + 5; i++) {
+            hidden.add(Page.of(space.getId(), parent.getId(), "점검표 " + i, "본문", USER));
+        }
+        pages.saveAll(hidden);
+        Page a = page("공개 점검표 가", "본문");
+        Page b = page("공개 점검표 나", "본문");
+        touch(a, "2020-01-01T00:00:00Z");
+        touch(b, "2020-01-02T00:00:00Z");
+
+        Map<String, Object> in = input("점검표");
+        in.put("sort", "UPDATED_ASC");
+        search(OTHER, in)
+                .andExpect(jsonPath("$.data.search.total").value(2))
+                .andExpect(jsonPath("$.data.search.totalExact").value(true))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(a.getId())))
+                .andExpect(jsonPath("$.data.search.hits[1].id").value(String.valueOf(b.getId())));
     }
 
     /** updatedAt을 못 박는다 — 도메인에는 시각을 지정해 저장하는 길이 없다(있어서도 안 된다). */

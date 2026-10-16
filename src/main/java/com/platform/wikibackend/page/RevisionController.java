@@ -31,6 +31,21 @@ public class RevisionController {
         return pages.listRevisions(userId(jwt), pageId);
     }
 
+    /**
+     * 쪽 단위 이력 — 버전이 많은 문서의 첫 화면이 전량을 읽지 않게 한다. 위의 전량 목록은 기존
+     * 호출자를 위해 그대로 둔다. `/paged`는 `/{version}`보다 구체적인 경로라 먼저 매칭된다.
+     */
+    @Operation(summary = "페이지의 버전 목록을 한 쪽씩 조회한다(최신순, 버전 번호 커서)")
+    @GetMapping("/paged")
+    public com.platform.wikibackend.page.dto.RevisionPage page(
+            @AuthenticationPrincipal Jwt jwt,
+            @Parameter(description = "페이지 ID") @PathVariable Long pageId,
+            @Parameter(description = "이 버전보다 작은 것부터(이전 응답의 nextBefore). 생략하면 최신부터")
+            @RequestParam(required = false) Integer before,
+            @Parameter(description = "한 쪽 크기(1~100, 기본 50)") @RequestParam(required = false) Integer limit) {
+        return pages.listRevisionPage(userId(jwt), pageId, before, limit);
+    }
+
     @Operation(summary = "특정 버전의 본문을 조회한다")
     @GetMapping("/{version}")
     public RevisionResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,

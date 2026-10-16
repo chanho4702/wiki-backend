@@ -40,6 +40,13 @@ public class TreeService {
 
     /** 제목 검색·조회의 상한 — 자동완성과 필터가 목적이라 전량을 줄 이유가 없다. */
     public static final int SEARCH_LIMIT = 50;
+    /**
+     * 제한 필터 때문에 후보를 더 읽을 때의 한 번 묶음. 상한(SEARCH_LIMIT)만큼만 읽고 거르면 앞쪽
+     * 후보가 전부 제한 문서일 때 볼 수 있는 결과가 0건이 된다 — 채워질 때까지 다음 묶음을 읽는다.
+     */
+    static final int CANDIDATE_BATCH = SEARCH_LIMIT * 4;
+    /** 묶음을 이어 읽는 총량 상한 — 볼 수 없는 일치 문서가 수천 건이어도 요청 하나가 끝없이 돌지 않게. */
+    static final int CANDIDATE_SCAN_LIMIT = 5_000;
     /** 한 번에 조회할 수 있는 제목 수 — `[[링크]]`가 아무리 많아도 한 문서 안이다. */
     public static final int LOOKUP_LIMIT = 200;
 
@@ -105,16 +112,17 @@ public class TreeService {
         List<Long> wanted = ids.stream().filter(Objects::nonNull).distinct().limit(LOOKUP_LIMIT).toList();
         if (wanted.isEmpty()) return List.of();
 
-        List<Page> targets = pages.findAllById(wanted);
+        // 판정에 필요한 것은 (id, spaceId)뿐이다 — 본문을 든 엔티티를 읽지 않는다.
+        List<PageRepository.IdSpace> targets = pages.findIdSpaceByIds(wanted);
         // 스페이스 VIEW부터 — 페이지 단위 판정은 스페이스 권한을 전제한다.
         Map<Long, Boolean> spaceAllowed = new HashMap<>();
-        List<Page> inAllowedSpaces = targets.stream()
+        List<Long> inAllowedSpaces = targets.stream()
                 .filter(p -> spaceAllowed.computeIfAbsent(
                         p.getSpaceId(), sid -> spaces.canView(userId, sid)))
+                .map(PageRepository.IdSpace::getId)
                 .toList();
-        Set<Long> visible = effective.viewablePageIds(userId, inAllowedSpaces);
-        List<Long> allowed = inAllowedSpaces.stream()
-                .map(Page::getId).filter(visible::contains).toList();
+        Set<Long> visible = effective.viewableIds(userId, inAllowedSpaces);
+        List<Long> allowed = inAllowedSpaces.stream().filter(visible::contains).toList();
         if (allowed.isEmpty()) return List.of();
 
         Map<Long, Long> parentOf = new HashMap<>();
@@ -170,14 +178,9 @@ public class TreeService {
         spaces.getForView(userId, spaceId);
         List<Long> wanted = ids.stream().filter(Objects::nonNull).distinct().limit(LOOKUP_LIMIT).toList();
         if (wanted.isEmpty()) return List.of();
-        // 다른 스페이스의 id를 섞어 보내 남의 문서 제목을 캐내지 못하게 한 번에 걸러낸다
-        // (id마다 findById를 도는 N+1을 만들지 않는다).
-        Set<Long> inSpace = pages.findAllById(wanted).stream()
-                .filter(p -> Objects.equals(p.getSpaceId(), spaceId))
-                .map(Page::getId)
-                .collect(java.util.stream.Collectors.toSet());
-        if (inSpace.isEmpty()) return List.of();
-        List<PageTreeItem> items = pages.findTreeItemsByIds(inSpace);
+        // 다른 스페이스의 id를 섞어 보내 남의 문서 제목을 캐내지 못하게 질의에서 스페이스로 거른다
+        // (id마다 findById를 도는 N+1도, 본문을 든 엔티티 재조회도 없다).
+        List<PageTreeItem> items = pages.findTreeItemsByIdsInSpace(spaceId, wanted);
         return withChildCounts(visible(userId, items));
     }
 
@@ -186,7 +189,8 @@ public class TreeService {
         spaces.getForView(userId, spaceId);
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) return List.of();
-        return withChildCounts(visible(userId, pages.searchByTitle(spaceId, q, Limit.of(SEARCH_LIMIT))));
+        return withChildCounts(firstVisible(userId, SEARCH_LIMIT,
+                page -> pages.searchByTitle(spaceId, q, page)));
     }
 
     /**
@@ -196,9 +200,8 @@ public class TreeService {
     public List<PageNode> recentlyUpdated(long userId, long spaceId, int limit) {
         spaces.getForView(userId, spaceId);
         int capped = Math.min(Math.max(limit, 1), SEARCH_LIMIT);
-        List<PageTreeItem> candidates =
-                pages.findRecentlyUpdated(spaceId, Limit.of(Math.min(capped * 4, SEARCH_LIMIT * 4)));
-        return withChildCounts(visible(userId, candidates)).stream().limit(capped).toList();
+        return withChildCounts(firstVisible(userId, capped,
+                page -> pages.findRecentlyUpdated(spaceId, page)));
     }
 
     /** 후손 전체 — 내보내기(하위 포함)와 삭제 영향 표시가 쓴다. */
@@ -215,14 +218,53 @@ public class TreeService {
     /* ── 내부 ────────────────────────────────────────────── */
 
     /**
-     * 페이지 제한(W18) 필터. 트리 항목에는 spaceId가 없어 엔티티를 다시 읽는다 —
-     * 후보 수가 화면 단위로 묶여 있어(자식 목록·검색 상한) 전량 스캔이 되지 않는다.
+     * 페이지 제한(W18) 필터. 판정은 id와 조상 체인만 쓴다 — 트리 항목을 위해 본문(content)이 든
+     * 엔티티를 다시 읽지 않는다. 스페이스 경계는 각 질의가 이미 spaceId로 묶었다.
      */
     private List<PageTreeItem> visible(long userId, List<PageTreeItem> items) {
         if (items.isEmpty()) return List.of();
-        List<Page> loaded = pages.findAllById(items.stream().map(PageTreeItem::id).toList());
-        Set<Long> allowed = effective.viewablePageIds(userId, loaded);
+        Set<Long> allowed = effective.viewableIds(userId, items.stream().map(PageTreeItem::id).toList());
         return items.stream().filter(it -> allowed.contains(it.id())).toList();
+    }
+
+    /**
+     * 상한이 있는 목록(제목 검색·최근 수정)을 제한 필터 **뒤에** want건까지 채운다.
+     *
+     * 상한만큼 읽고 거르면 앞쪽 후보가 전부 제한 문서일 때 볼 수 있는 결과가 사라진다. 같은 정렬로
+     * 다음 묶음을 이어 읽되, 볼 수 없는 일치 문서가 아주 많아도 요청 하나가 끝없이 돌지 않게
+     * {@link #CANDIDATE_SCAN_LIMIT}에서 멈춘다(자동완성·최근 목록이라 그때는 찾은 만큼만 준다).
+     */
+    private List<PageTreeItem> firstVisible(long userId, int want,
+                                            java.util.function.Function<org.springframework.data.domain.Pageable,
+                                                    List<PageTreeItem>> fetch) {
+        List<PageTreeItem> out = new ArrayList<>();
+        for (int offset = 0; offset < CANDIDATE_SCAN_LIMIT; offset += CANDIDATE_BATCH) {
+            int size = Math.min(CANDIDATE_BATCH, CANDIDATE_SCAN_LIMIT - offset);
+            List<PageTreeItem> batch = fetch.apply(new OffsetPage(offset, size));
+            for (PageTreeItem item : visible(userId, batch)) {
+                out.add(item);
+                if (out.size() == want) return out;
+            }
+            if (batch.size() < size) break; // 더 읽을 후보가 없다
+        }
+        return out;
+    }
+
+    /** 오프셋이 묶음 크기의 배수가 아니어도 되는 Pageable — PageRequest는 page 번호만 받는다. */
+    private record OffsetPage(long offset, int size) implements org.springframework.data.domain.Pageable {
+        @Override public int getPageNumber() { return (int) (offset / Math.max(size, 1)); }
+        @Override public int getPageSize() { return size; }
+        @Override public long getOffset() { return offset; }
+        @Override public org.springframework.data.domain.Sort getSort() { return org.springframework.data.domain.Sort.unsorted(); }
+        @Override public org.springframework.data.domain.Pageable next() { return new OffsetPage(offset + size, size); }
+        @Override public org.springframework.data.domain.Pageable previousOrFirst() {
+            return new OffsetPage(Math.max(0, offset - size), size);
+        }
+        @Override public org.springframework.data.domain.Pageable first() { return new OffsetPage(0, size); }
+        @Override public org.springframework.data.domain.Pageable withPage(int pageNumber) {
+            return new OffsetPage((long) pageNumber * size, size);
+        }
+        @Override public boolean hasPrevious() { return offset > 0; }
     }
 
     private List<PageNode> withChildCounts(List<PageTreeItem> items) {

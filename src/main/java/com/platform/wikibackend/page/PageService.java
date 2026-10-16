@@ -660,23 +660,60 @@ public class PageService {
     }
 
     /**
-     * 이력 목록. 편집자 이름은 저장 시점 스냅샷(V28)이고, 그 값이 없는 옛 리비전만 org 원장에서
-     * 채운다 — 목록 하나에 조회 <b>한 번</b>이다. 못 채우면 이름 없이 나가고 화면이 id로 폴백한다.
+     * 이력 전체 목록(메타만). 화면은 쪽 단위({@link #listRevisionPage})를 쓴다.
      */
     @Transactional(readOnly = true)
     public List<RevisionMeta> listRevisions(long userId, long pageId) {
+        requireRevisionView(userId, pageId);
+        // 전량 계약(기존 호출자) — 그래도 본문 바이트는 읽지 않는다(메타 프로젝션).
+        return withEditorNames(revisions.findMetaByPageId(pageId));
+    }
+
+    /** 한 쪽 상한 — 화면의 "더 보기" 한 번이 읽는 양. */
+    public static final int REVISION_PAGE_MAX = 100;
+
+    /**
+     * 이력 한 쪽(최신순, 버전 번호 커서). 버전이 수백 개인 문서도 첫 화면은 한 쪽만 읽는다.
+     * 전량 목록({@link #listRevisions})은 그대로 둔다 — 그걸 부르는 기존 호출자가 조용히 잘린
+     * 목록을 받으면 안 된다.
+     */
+    @Transactional(readOnly = true)
+    public com.platform.wikibackend.page.dto.RevisionPage listRevisionPage(
+            long userId, long pageId, Integer before, Integer limit) {
+        requireRevisionView(userId, pageId);
+        int size = limit == null ? 50 : Math.max(1, Math.min(limit, REVISION_PAGE_MAX));
+        // 한 건 더 읽어 다음 쪽이 있는지 안다 — 별도 존재 질의를 두지 않는다.
+        List<RevisionMeta> rows = revisions.findMetaPage(pageId, before,
+                org.springframework.data.domain.Limit.of(size + 1));
+        boolean more = rows.size() > size;
+        List<RevisionMeta> items = more ? rows.subList(0, size) : rows;
+        Integer next = more ? items.get(items.size() - 1).version() : null;
+        return new com.platform.wikibackend.page.dto.RevisionPage(
+                withEditorNames(items), next, revisions.countByPageId(pageId));
+    }
+
+    private void requireRevisionView(long userId, long pageId) {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
-        List<PageRevision> rows = revisions.findByPageIdOrderByVersionDesc(pageId);
+    }
+
+    /**
+     * 편집자 이름은 저장 시점 스냅샷(V28)이고, 그 값이 없는 옛 리비전만 org 원장에서 채운다 —
+     * 목록 하나에 조회 <b>한 번</b>이다. 못 채우면 이름 없이 나가고 화면이 id로 폴백한다.
+     */
+    private List<RevisionMeta> withEditorNames(List<RevisionMeta> rows) {
         Map<Long, String> names = displayNames.resolve(rows.stream()
                 .filter(r -> com.platform.wikibackend.directory.DisplayNames.needsFill(
-                        r.getEditedByName(), r.getEditedBy() == null ? 0L : r.getEditedBy()))
-                .map(PageRevision::getEditedBy)
+                        r.editedByName(), r.editedBy() == null ? 0L : r.editedBy()))
+                .map(RevisionMeta::editedBy)
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList());
-        return rows.stream().map(r -> RevisionMeta.from(r, filled(r.getEditedByName(), r.getEditedBy(), names))).toList();
+        return rows.stream()
+                .map(r -> new RevisionMeta(r.version(), r.editedBy(), r.createdAt(), r.changeNote(),
+                        filled(r.editedByName(), r.editedBy(), names)))
+                .toList();
     }
 
     @Transactional(readOnly = true)

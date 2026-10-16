@@ -25,4 +25,15 @@ public interface PageRestrictionRepository extends JpaRepository<PageRestriction
              where r.page_id in (select p.id from page p where p.space_id = :spaceId)
             """, nativeQuery = true)
     List<PageRestriction> findBySpaceId(@Param("spaceId") Long spaceId);
+
+    /**
+     * VIEW 제한이 하나라도 걸린 스페이스만(라이트 검색의 숨김 집합 계산). 제한 없는 스페이스는
+     * 스페이스 전량 인덱스를 만들 필요가 없다. 휴지통 페이지의 제한도 센다 — 판정 인덱스와 같은 범위.
+     */
+    @Query(value = """
+            select distinct p.space_id from page_restriction r
+              join page p on p.id = r.page_id
+             where r.type = 'VIEW' and p.space_id in (:spaceIds)
+            """, nativeQuery = true)
+    List<Long> findSpaceIdsWithViewRestrictions(@Param("spaceIds") java.util.Collection<Long> spaceIds);
 }

@@ -46,7 +46,14 @@ public class SpaceController {
     @Operation(summary = "스페이스를 조회한다")
     @GetMapping("/{id}")
     public SpaceResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long id) {
-        return SpaceResponse.from(spaces.getForView(userId(jwt), id));
+        return spaces.get(userId(jwt), id);
+    }
+
+    @Operation(summary = "스페이스 라벨을 전량 교체한다 — 스페이스 ADMIN만")
+    @PutMapping("/{id}/labels")
+    public SpaceResponse setLabels(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable Long id,
+                                   @Valid @RequestBody com.platform.wikibackend.space.dto.SpaceLabelsRequest req) {
+        return spaces.setLabels(userId(jwt), id, req.labels());
     }
 
     @Operation(summary = "스페이스 이름과 설명을 수정한다")

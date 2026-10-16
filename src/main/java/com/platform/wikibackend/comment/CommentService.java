@@ -44,7 +44,11 @@ public class CommentService {
         Page page = requirePage(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, page);
-        List<PageComment> found = comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId);
+        return toResponses(userId, comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId));
+    }
+
+    /** 리액션·이름 채우기 — 전량 목록과 쪽 목록이 같은 규칙을 쓴다(둘 다 목록당 조회 1회). */
+    private List<CommentResponse> toResponses(long userId, List<PageComment> found) {
         var reactionsById = reactions.forComments(userId, found.stream().map(PageComment::getId).toList());
         // 작성 시점에 토큰 name이 없어 `사용자 #7`로 저장된 옛 댓글만 원장에서 채운다 — 목록당 조회 1회.
         // 진짜 이름이 남아 있는 댓글은 건드리지 않는다: 그때 그 사람의 서명이다.
@@ -58,6 +62,75 @@ public class CommentService {
                 .map(c -> CommentResponse.from(c, reactionsById.getOrDefault(c.getId(), List.of()),
                         authorName(c, names)))
                 .toList();
+    }
+
+    /** 한 쪽 스레드 수 상한. */
+    public static final int THREAD_PAGE_MAX = 100;
+
+    /**
+     * 스레드 단위 한 쪽(CommentPage 설명 참고). 전량 목록({@link #list})은 기존 호출자를 위해
+     * 그대로 둔다 — 그걸 부르는 쪽이 조용히 잘린 목록을 받으면 안 된다.
+     *
+     * @param kind  "page"(페이지 하단) 또는 "inline"(본문 구간) — 두 화면이 서로 다른 스레드를 그린다
+     * @param before 이전 응답의 nextBefore. null이면 최신 스레드부터
+     */
+    @Transactional(readOnly = true)
+    public com.platform.wikibackend.comment.dto.CommentPage listThreads(
+            long userId, long pageId, String kind, String before, Integer limit) {
+        Page page = requirePage(pageId);
+        spaces.require(userId, page.getSpaceId(), WikiAction.VIEW);
+        effective.requireView(userId, page);
+        String anchorType = anchorTypeOf(kind);
+        int size = limit == null ? 20 : Math.max(1, Math.min(limit, THREAD_PAGE_MAX));
+        Cursor cursor = Cursor.parse(before);
+
+        List<PageComment> roots = comments.findThreadRoots(pageId, anchorType, cursor == null,
+                cursor == null ? Instant.EPOCH : cursor.at(), cursor == null ? 0L : cursor.id(),
+                org.springframework.data.domain.Limit.of(size + 1));
+        boolean more = roots.size() > size;
+        if (more) roots = roots.subList(0, size);
+        String next = more ? Cursor.of(roots.get(roots.size() - 1)) : null;
+
+        List<PageComment> found = new java.util.ArrayList<>(roots);
+        if (!roots.isEmpty()) {
+            found.addAll(comments.findByParentIdInOrderByCreatedAtAscIdAsc(
+                    roots.stream().map(PageComment::getId).toList()));
+        }
+        long threads = comments.countByPageIdAndParentIdIsNullAndAnchorType(pageId, anchorType);
+        long replies = comments.countRepliesOfKind(pageId, anchorType);
+        return new com.platform.wikibackend.comment.dto.CommentPage(
+                toResponses(userId, found), next, threads, threads + replies);
+    }
+
+    private static String anchorTypeOf(String kind) {
+        if (kind == null || kind.isBlank() || "page".equalsIgnoreCase(kind)) return "PAGE";
+        if ("inline".equalsIgnoreCase(kind)) return "INLINE";
+        throw new IllegalArgumentException("댓글 종류는 page 또는 inline이어야 합니다: " + kind);
+    }
+
+    /**
+     * 키셋 커서 — "작성 시각(초.나노)~id". 시각과 id를 함께 싣는 이유는 findThreadRoots 주석 참고.
+     * 화면에는 불투명한 문자열이고, 형식이 깨졌으면 400이다(첫 쪽으로 조용히 되돌리지 않는다).
+     */
+    private record Cursor(Instant at, long id) {
+        static String of(PageComment c) {
+            Instant at = c.getCreatedAt();
+            return at.getEpochSecond() + "." + at.getNano() + "~" + c.getId();
+        }
+
+        static Cursor parse(String raw) {
+            if (raw == null || raw.isBlank()) return null;
+            try {
+                int tilde = raw.indexOf('~');
+                int dot = raw.indexOf('.');
+                if (tilde < 0 || dot < 0 || dot > tilde) throw new IllegalArgumentException();
+                long seconds = Long.parseLong(raw.substring(0, dot));
+                long nanos = Long.parseLong(raw.substring(dot + 1, tilde));
+                return new Cursor(Instant.ofEpochSecond(seconds, nanos), Long.parseLong(raw.substring(tilde + 1)));
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("댓글 목록 커서가 올바르지 않습니다: " + raw);
+            }
+        }
     }
 
     public CommentResponse create(long userId, String userName, long pageId, CommentCreateRequest req) {
@@ -175,10 +248,10 @@ public class CommentService {
             }
         }
         // 리액션은 FK 없이 (type, id)로만 매달려 있다 — 지우기 전에 답글 것까지 걷어낸다.
-        for (PageComment reply : comments.findByPageIdOrderByCreatedAtAscIdAsc(comment.getPageId())) {
-            if (commentId == reply.getId() || commentId == (reply.getParentId() == null ? -1 : reply.getParentId())) {
-                reactions.removeAllForComment(reply.getId());
-            }
+        // 페이지의 댓글 전량이 아니라 이 댓글과 그 답글만 읽는다.
+        reactions.removeAllForComment(commentId);
+        for (PageComment reply : comments.findByParentIdOrderByCreatedAtAscIdAsc(commentId)) {
+            reactions.removeAllForComment(reply.getId());
         }
         // bulk 한 방 — 개별 delete는 PG의 답글 cascade와 충돌하고, H2에는 cascade가 없다.
         comments.deleteWithReplies(commentId);
