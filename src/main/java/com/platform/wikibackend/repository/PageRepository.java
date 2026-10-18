@@ -256,9 +256,9 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     @Query(value = "select * from page where id = :id", nativeQuery = true)
     Optional<Page> findAnyById(@Param("id") Long id);
 
-    /** 휴지통 포함 스페이스 전량 — 스페이스 삭제 시 버려진 페이지의 첨부/리비전까지 치우려면 필요하다. */
-    @Query(value = "select * from page where space_id = :spaceId", nativeQuery = true)
-    List<Page> findAnyBySpaceId(@Param("spaceId") Long spaceId);
+    /** 휴지통 포함 스페이스의 페이지 id — 스페이스 삭제가 본문을 읽지 않고 딸린 데이터를 지우는 데 쓴다. */
+    @Query(value = "select id from page where space_id = :spaceId", nativeQuery = true)
+    List<Long> findAnyIdsBySpaceId(@Param("spaceId") Long spaceId);
 
     /** 휴지통 포함 다건 조회 — 복원/영구삭제 묶음을 한 번에 로드한다. */
     @Query(value = "select * from page where id in (:ids)", nativeQuery = true)
@@ -304,6 +304,11 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     @org.springframework.transaction.annotation.Transactional
     @Query(value = "delete from page where id in (:ids)", nativeQuery = true)
     void deleteAllByIdIncludingTrashed(@Param("ids") Collection<Long> ids);
+
+    /** 스페이스 삭제 — 휴지통 포함 그 스페이스의 페이지 전부를 한 문장으로. */
+    @Modifying(clearAutomatically = true)
+    @Query(value = "delete from page where space_id = :spaceId", nativeQuery = true)
+    int deleteAllBySpaceIdIncludingTrashed(@Param("spaceId") Long spaceId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select page from Page page where page.id = :id")

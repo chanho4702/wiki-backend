@@ -1,10 +1,8 @@
 package com.platform.wikibackend.page;
 
 import com.platform.common.error.NotFoundException;
-import com.platform.wikibackend.domain.Attachment;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageType;
-import com.platform.wikibackend.attachment.AttachmentStorageRouter;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.page.dto.PageResponse;
@@ -12,14 +10,7 @@ import com.platform.wikibackend.page.dto.PageRestoreResponse;
 import com.platform.wikibackend.page.dto.TrashItem;
 import com.platform.wikibackend.permission.EffectivePermissionService;
 import com.platform.wikibackend.permission.WikiAction;
-import com.platform.wikibackend.repository.AttachmentRepository;
-import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
-import com.platform.wikibackend.repository.PageLabelRepository;
-import com.platform.wikibackend.repository.PageWatchRepository;
-import com.platform.wikibackend.repository.PageLinkRepository;
-import com.platform.wikibackend.repository.PageRestrictionRepository;
-import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,18 +46,9 @@ import java.util.Set;
 public class TrashService {
 
     private final PageRepository pages;
-    private final AttachmentRepository attachments;
-    private final PageRevisionRepository revisions;
-    private final PageCommentRepository comments;
-    private final PageRestrictionRepository restrictions;
-    private final PageLabelRepository labels;
-    private final PageLinkRepository links;
-    private final PageWatchRepository watches;
-    private final AttachmentStorageRouter storage;
+    private final PageDataPurger purger;
     private final SpaceService spaces;
     private final com.platform.wikibackend.audit.AuditService audit;
-    private final com.platform.wikibackend.repository.ReactionRepository reactionRepository;
-    private final com.platform.wikibackend.repository.PageTaskRepository taskRepository;
     private final EffectivePermissionService effective;
     private final EventRelay events;
 
@@ -237,35 +219,18 @@ public class TrashService {
         return pages.findAnyByIdIn(rows.stream().map(TrashRow::id).toList());
     }
 
-    /** 되돌릴 수 없는 삭제 — 첨부 객체·리비전·댓글·제한까지 전부. */
+    /**
+     * 되돌릴 수 없는 삭제 — 딸린 데이터(첨부와 지난 버전 객체, 리비전, 댓글, 리액션, 공동 편집 상태,
+     * 작업·라벨·링크·구독·방문·별표·알림)는 {@link PageDataPurger}가 한 번에 지운다(스페이스 삭제와 같은 목록).
+     */
     private void hardDelete(Long actorId, List<Page> batch) {
-        // 자손부터 지운다 — 부모를 먼저 지우면 운영 PG의 FK cascade가 자식을 먼저 없애
-        // 이어지는 개별 DELETE가 0행이 되고 Hibernate가 StaleStateException을 던진다.
-        List<Page> ordered = new ArrayList<>(batch);
-        java.util.Collections.reverse(ordered);
-        for (Page p : ordered) {
-            long pageId = p.getId();
-            for (Attachment a : attachments.findByPageId(pageId)) {
-                storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
-                        a.getStorageKey(), a.getStorageVersion());
-            }
-            attachments.deleteByPageId(pageId);
-            // H2 테스트 스키마엔 FK가 없다(Long 컬럼만) — 명시 삭제로 고아를 막는다.
-            revisions.deleteByPageId(pageId);
-            // 리액션은 FK 없이 (type, id)로 매달려 있다 — 댓글을 지우기 전에 걷어낸다(W23).
-            for (com.platform.wikibackend.domain.PageComment c : comments.findByPageIdOrderByCreatedAtAscIdAsc(pageId)) {
-                reactionRepository.deleteByTargetTypeAndTargetId("COMMENT", c.getId());
-            }
-            reactionRepository.deleteByTargetTypeAndTargetId("PAGE", pageId);
-            comments.deleteByPageId(pageId);
-            taskRepository.deleteByPageId(pageId);
-            restrictions.deleteByPageId(pageId);
-            labels.deleteByPageId(pageId);
-            links.deleteBySourcePageId(pageId);
-            watches.deleteByPageId(pageId);
+        List<Long> ids = batch.stream().map(Page::getId).toList();
+        purger.purgeDependents(ids);
+        for (Page p : batch) {
             events.afterCommit(WikiEvents.pageDeleted(
-                    actorId == null ? 0L : actorId, pageId, p.getSpaceId()));
+                    actorId == null ? 0L : actorId, p.getId(), p.getSpaceId()));
         }
-        pages.deleteAllByIdIncludingTrashed(ordered.stream().map(Page::getId).toList());
+        // 한 문장 DELETE라 부모·자식 순서와 FK cascade가 충돌하지 않는다(행 수를 기대하지 않는다).
+        pages.deleteAllByIdIncludingTrashed(ids);
     }
 }

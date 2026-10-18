@@ -1,9 +1,7 @@
 package com.platform.wikibackend.space;
 
-import com.platform.wikibackend.attachment.AttachmentStorageRouter;
 import com.platform.common.error.ForbiddenException;
 import com.platform.common.error.NotFoundException;
-import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.Space;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
@@ -11,10 +9,7 @@ import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.PermissionClient;
 import com.platform.wikibackend.permission.PermissionDecision;
 import com.platform.wikibackend.permission.WikiAction;
-import com.platform.wikibackend.repository.AttachmentRepository;
-import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
-import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import com.platform.wikibackend.space.dto.SpaceCreateRequest;
 import com.platform.wikibackend.space.dto.SpaceResponse;
@@ -36,12 +31,8 @@ public class SpaceService {
     private final PermissionClient permissions;
     private final EventRelay events;
     private final PageRepository pages;
-    private final PageCommentRepository comments;
-    private final PageRevisionRepository revisions;
-    private final AttachmentRepository attachments;
-    private final AttachmentStorageRouter storage;
+    private final com.platform.wikibackend.page.PageDataPurger purger;
     private final com.platform.wikibackend.audit.AuditService audit;
-    private final com.platform.wikibackend.repository.PageTaskRepository taskRepository;
     /*
      * 스페이스 구독(V32)은 PG에서 FK cascade로 함께 사라지지만, H2 테스트 환경엔 FK가 없어
      * 고아 행이 남는다. 같은 id가 재사용되면 예전 구독자에게 남의 스페이스 알림이 가므로
@@ -175,31 +166,20 @@ public class SpaceService {
         Space doomed = spaces.findById(spaceId).orElseThrow(() -> new NotFoundException("스페이스 없음: " + spaceId));
         require(userId, spaceId, WikiAction.ADMIN);
 
-        // 스페이스 전체 정리 — 디스크 파일은 DB cascade가 못 지우므로 코드로. (H2 테스트 환경엔 FK도 없음)
-        // findAnyBySpaceId: 휴지통(V13)에 있는 페이지까지 포함해야 한다. 살아 있는 행만 지우면
-        // 버려진 페이지의 첨부 객체와 DB 행이 스페이스와 함께 사라지지 않고 고아로 남는다.
-        List<Page> all = pages.findAnyBySpaceId(spaceId);
-        for (Page p : all) {
-            attachments.findByPageId(p.getId()).forEach(a -> {
-                storage.deleteAfterCommit(a.getStorageBackend(), a.getStorageBucket(),
-                        a.getStorageKey(), a.getStorageVersion());
-            });
-            attachments.deleteByPageId(p.getId());
-            revisions.deleteByPageId(p.getId());
-            comments.deleteByPageId(p.getId());
-            taskRepository.deleteByPageId(p.getId());
-        }
-        // 개별 DELETE(deleteAll)는 운영 PG에서 부모 페이지 삭제가 자식을 cascade로 먼저 지운 뒤
-        // 이어지는 자식 개별 DELETE가 0행 → Hibernate StaleStateException(500)을 낸다.
-        // 단일 bulk DELETE(deleteAllInBatch)는 row count를 기대하지 않아 cascade와 충돌하지 않는다.
-        pages.deleteAllInBatch(all);
+        // 스페이스 전체 정리. 휴지통(V13) 행까지 포함해야 버려진 문서의 첨부 객체·딸린 행이 고아로 남지 않는다.
+        // id만 읽는다(본문 미적재) — 딸린 데이터는 테이블당 bulk DELETE(PageDataPurger, 감사 W-05·W-15).
+        List<Long> pageIds = pages.findAnyIdsBySpaceId(spaceId);
+        purger.purgeDependents(pageIds);
+        // 한 문장 bulk DELETE(휴지통 포함, 네이티브) — 부모·자식 cascade와 충돌하지 않고, 스페이스 크기만큼
+        // OR 조건을 늘어놓지 않는다. JPQL 대량 삭제는 @SQLRestriction 때문에 휴지통 행을 놓친다.
+        pages.deleteAllBySpaceIdIncludingTrashed(spaceId);
         spaceWatches.deleteBySpaceId(spaceId); // 구독 원장도 스페이스와 함께 사라진다(V32)
         spaceLabels.deleteBySpaceId(spaceId); // 라벨도(V41) — PG는 FK cascade, H2에는 FK가 없다
 
         // 삭제 기록은 스페이스보다 오래 남는다(V30) — 전역 관리자의 "스페이스 삭제 기록"이 읽는다.
         // 같은 트랜잭션이라 삭제가 롤백되면 기록도 함께 사라진다.
         audit.record(spaceId, userId, com.platform.wikibackend.domain.AuditAction.SPACE_DELETED, "SPACE",
-                spaceId, doomed.getName() + " (" + doomed.getKey() + ")", "문서 " + all.size() + "건 함께 삭제");
+                spaceId, doomed.getName() + " (" + doomed.getKey() + ")", "문서 " + pageIds.size() + "건 함께 삭제");
         spaces.deleteById(spaceId);
         // 스페이스가 사라져도 org의 grant는 남는다 — 같은 id가 재사용되면 예전 멤버에게
         // 권한이 되살아나므로 함께 회수한다(v0.3.0 RevokeGrant). 실패해도 삭제는 되돌리지 않는다.
