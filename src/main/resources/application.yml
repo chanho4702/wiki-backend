@@ -81,9 +81,15 @@ platform:
     # 권한·디렉터리 호출 데드라인. 콜드 스타트(연결 수립)까지 흡수해야 하므로 2초는 짧았다(첫 요청 503).
     deadline-seconds: ${ORG_GRPC_DEADLINE_SECONDS:5}
   # 색인기(search-service) 전용 콘텐츠 조달 서버. 내부망 전용 — compose에서 호스트 포트를 열지 않는다.
+  # SEARCH_MODE=lite(search-service 없음)면 뜨지 않는다(WikiGrpcServerCondition). 값이 없으면 예전처럼 켠다.
   grpc:
     enabled: ${WIKI_GRPC_ENABLED:true}
     port: ${WIKI_GRPC_PORT:9111}
+    # 호스트에서 직접 띄우는 dev 클러스터처럼 컨테이너 격리가 없는 곳은 127.0.0.1로 좁힌다.
+    bind-address: ${WIKI_GRPC_BIND_ADDRESS:0.0.0.0}
+  search:
+    # 플랫폼 설치 옵션(lite/opensearch/external) — 게이트웨이와 같은 스위치. 위키는 gRPC 서버 기동에만 쓴다.
+    mode: ${SEARCH_MODE:}
   wiki:
     org:
       # 플랫폼 메일 허브(org-service)의 내부 API. 메일 발송은 여기 한 곳에 모인다 —
