@@ -102,8 +102,8 @@ public class PersonalService {
      * 권한은 호출부(조회 경로)가 이미 봤다. 여기서 다시 보면 조회수 경로와 판정이 갈릴 수 있다.
      */
     public void recordVisit(long userId, long pageId) {
-        visits.findByUserIdAndPageId(userId, pageId)
-                .ifPresentOrElse(PageVisit::touch, () -> visits.save(PageVisit.of(userId, pageId)));
+        // upsert — 동시 첫 방문이 PK 충돌로 조회수 증가까지 롤백시키지 않게(감사 W-21)
+        if (visits.touch(userId, pageId) == 0) visits.insertIfAbsent(userId, pageId);
         trim(userId);
     }
 

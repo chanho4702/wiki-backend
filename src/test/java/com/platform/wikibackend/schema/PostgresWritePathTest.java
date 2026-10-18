@@ -174,6 +174,38 @@ class PostgresWritePathTest extends PostgresTestSupport {
         assertThat(count("page_comment", "page_id", child)).isZero();
     }
 
+    /**
+     * 처음 보는 문서를 두 탭에서 동시에 열면 방문 기록 PK 충돌로 트랜잭션 전체가 롤백돼 조회수 증가까지
+     * 사라졌다(감사 W-21). 둘 다 성공하고 조회수가 둘 다 올라가야 한다.
+     */
+    @Test
+    void 처음_보는_문서를_동시에_열어도_조회가_둘_다_남는다() throws Exception {
+        long page = create("page", null, "동시 조회", "본문");
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<Integer> statuses = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        java.util.List<Thread> threads = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            Thread t = new Thread(() -> {
+                try {
+                    start.await();
+                    statuses.add(mvc.perform(post("/api/wiki/pages/" + page + "/views").with(asUser(ALICE, "앨리스")))
+                            .andReturn().getResponse().getStatus());
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            threads.add(t);
+            t.start();
+        }
+        start.countDown();
+        for (Thread t : threads) t.join(30_000);
+
+        assertThat(statuses).hasSize(4).allMatch(s -> s == 200);
+        assertThat(jdbc.queryForObject("select view_count from page where id = ?", Long.class, page)).isEqualTo(4L);
+        assertThat(jdbc.queryForObject("select count(*) from page_visit where page_id = ?", Integer.class, page))
+                .isEqualTo(1);
+    }
+
     // ── 도우미 ──
 
     long create(String type, Long parentId, String title, String content) throws Exception {
