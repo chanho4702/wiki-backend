@@ -132,10 +132,11 @@ public class TrashService {
                 .map(TrashRow::id)
                 .toList();
         int purged = 0;
+        Map<Long, List<TrashRow>> childrenOf = childrenIndex(rows); // 스페이스 휴지통은 한 번만 읽는다(W-15)
         for (Long rootId : rootIds) {
             Page root = pages.findAnyById(rootId).orElse(null);
             if (root == null || root.getDeletedAt() == null) continue;
-            List<Page> batch = restorableBatch(root);
+            List<Page> batch = restorableBatch(root, childrenOf);
             effective.requireEditAll(userId, batch);
             audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_PURGED, root,
                     "휴지통 비우기");
@@ -152,10 +153,15 @@ public class TrashService {
     public int purgeExpired(java.time.Instant before) {
         List<Long> expired = pages.findExpiredTrashRootIds(before);
         int purged = 0;
+        // 루트마다 스페이스 휴지통 전체를 다시 읽지 않는다 — 스페이스별로 한 번(감사 W-15). 앞 루트를 지운 뒤에도
+        // 캐시가 유효한 이유: 묶음은 deletedRoot 경계에서 멈추므로 서로 겹치지 않고, 이미 지워진 루트는
+        // 아래 findAnyById에서 걸러진다.
+        Map<Long, Map<Long, List<TrashRow>>> childrenBySpace = new HashMap<>();
         for (Long rootId : expired) {
             Page root = pages.findAnyById(rootId).orElse(null);
             if (root == null || root.getDeletedAt() == null) continue;
-            List<Page> batch = restorableBatch(root);
+            List<Page> batch = restorableBatch(root, childrenBySpace.computeIfAbsent(root.getSpaceId(),
+                    spaceId -> childrenIndex(trashRows(spaceId))));
             hardDelete(root.getDeletedBy(), batch);
             purged += batch.size();
         }
@@ -183,10 +189,18 @@ public class TrashService {
      * 휴지통 항목이므로 묶음에서 제외하고, 그 아래도 따라가지 않는다.
      */
     private List<Page> restorableBatch(Page root) {
+        return restorableBatch(root, childrenIndex(trashRows(root.getSpaceId())));
+    }
+
+    private static Map<Long, List<TrashRow>> childrenIndex(List<TrashRow> rows) {
         Map<Long, List<TrashRow>> childrenOf = new HashMap<>();
-        for (TrashRow row : trashRows(root.getSpaceId())) {
+        for (TrashRow row : rows) {
             childrenOf.computeIfAbsent(row.parentId(), k -> new ArrayList<>()).add(row);
         }
+        return childrenOf;
+    }
+
+    private List<Page> restorableBatch(Page root, Map<Long, List<TrashRow>> childrenOf) {
         List<Long> ids = new ArrayList<>();
         Set<Long> visited = new HashSet<>(Set.of(root.getId()));
         Deque<Long> queue = new ArrayDeque<>(List.of(root.getId()));

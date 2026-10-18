@@ -374,16 +374,19 @@ public class PageService {
         for (PageRepository.IdParent row : pages.findIdParentBySpaceId(root.getSpaceId())) {
             childrenOf.computeIfAbsent(row.getParentId(), k -> new ArrayList<>()).add(row.getId());
         }
-        List<Page> out = new ArrayList<>();
+        // BFS로 id만 모은 뒤 한 번에 읽는다 — 노드마다 findById를 돌던 N+1을 없앴다(감사 W-15).
+        List<Long> ids = new ArrayList<>();
         Set<Long> visited = new HashSet<>();
         java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>(List.of(rootId));
         while (!queue.isEmpty()) {
             long id = queue.poll();
             if (!visited.add(id)) continue;
-            pages.findById(id).ifPresent(out::add);
+            ids.add(id);
             for (Long child : childrenOf.getOrDefault(id, List.of())) queue.add(child);
         }
-        return out;
+        Map<Long, Page> byId = new HashMap<>();
+        for (Page p : pages.findAllById(ids)) byId.put(p.getId(), p);
+        return ids.stream().map(byId::get).filter(Objects::nonNull).toList(); // BFS 순서 유지
     }
 
     /** 떠난 그룹을 1..n으로 조밀화 — 빈 번호를 남기지 않아야 이후 삽입 계산이 단순하다. */
@@ -644,12 +647,21 @@ public class PageService {
             throw new IllegalArgumentException("블로그 글 아래에는 문서를 둘 수 없습니다");
         }
         if (movingPageId != null) {
-            // visited: 손상 데이터(parent_id 순환)에서 무한 루프하지 않는다 — 삭제 경로와 같은 방어
+            // 새 부모의 조상 폐포(자신 포함)를 재귀 CTE 한 번으로 — 조상마다 findById를 돌지 않는다(감사 W-15).
+            Map<Long, Long> parentOf = new HashMap<>();
+            for (Object[] row : pages.findAncestorClosure(List.of(parentId))) {
+                parentOf.put(((Number) row[0]).longValue(), row[1] == null ? null : ((Number) row[1]).longValue());
+            }
+            // visited: 손상 데이터(parent_id 순환)에서 무한 루프하지 않는다. 폐포는 깊이 64에서 끊기므로
+            // 그보다 깊은 트리는 남은 구간만 한 칸씩 읽는다(정상 규모에서는 타지 않는 길).
             Set<Long> visited = new HashSet<>();
             Long cursor = parentId;
             while (cursor != null && visited.add(cursor)) {
                 if (Objects.equals(cursor, movingPageId)) throw new IllegalArgumentException("자기 자신/자손 아래로 이동 불가");
-                cursor = pages.findById(cursor).map(Page::getParentId).orElse(null);
+                Long current = cursor;
+                cursor = parentOf.containsKey(current)
+                        ? parentOf.get(current)
+                        : pages.findById(current).map(Page::getParentId).orElse(null);
             }
         }
     }
