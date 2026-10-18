@@ -24,13 +24,20 @@ public class BlogController {
 
     private final BlogService blog;
 
+    /** 블로그 쪽 목록의 다음 커서 헤더 — 이 값을 다음 요청의 before로. 더 없으면 헤더가 없다. */
+    public static final String NEXT_BEFORE = "X-Next-Before";
+
     @Operation(summary = "스페이스의 블로그 글을 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/blog")
-    public List<BlogPostView> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable long spaceId,
+    public org.springframework.http.ResponseEntity<List<BlogPostView>> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable long spaceId,
                                    @Parameter(description = "이전 쪽의 마지막 글 ID — 그보다 오래된 글부터. 비우면 최신부터")
                                    @RequestParam(required = false) Long before,
                                    @Parameter(description = "한 쪽 글 수(최대 100). before와 함께 둘 다 비우면 전부")
                                    @RequestParam(required = false) Integer limit) {
-        return blog.list(userId(jwt), spaceId, before, limit);
+        // 본문은 배열 그대로(하위 호환). 다음 쪽 커서는 헤더로 — 더 없으면 헤더가 없다.
+        BlogService.BlogPage page = blog.listPage(userId(jwt), spaceId, before, limit);
+        var response = org.springframework.http.ResponseEntity.ok();
+        if (page.nextBefore() != null) response.header(NEXT_BEFORE, String.valueOf(page.nextBefore()));
+        return response.body(page.items());
     }
 }

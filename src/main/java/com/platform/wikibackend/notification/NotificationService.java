@@ -208,8 +208,9 @@ public class NotificationService {
 
     /** 한 쪽 상한 — 전체 알림 화면의 "더 보기" 한 번. */
     public static final int LIST_MAX = 100;
-    /** 볼 수 없는 알림을 건너뛰며 더 읽을 총량 상한. */
-    static final int LIST_SCAN_LIMIT = 2_000;
+    /** 볼 수 없는 알림을 건너뛰며 한 요청이 더 읽을 총량 상한(설정으로 조정 — 테스트가 낮춘다). */
+    @org.springframework.beans.factory.annotation.Value("${platform.wiki.notifications.list-scan-limit:2000}")
+    private int listScanLimit = 2_000;
 
     /**
      * 알림 목록(F-05). 표시할 쪽만 엔티티로 읽는다. 안 읽은 건수는 페이지별 집계로, 페이지는 (id, 스페이스, 제목)
@@ -226,10 +227,11 @@ public class NotificationService {
                 ? List.of(Notification.Type.values()) : types;
 
         List<NotificationResponse> items = new java.util.ArrayList<>();
-        Long cursor = before;
-        boolean more = true;
+        Long cursor = before;          // 마지막으로 "스캔한" 행 id
+        boolean more = true;           // 커서 뒤에 행이 더 있을 수 있다
+        boolean filledMidBatch = false;
         int scanned = 0;
-        while (scanned < LIST_SCAN_LIMIT && items.size() < size && more) {
+        while (scanned < listScanLimit && items.size() < size && more) {
             int batch = size + 1;
             List<Notification> rows = cursor == null
                     ? notifications.findPage(userId, kinds, org.springframework.data.domain.Limit.of(batch))
@@ -246,11 +248,15 @@ public class NotificationService {
                 items.add(NotificationResponse.from(n, page.getSpaceId(), page.getTitle()));
                 if (items.size() == size) {
                     if (k < rows.size() - 1) more = true; // 이번 묶음에 남은 행이 있다
+                    filledMidBatch = true;
                     break;
                 }
             }
         }
-        Long next = more && !items.isEmpty() ? items.get(items.size() - 1).id() : null;
+        // 다음 쪽 커서. 쪽을 채웠으면 마지막으로 준 항목 뒤부터(그 뒤 행은 아직 판정하지 않았다).
+        // 스캔 상한에 걸려 멈췄으면 마지막으로 **스캔한** 행 뒤부터 — 보이는 항목 기준으로 돌려주면 숨은 구간을
+        // 매번 다시 훑고, 처음 구간이 전부 숨은 알림이면 items가 비고 끝난 것처럼 보인다(빈 items + nextBefore 허용).
+        Long next = !more ? null : filledMidBatch ? items.get(items.size() - 1).id() : cursor;
 
         List<NotificationRepository.PageCount> unreadByPage = notifications.countUnreadByPage(userId);
         Map<Long, PageRepository.IdSpaceTitle> unreadPages =

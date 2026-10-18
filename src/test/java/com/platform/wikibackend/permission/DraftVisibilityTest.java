@@ -231,6 +231,29 @@ class DraftVisibilityTest {
         open(AUTHOR, page).andExpect(jsonPath("$.canEdit").value(false)); // 보관 문서는 읽기 전용
     }
 
+    /** 권한을 잃은 초안이 앞쪽에 몰려 있어도 limit만큼 채운다(Codex 리뷰 2026-10-18). */
+    @Test
+    void 내_초안은_볼_수_없는_초안이_앞에_있어도_limit만큼_채운다() throws Exception {
+        long older1 = create(AUTHOR, null, "보이는 초안 1", "draft");
+        long older2 = create(AUTHOR, null, "보이는 초안 2", "draft");
+        Space lost = spaces.save(Space.of("lost" + (System.nanoTime() % 100000), "잃은", null, AUTHOR));
+        perms.allow(AUTHOR, lost.getId(), WikiAction.VIEW);
+        perms.allow(AUTHOR, lost.getId(), WikiAction.EDIT);
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(post("/api/wiki/pages").with(asUser(AUTHOR, "Author"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"spaceId\":" + lost.getId() + ",\"title\":\"잃을 초안 " + i
+                                    + "\",\"content\":\"본문\",\"status\":\"draft\"}"))
+                    .andExpect(status().isCreated());
+        }
+        perms.revokeSpaceGrants(lost.getId()); // 더 최근 초안 3건의 스페이스 권한을 잃었다
+
+        mvc.perform(get("/api/wiki/drafts").param("limit", "2").with(asUser(AUTHOR, "Author")))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].page.id").value(older2))
+                .andExpect(jsonPath("$[1].page.id").value(older1));
+    }
+
     // ── 도우미 ──
 
     private void labels(long pageId, String json) throws Exception {

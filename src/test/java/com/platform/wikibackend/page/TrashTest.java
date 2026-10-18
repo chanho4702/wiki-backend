@@ -273,4 +273,21 @@ class TrashTest {
                 .andExpect(jsonPath("$.reparentedToRoot").value(true));
         assertThat(pages.findById(child).orElseThrow().getParentId()).isNull();
     }
+
+    /** 하위가 수백 개인 묶음도 영구 삭제된다 — 최종 행 삭제를 묶음(500) 단위로 나눈다(Codex 리뷰 2026-10-18). */
+    @Test
+    void 하위가_많은_묶음도_영구_삭제된다() throws Exception {
+        long root = createPage(null, "큰 묶음");
+        java.util.List<com.platform.wikibackend.domain.Page> children = new java.util.ArrayList<>();
+        for (int i = 0; i < 1_100; i++) {
+            children.add(com.platform.wikibackend.domain.Page.of(space.getId(), root, "하위 " + i, "본문", EDITOR));
+        }
+        pages.saveAll(children);
+        deletePage(root, "cascade");
+
+        mvc.perform(delete("/api/wiki/pages/" + root + "/purge").with(asUser(ADMIN, "Admin")))
+                .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("select count(*) from page where space_id = ?", Integer.class, space.getId()))
+                .isZero();
+    }
 }

@@ -249,7 +249,10 @@ public class TrashService {
             events.afterCommit(WikiEvents.pageDeleted(
                     actorId == null ? 0L : actorId, p.getId(), p.getSpaceId()));
         }
-        // 한 문장 DELETE라 부모·자식 순서와 FK cascade가 충돌하지 않는다(행 수를 기대하지 않는다).
-        pages.deleteAllByIdIncludingTrashed(ids);
+        // 네이티브 DELETE는 행 수를 기대하지 않아 부모·자식 순서와 FK cascade가 충돌하지 않는다.
+        // 서브트리 전체를 IN 하나에 싣지 않는다 — 바인드 파라미터 한도 아래 묶음으로(딸린 데이터와 같은 크기).
+        for (int from = 0; from < ids.size(); from += PageDataPurger.CHUNK) {
+            pages.deleteAllByIdIncludingTrashed(ids.subList(from, Math.min(ids.size(), from + PageDataPurger.CHUNK)));
+        }
     }
 }

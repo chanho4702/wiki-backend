@@ -106,8 +106,20 @@ public class PersonalService {
     @Transactional(readOnly = true)
     public List<StarredPage> drafts(long userId, int limit) {
         int capped = Math.max(1, Math.min(limit, DRAFTS_LIMIT));
-        return visibleInOrder(userId, pages.findDraftIdsByAuthor(userId, Limit.of(capped)));
+        // capped건만 읽고 거르면 권한을 잃은 초안만큼 결과가 짧아진다 — 찰 때까지 후보를 넓혀 다시 읽는다(상한 있음).
+        int want = capped;
+        while (true) {
+            List<Long> ids = pages.findDraftIdsByAuthor(userId, Limit.of(want));
+            List<StarredPage> visible = visibleInOrder(userId, ids);
+            if (visible.size() >= capped || ids.size() < want || want >= DRAFTS_SCAN_LIMIT) {
+                return visible.size() <= capped ? visible : visible.subList(0, capped);
+            }
+            want = Math.min(want * 4, DRAFTS_SCAN_LIMIT);
+        }
     }
+
+    /** 내 초안 후보를 넓혀 읽는 상한 — 볼 수 없는 초안이 아주 많아도 요청이 끝없이 돌지 않게. */
+    static final int DRAFTS_SCAN_LIMIT = 1_000;
 
     /**
      * 방문 기록 — 페이지 조회수 증가와 같은 요청에서 부른다(왕복을 늘리지 않는다).
