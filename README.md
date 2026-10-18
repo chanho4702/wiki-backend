@@ -29,7 +29,7 @@ search-service는 내부 gRPC로 페이지·첨부 메타데이터를 가져가 
 
 ## 빠른 시작
 
-JDK 24와 GitHub Packages의 `common-proto:0.5.0`을 읽을 토큰이 필요하다.
+JDK 24와 GitHub Packages의 `common-proto`·`common-starter`(버전은 `build.gradle`이 정본, 현재 0.16.0)를 읽을 토큰이 필요하다.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
@@ -59,7 +59,8 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 스페이스 | `GET/PUT/DELETE /api/wiki/spaces/{id}` | VIEW / ADMIN / ADMIN |
 | 페이지 | `POST /api/wiki/pages` | EDIT |
 | 페이지 | `GET /api/wiki/pages/{id}` | VIEW |
-| 페이지 트리 | `GET /api/wiki/spaces/{spaceId}/pages` | VIEW |
+| 페이지 트리(지연) | `GET /api/wiki/spaces/{spaceId}/pages/children·recent·search·lookup·by-ids`, `GET /api/wiki/pages/{id}/ancestors·descendants`, `GET /api/wiki/pages/paths` | VIEW |
+| 블로그 | `GET /api/wiki/spaces/{spaceId}/blog[?before=&limit=]` | VIEW |
 | 페이지 | `PUT/DELETE /api/wiki/pages/{id}` | EDIT |
 | 공동 초안 확정 | `PUT /api/wiki/pages/{id}/collaboration-draft` | EDIT |
 | 게시 | `POST /api/wiki/pages/{id}/publish` | EDIT |
@@ -73,6 +74,14 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 댓글 | `PUT/DELETE /api/wiki/comments/{id}` | 작성자 (삭제는 스페이스 ADMIN도) |
 | 감사 로그 | `GET /api/wiki/spaces/{spaceId}/audit` | 스페이스 ADMIN |
 | 감사 로그 | `GET /api/wiki/audit`, `GET /api/wiki/audit/space-deletions` | 전역 관리자 |
+
+표는 요약이다. 전체 목록은 `/v3/api-docs`(아래 OpenAPI)가 정본이다.
+
+**초안 노출(2026-10-18)**: `status=draft` 문서는 작성자·그 스페이스 ADMIN·전역 ADMIN만 본다.
+조회·트리·검색·알림·라벨 집계·블로그·별표/최근 방문·작업·gRPC `FilterVisiblePages`가 모두
+`EffectivePermissionService` 한 곳의 판정을 탄다(초안 아래 하위 문서도 함께 가려진다). 남의 초안 단건 조회는 403.
+
+**보관 문서는 읽기 전용**: 버전을 올리거나 메타를 바꾸는 모든 경로가 `PageWriteGuard`로 409를 낸다.
 
 페이지 수정은 기존 행을 덮는 동시에 전체 스냅샷 revision을 남긴다. 요청의
 `expectedVersion`이 현재 버전과 다르면 `409 Conflict`를 반환하며, 과거 버전 복원도 새 버전으로
@@ -252,7 +261,8 @@ gateway-server ──REST/JWT──▶ wiki-backend ──JPA──▶ PostgreSQ
   서비스 불능을 구분한다.
 - 이벤트는 정본 트랜잭션 커밋 이후 발행하고 본문을 싣지 않는다. Redis 발행 실패가 정본을
   롤백하지는 않으며 검색 색인은 재색인으로 복구한다.
-- gRPC `WikiContentService`는 search-service 전용이고 컨테이너 외부에 공개하지 않는다.
+- gRPC `WikiContentService`는 search-service 전용이고 컨테이너 외부에 공개하지 않는다. 인증이 없으므로
+  `SEARCH_MODE=lite`(search-service 없음)면 아예 뜨지 않는다. 바인드 주소는 `WIKI_GRPC_BIND_ADDRESS`.
 - 첨부 파일은 UUID storage key로 공유 S3에 저장하고 DB에는 backend·bucket·version·checksum을
   기록한다. 어느 위키 노드가 업로드했든 다른 노드가 같은 객체를 읽을 수 있다. 기존 `LOCAL` 행은
   레거시 볼륨에서 계속 읽으며, 스페이스 삭제 시 revision·첨부 메타데이터와 실제 객체를 함께 정리한다.
@@ -410,8 +420,10 @@ Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·
 | `WIKI_MAIL_DIGEST_ENABLED` | `true` | "하루 한 번 요약" 시계 on/off |
 | `WIKI_MAIL_DIGEST_CRON` | `0 0 9 * * *` | 요약 발송 시각(서버 시간, cron 6자리). 인스턴스 하나만 켜 둔다 |
 | `WIKI_GRPC_ENABLED` / `WIKI_GRPC_PORT` | `true` / `9111` | 콘텐츠 조달 gRPC |
+| `WIKI_GRPC_BIND_ADDRESS` | `0.0.0.0` | gRPC 바인드 주소. 컨테이너 격리가 없는 호스트 실행은 `127.0.0.1` |
+| `SEARCH_MODE` | 빈 값 | 플랫폼 검색 설치 옵션. `lite`면 gRPC 서버를 띄우지 않는다(빈 값이면 예전처럼 켬) |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | 이벤트 스트림 |
-| `EVENTS_ENABLED` | `true` | 이벤트 발행 on/off |
+| `PLATFORM_EVENTS_ENABLED` | `true` | 이벤트 발행 on/off(`platform.events.enabled`) |
 | `WIKI_STORAGE_WRITE_BACKEND` | `local` | 신규 첨부 저장소(`local` / `s3`) |
 | `WIKI_S3_ENABLED` / `WIKI_S3_BUCKET` | `false` / `wiki-attachments` | S3 저장소 활성화·버킷 |
 | `WIKI_S3_REGION` / `WIKI_S3_ENDPOINT` | `ap-northeast-2` / 빈 값 | S3 리전·호환 endpoint |
@@ -429,30 +441,40 @@ Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·
 ## 테스트와 배포
 
 ```powershell
-.\gradlew.bat test      # REST·권한·revision·gRPC·이벤트·Flyway 검증
+.\gradlew.bat test      # REST·권한·revision·gRPC·이벤트 + PostgreSQL(Testcontainers) 스키마·쓰기 경로
 .\gradlew.bat bootJar   # build/libs/app.jar
 docker build -t wiki-backend .
 ```
 
-`FlywaySchemaValidationTest`와 S3 다중 노드 저장소 통합 테스트는 Testcontainers를 사용하므로
-Docker가 필요하다. `Dockerfile`은 런타임 전용이며 먼저 `bootJar`를 실행해야 한다. Compose에서는
+대부분의 테스트는 H2(`create-drop`, 마이그레이션 미적용)로 빠르게 돈다. 실제 스키마(CHECK·FK·네이티브 질의)는
+`PostgresTestSupport`를 상속한 클래스(`schema/PostgresWritePathTest`·`PostgresPurgeTest`)와
+`FlywaySchemaValidationTest`가 PostgreSQL 16 + Flyway + `ddl-auto=validate`로 검증한다. 이들과 S3 다중 노드
+저장소 통합 테스트는 Testcontainers를 사용하므로 Docker가 필요하다(CI ubuntu 러너에는 있다). `Dockerfile`은 런타임 전용이며 먼저 `bootJar`를 실행해야 한다. Compose에서는
 각 위키 인스턴스가 Eureka에 등록되고 gateway-server의 `lb://wiki-backend`가 REST 요청을 분산한다.
 
 ## 디렉터리 구조
 
+도메인별 수직 분할(package-by-feature)이다. 리포 규약은 [CLAUDE.md](CLAUDE.md).
+
 ```text
 src/main/java/com/platform/wikibackend/
-├─ space/        스페이스 REST·서비스·DTO
-├─ page/         페이지·revision REST와 도메인 로직
-├─ attachment/   첨부 REST·LOCAL/S3 저장소·PENDING 수명주기
-├─ collaboration/ 단기 WebSocket ticket 발급·Redis v2 계약·공동 초안 리셋(차단-1)
-├─ importapi/    이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
-├─ permission/   org-service gRPC 권한 어댑터(판정·팀·제한 주체)
-├─ directory/    org-service 사용자 원장 어댑터(GetMembers — 주소·이름·상태)
-├─ grpc/         search-service용 WikiContentService
-├─ event/        커밋 이후 Redis Streams 발행
-├─ domain/       Space·Page·PageRevision·Attachment 엔티티
-├─ repository/   JPA 저장소
-├─ security/     계정 상태 게이트(/api/wiki/** 인터셉터)
-└─ common/       예외·공통 응답 처리
+├─ space/         스페이스 REST·서비스·DTO
+├─ page/          페이지 생명주기(PageService)·복사·이동·메타·이력(RevisionService)·트리·휴지통·보관·블로그
+├─ attachment/    첨부 REST·LOCAL/S3 저장소·PENDING 수명주기·버전
+├─ comment/ reaction/ label/ watch/ task/ template/ personal/  협업 부가 기능
+├─ notification/  알림함·즉시/요약 메일(org 메일 허브 경유)
+├─ search/        라이트 검색(GraphQL, OpenSearch 없는 배포)
+├─ export/        PDF 내보내기(외부 URL을 열지 않는다)
+├─ collaboration/ 단기 WebSocket ticket 발급·Redis v2 계약·공동 초안 리셋
+├─ importapi/     이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
+├─ permission/    effective 판정(제한·초안)·org-service gRPC 어댑터(판정·팀·제한 주체)
+├─ directory/     org-service 사용자 원장 어댑터(GetMembers — 주소·이름·상태)
+├─ grpc/          search-service용 WikiContentService
+├─ event/         커밋 이후 Redis Streams 발행
+├─ audit/ admin/  감사 로그·관리자 통계
+├─ domain/        엔티티
+├─ repository/    JPA 저장소(PageSearchRepository = 라이트 검색 질의)
+├─ security/      계정 상태 게이트(/api/wiki/** 인터셉터)
+├─ config/        보안 체인·내부 토큰·OpenAPI·docs 프로필
+└─ common/        예외 핸들러·공통 유틸
 ```
