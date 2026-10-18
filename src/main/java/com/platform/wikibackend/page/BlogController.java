@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -25,7 +26,11 @@ public class BlogController {
 
     @Operation(summary = "스페이스의 블로그 글을 조회한다")
     @GetMapping("/api/wiki/spaces/{spaceId}/blog")
-    public List<BlogPostView> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable long spaceId) {
-        return blog.list(userId(jwt), spaceId);
+    public List<BlogPostView> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "스페이스 ID") @PathVariable long spaceId,
+                                   @Parameter(description = "이전 쪽의 마지막 글 ID — 그보다 오래된 글부터. 비우면 최신부터")
+                                   @RequestParam(required = false) Long before,
+                                   @Parameter(description = "한 쪽 글 수(최대 100). before와 함께 둘 다 비우면 전부")
+                                   @RequestParam(required = false) Integer limit) {
+        return blog.list(userId(jwt), spaceId, before, limit);
     }
 }

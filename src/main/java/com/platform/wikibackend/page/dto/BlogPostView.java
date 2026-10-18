@@ -12,6 +12,12 @@ public record BlogPostView(Long id, String title, PageStatus status, String icon
 
     static final int EXCERPT_LENGTH = 200;
 
+    /** 목록 프로젝션 행에서 — 본문 앞부분(head)으로 발췌를 만든다. */
+    public static BlogPostView from(BlogRow r) {
+        return new BlogPostView(r.id(), r.title(), r.status(), r.icon(),
+                r.createdBy(), r.updatedBy(), r.createdAt(), r.updatedAt(), excerptOf(r.head()));
+    }
+
     public static BlogPostView from(Page p) {
         return new BlogPostView(p.getId(), p.getTitle(), p.getStatus(), p.getIcon(),
                 p.getCreatedBy(), p.getUpdatedBy(), p.getCreatedAt(), p.getUpdatedAt(),

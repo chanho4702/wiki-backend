@@ -109,4 +109,39 @@ class BlogTest {
         assertThat(BlogPostView.excerptOf("- [ ] 할 일\n> 인용\n```\ncode\n```\n`x`")).isEqualTo("할 일 인용 x");
         assertThat(BlogPostView.excerptOf("가".repeat(300))).hasSize(201).endsWith("…");
     }
+
+    // ── W-16: 쪽 목록(키셋) — 파라미터가 없으면 예전처럼 전부 ──
+
+    @Test
+    void limit와_before로_최신순_쪽을_읽는다() throws Exception {
+        long[] ids = new long[5];
+        for (int i = 0; i < 5; i++) ids[i] = create("blog", null, "글 " + i, "본문 " + i);
+
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog").param("limit", "2").with(asUser(ALICE, "앨리스")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].id").value(ids[4]))
+                .andExpect(jsonPath("$[1].id").value(ids[3]));
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog")
+                        .param("limit", "2").param("before", String.valueOf(ids[3])).with(asUser(ALICE, "앨리스")))
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].id").value(ids[2]))
+                .andExpect(jsonPath("$[1].id").value(ids[1]));
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog")
+                        .param("limit", "2").param("before", String.valueOf(ids[1])).with(asUser(ALICE, "앨리스")))
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id").value(ids[0]));
+        // 파라미터가 없으면 예전처럼 전부(구 화면 호환)
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog").with(asUser(ALICE, "앨리스")))
+                .andExpect(jsonPath("$", hasSize(5)));
+    }
+
+    /** 목록은 본문 전체가 아니라 앞부분만 읽는다 — 발췌는 그 안에서 만든다. */
+    @Test
+    void 긴_본문도_발췌만_내려준다() throws Exception {
+        create("blog", null, "긴 글", "가".repeat(50_000));
+
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog").with(asUser(ALICE, "앨리스")))
+                .andExpect(jsonPath("$[0].excerpt").value("가".repeat(200) + "…"));
+    }
 }

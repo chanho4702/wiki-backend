@@ -70,6 +70,12 @@ class PostgresWritePathTest extends PostgresTestSupport {
         mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog").with(asUser(ALICE, "앨리스")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(blog));
+        // 쪽 목록(키셋 커서, 본문 앞부분 substring)도 실제 PG에서 질의된다
+        long older = create("blog", null, "옛 소식", "옛 본문");
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/blog").param("limit", "1")
+                        .param("before", String.valueOf(older)).with(asUser(ALICE, "앨리스")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(blog));
     }
 
     @Test

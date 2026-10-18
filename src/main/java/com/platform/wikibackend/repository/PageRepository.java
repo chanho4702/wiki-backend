@@ -83,14 +83,34 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     List<com.platform.wikibackend.page.dto.PageTreeItem> findChildren(
             @Param("spaceId") Long spaceId, @Param("parentId") Long parentId);
 
-    /** 블로그 글(W24) — 트리 밖, 최신 작성순. 권한 필터는 서비스가 한다. */
+    /** 블로그 목록 행(본문 앞부분만) — 최신순 첫 쪽. 커서 조건을 null 파라미터로 합치지 않는다(pgjdbc 타입 추론). */
     @Query("""
-            select p from Page p
+            select new com.platform.wikibackend.page.dto.BlogRow(
+                p.id, p.title, p.status, p.icon, p.createdBy, p.updatedBy, p.createdAt, p.updatedAt,
+                substring(p.content, 1, 2000))
+              from Page p
              where p.spaceId = :spaceId and p.archivedAt is null
                and p.type = com.platform.wikibackend.domain.PageType.BLOG
              order by p.createdAt desc, p.id desc
             """)
-    List<Page> findBlogPosts(@Param("spaceId") Long spaceId);
+    List<com.platform.wikibackend.page.dto.BlogRow> findBlogRows(@Param("spaceId") Long spaceId,
+                                                                 org.springframework.data.domain.Limit limit);
+
+    /** 블로그 목록 행 — (createdAt, id) 키셋 커서 다음 쪽. */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.BlogRow(
+                p.id, p.title, p.status, p.icon, p.createdBy, p.updatedBy, p.createdAt, p.updatedAt,
+                substring(p.content, 1, 2000))
+              from Page p
+             where p.spaceId = :spaceId and p.archivedAt is null
+               and p.type = com.platform.wikibackend.domain.PageType.BLOG
+               and (p.createdAt < :beforeAt or (p.createdAt = :beforeAt and p.id < :beforeId))
+             order by p.createdAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.BlogRow> findBlogRowsBefore(@Param("spaceId") Long spaceId,
+                                                                       @Param("beforeAt") Instant beforeAt,
+                                                                       @Param("beforeId") Long beforeId,
+                                                                       org.springframework.data.domain.Limit limit);
 
     /** id 묶음으로 트리 항목 조회 — 조상 체인·후손 폐포가 id를 먼저 얻고 본문 없이 채운다. */
     @Query("""
