@@ -109,7 +109,8 @@ public class LabelService {
         if (spaceIds.isEmpty()) return List.of();
 
         String prefix = rawPrefix == null || rawPrefix.isBlank() ? "" : PageLabel.normalize(rawPrefix);
-        return labels.suggest(spaceIds, prefix, org.springframework.data.domain.Limit.of(SUGGEST_LIMIT)).stream()
+        return labels.suggest(spaceIds, com.platform.wikibackend.common.LikePatterns.escape(prefix),
+                        org.springframework.data.domain.Limit.of(SUGGEST_LIMIT)).stream()
                 .map(row -> new LabelCountResponse(row.getName(), row.getCount()))
                 .toList();
     }

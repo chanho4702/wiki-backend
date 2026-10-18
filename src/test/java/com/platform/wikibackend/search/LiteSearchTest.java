@@ -478,4 +478,35 @@ class LiteSearchTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
     }
+
+    // ── W-20: LIKE 와일드카드는 글자 그대로 찾는다 ──
+
+    /** "50%"·"snake_case"의 %·_가 와일드카드로 해석되면 엉뚱한 문서가 걸리고, "%" 한 글자는 전 문서를 훑는다. */
+    @Test
+    void 퍼센트와_밑줄은_글자_그대로_찾는다() throws Exception {
+        Page percent = page("성장률 50% 달성", "본문");
+        page("성장률 500 달성", "본문");
+        Page underscore = page("snake_case 규칙", "본문");
+        page("snakeXcase 규칙", "본문");
+
+        search(USER, input("50%"))
+                .andExpect(jsonPath("$.data.search.total").value(1))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(percent.getId())));
+        search(USER, input("snake_case"))
+                .andExpect(jsonPath("$.data.search.total").value(1))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(underscore.getId())));
+        search(USER, input("%"))
+                .andExpect(jsonPath("$.data.search.total").value(1));
+    }
+
+    @Test
+    void 제목_필터도_와일드카드를_글자로_본다() throws Exception {
+        page("snake_case 규칙", "본문");
+        page("snakeXcase 규칙", "본문");
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/wiki/spaces/{id}/pages/search", space.getId()).param("q", "snake_")
+                        .with(asUser(USER, "u")))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
 }

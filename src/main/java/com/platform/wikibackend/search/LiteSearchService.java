@@ -83,7 +83,7 @@ public class LiteSearchService {
         if (spaceIds.isEmpty()) return SearchResults.empty();
 
         // 날짜 파싱은 후보를 읽기 전에 끝낸다 — 형식 오류를 빈 결과로 삼키지 않는다.
-        Criteria c = new Criteria(input, "%" + query.toLowerCase(Locale.ROOT) + "%", spaceIds,
+        Criteria c = new Criteria(input, com.platform.wikibackend.common.LikePatterns.contains(query.toLowerCase(Locale.ROOT)), spaceIds,
                 input.updatedAfterInstant(), input.updatedBeforeInstant());
 
         Comparator<SearchKey> order = comparator(input.normalizedSort());

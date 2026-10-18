@@ -190,7 +190,7 @@ public class TreeService {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) return List.of();
         return withChildCounts(firstVisible(userId, SEARCH_LIMIT,
-                page -> pages.searchByTitle(spaceId, q, page)));
+                page -> pages.searchByTitle(spaceId, com.platform.wikibackend.common.LikePatterns.escape(q), page)));
     }
 
     /**

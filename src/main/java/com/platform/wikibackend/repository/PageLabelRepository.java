@@ -42,7 +42,7 @@ public interface PageLabelRepository extends JpaRepository<PageLabel, Long> {
             select l.name as name, count(l) as count
               from PageLabel l, Page p
              where l.pageId = p.id and p.spaceId in :spaceIds
-               and (:prefix = '' or l.name like concat(:prefix, '%'))
+               and (:prefix = '' or l.name like concat(:prefix, '%') escape '\\')
              group by l.name
              order by count(l) desc, l.name asc
             """)

@@ -172,7 +172,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             select new com.platform.wikibackend.page.dto.PageTreeItem(
                 p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt)
               from Page p
-             where p.spaceId = :spaceId and p.archivedAt is null and lower(p.title) like lower(concat('%', :q, '%'))
+             where p.spaceId = :spaceId and p.archivedAt is null and lower(p.title) like lower(concat('%', :q, '%')) escape '\\'
              order by p.title asc, p.id asc
             """)
     List<com.platform.wikibackend.page.dto.PageTreeItem> searchByTitle(
@@ -364,7 +364,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
              from Page p
             where p.spaceId in :spaceIds and p.archivedAt is null
               and (:includeDrafts = true or p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED)
-              and (lower(p.title) like :q or lower(p.content) like :q)
+              and (lower(p.title) like :q escape '\\' or lower(p.content) like :q escape '\\')
               and (:anyAuthor = true or p.updatedBy in :authorIds)
               and (cast(:after as java.time.Instant) is null or p.updatedAt >= :after)
               and (cast(:before as java.time.Instant) is null or p.updatedAt <= :before)
@@ -376,12 +376,12 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     String LITE_PAGE_KEYS = """
             select new com.platform.wikibackend.search.SearchKey(
                 com.platform.wikibackend.search.DocType.PAGE, p.id, p.id, p.updatedAt,
-                case when lower(p.title) like :q then 3 else 1 end)
+                case when lower(p.title) like :q escape '\\' then 3 else 1 end)
             """ + LITE_PAGE_WHERE;
 
     /** 관련도순 — 제목 일치(3)가 본문 일치(1)보다 위, 같으면 최신순, 그다음 id 오름차순. */
     @Query(LITE_PAGE_KEYS
-            + " order by case when lower(p.title) like :q then 3 else 1 end desc, p.updatedAt desc, p.id asc")
+            + " order by case when lower(p.title) like :q escape '\\' then 3 else 1 end desc, p.updatedAt desc, p.id asc")
     List<com.platform.wikibackend.search.SearchKey> searchPageKeys(
             @Param("q") String q,
             @Param("spaceIds") Collection<Long> spaceIds,
@@ -449,7 +449,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
                 com.platform.wikibackend.search.DocType.PAGE,
                 p.id, p.id, p.spaceId, s.key, s.name,
                 cast(p.type as string), p.title, p.content, cast(null as string), p.updatedAt,
-                case when lower(p.title) like :q then 3 else 1 end)
+                case when lower(p.title) like :q escape '\\' then 3 else 1 end)
             from Page p join Space s on s.id = p.spaceId
             where p.id in :ids
             """)
@@ -468,7 +468,7 @@ public interface PageRepository extends JpaRepository<Page, Long> {
               join Page p on p.id = a.pageId
             where p.spaceId in :spaceIds
               and a.lifecycleStatus = com.platform.wikibackend.attachment.AttachmentLifecycleStatus.CONFIRMED
-              and lower(a.filename) like :q
+              and lower(a.filename) like :q escape '\\'
               and (cast(:after as java.time.Instant) is null or a.createdAt >= :after)
               and (cast(:before as java.time.Instant) is null or a.createdAt <= :before)
               and (:noHidden = true or a.pageId not in :hiddenIds)
