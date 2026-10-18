@@ -157,7 +157,7 @@ public class TaskService {
                     : message);
         }
         effective.requireEdit(userId, page);
-        if (page.isArchived()) throw new ConflictException("보관된 문서는 편집할 수 없습니다. 먼저 보관을 해제하세요");
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
 
         String[] lines = page.getContent().split("\n", -1);
         if (lineNo < 1 || lineNo > lines.length || !TASK_LINE.matcher(lines[lineNo - 1]).matches()) {

@@ -87,8 +87,13 @@ public class TrashService {
 
         // 원래 부모가 사라졌거나(영구 삭제) 아직 휴지통에 있으면 루트로 올린다 —
         // 없는 부모를 그대로 두면 트리 어디에도 나타나지 않는 고아가 된다.
+        // 부모가 그사이 다른 스페이스로 옮겨졌거나 보관 중이어도 루트로 올린다(감사 W-08): 스페이스를 넘는
+        // 부모-자식은 "서브트리는 한 스페이스 안"이라는 트리·권한·이동의 전제를 깨고, 보관 부모 아래는 자리가 없다.
         Long parentId = root.getParentId();
-        boolean reparented = parentId != null && pages.findById(parentId).isEmpty();
+        Page parent = parentId == null ? null : pages.findById(parentId).orElse(null);
+        boolean reparented = parentId != null && (parent == null
+                || !java.util.Objects.equals(parent.getSpaceId(), root.getSpaceId())
+                || parent.isArchived());
         Long targetParent = reparented ? null : parentId;
         long order = pages.findMaxSortOrder(root.getSpaceId(), targetParent) + 1;
 

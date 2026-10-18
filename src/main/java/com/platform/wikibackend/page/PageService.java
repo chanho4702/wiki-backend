@@ -80,9 +80,6 @@ public class PageService {
             throw new IllegalArgumentException("블로그 글은 트리에 넣을 수 없습니다");
         }
         requireEditableTargetParent(userId, req.spaceId(), req.parentId());
-        if (req.parentId() != null && pages.findById(req.parentId()).map(Page::isArchived).orElse(false)) {
-            throw new ConflictException("보관된 문서 아래에는 새 문서를 만들 수 없습니다");
-        }
         Page saved = pages.save(Page.of(req.spaceId(), req.parentId(), req.title(), req.content(), userId,
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
@@ -123,6 +120,8 @@ public class PageService {
         Page source = getOwned(pageId);
         spaces.require(userId, source.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, source);
+        // 사본은 원본의 부모 아래 생긴다 — 그 부모가 보관 중이면 보관 상자에 새 문서가 들어간다
+        if (source.getParentId() != null) pages.findById(source.getParentId()).ifPresent(PageWriteGuard::requireWritableParent);
 
         List<Page> sources = new ArrayList<>(List.of(source));
         if (req.descendantsIncluded()) sources.addAll(copyableDescendants(userId, source));
@@ -251,6 +250,7 @@ public class PageService {
         Page page = getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        PageWriteGuard.requireWritable(page);
         if (page.getType() == com.platform.wikibackend.domain.PageType.BLOG) {
             throw new IllegalArgumentException("블로그 글은 트리에 속하지 않아 옮길 수 없습니다");
         }
@@ -399,9 +399,7 @@ public class PageService {
         Page p = lockOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
-        if (p.isArchived()) {
-            throw new ConflictException("보관된 문서는 편집할 수 없습니다. 먼저 보관을 해제하세요");
-        }
+        PageWriteGuard.requireWritable(p);
         if (!Objects.equals(p.getVersion(), req.expectedVersion())) {
             throw new ConflictException("버전 충돌 — 현재 " + p.getVersion() + ", 요청 " + req.expectedVersion());
         }
@@ -435,6 +433,7 @@ public class PageService {
                 .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        PageWriteGuard.requireWritable(page); // 이미 열린 공동 편집 세션으로 보관 문서가 바뀌지 않게
         CollaborationDraftMetadata draft = collaborationDrafts
                 .findByRoomForUpdate(CollaborationDraftMetadata.room(pageId))
                 .orElseThrow(() -> new ConflictException("공동 초안이 준비되지 않았습니다"));
@@ -521,6 +520,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         if (p.getStatus() != PageStatus.PUBLISHED) {
             p.publish();
             events.afterCommit(WikiEvents.pageUpdated(userId, p));
@@ -540,6 +540,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         Long before = p.getOwnerId();
         p.changeOwner(ownerId);
         audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_OWNER_CHANGED, p,
@@ -559,6 +560,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         java.time.LocalDate deadline = until == null
                 ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(VERIFICATION_DAYS)
                 : until;
@@ -572,6 +574,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         p.unverify();
         audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_UNVERIFIED, p, null);
         return PageResponse.from(p);
@@ -582,6 +585,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         p.changeIcon(icon);
         // 트리 응답에 icon이 실리므로 검색 인덱스 재색인은 불필요(본문·제목 불변) — 이벤트 미발행.
         return PageResponse.from(p);
@@ -614,6 +618,7 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p);
         return p;
     }
 
@@ -658,6 +663,7 @@ public class PageService {
             throw new IllegalArgumentException("부모는 같은 스페이스여야 합니다");
         }
         effective.requireEdit(userId, parent);
+        PageWriteGuard.requireWritableParent(parent);
     }
 
     /**
@@ -759,6 +765,7 @@ public class PageService {
         Page p = lockOwned(pageId); // page → 공동 초안 잠금 순서(update와 같다)
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
+        PageWriteGuard.requireWritable(p); // 이력 화면의 "이 버전으로 복원"도 편집이다
         PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
                 .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
         p.edit(target.getTitle(), target.getContent(), userId);

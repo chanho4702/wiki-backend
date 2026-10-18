@@ -230,4 +230,47 @@ class TrashTest {
     private void backdate(long pageId, Instant when) {
         jdbc.update("update page set deleted_at = ? where id = ?", java.sql.Timestamp.from(when), pageId);
     }
+
+    // ── W-08: 부모가 다른 스페이스로 갔으면 스페이스 루트로 복원 ──
+
+    /**
+     * 부모가 그사이 다른 스페이스로 옮겨졌으면 복원된 문서가 spaceId=A, parentId=(B의 문서)가 되어
+     * A 트리에서는 고아, B의 제한은 A 문서에 상속되는 상태가 생겼다(감사 W-08). 루트로 올린다.
+     */
+    @Test
+    void 부모가_다른_스페이스로_옮겨졌으면_스페이스_루트로_복원한다() throws Exception {
+        Space other = spaces.save(Space.of("other", "다른", null, EDITOR));
+        perms.allow(EDITOR, other.getId(), WikiAction.VIEW);
+        perms.allow(EDITOR, other.getId(), WikiAction.EDIT);
+        long parent = createPage(null, "부모");
+        long child = createPage(parent, "자식");
+        deletePage(child, null);
+        mvc.perform(post("/api/wiki/pages/" + parent + "/move").with(asUser(EDITOR, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + other.getId() + ",\"parentId\":null}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/wiki/pages/" + child + "/restore").with(asUser(EDITOR, "Bob")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reparentedToRoot").value(true));
+
+        var restored = pages.findById(child).orElseThrow();
+        assertThat(restored.getSpaceId()).isEqualTo(space.getId());
+        assertThat(restored.getParentId()).isNull();
+    }
+
+    /** 부모가 보관 중이면 그 아래로 돌아가도 트리에 나타날 자리가 없다 — 루트로. */
+    @Test
+    void 부모가_보관_중이면_스페이스_루트로_복원한다() throws Exception {
+        long parent = createPage(null, "부모");
+        long child = createPage(parent, "자식");
+        deletePage(child, null);
+        mvc.perform(post("/api/wiki/pages/" + parent + "/archive").with(asUser(EDITOR, "Bob")))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/wiki/pages/" + child + "/restore").with(asUser(EDITOR, "Bob")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reparentedToRoot").value(true));
+        assertThat(pages.findById(child).orElseThrow().getParentId()).isNull();
+    }
 }

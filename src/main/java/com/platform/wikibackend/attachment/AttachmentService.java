@@ -51,6 +51,7 @@ public class AttachmentService {
         Page page = pages.getOwned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
         try {
             String contentType;
             try (InputStream probe = file.getInputStream()) {
@@ -221,6 +222,7 @@ public class AttachmentService {
         Page page = pages.getOwned(a.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
 
         com.platform.wikibackend.domain.AttachmentVersion target = versions
                 .findByAttachmentIdAndVersion(a.getId(), version)
@@ -305,6 +307,7 @@ public class AttachmentService {
         Page page = pages.getOwned(a.getPageId());
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
         /*
          * 지난 버전을 행과 파일 양쪽에서 치운다.
          *

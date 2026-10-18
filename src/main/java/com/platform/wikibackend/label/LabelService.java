@@ -65,6 +65,7 @@ public class LabelService {
         Page page = owned(pageId);
         spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, page);
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
 
         Set<String> normalized = new LinkedHashSet<>();
         for (String value : raw) normalized.add(PageLabel.normalize(value));

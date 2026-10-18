@@ -147,4 +147,81 @@ class ArchiveTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(jsonPath("$.data.search.total").value(0));
     }
+
+    // ── W-07: 보관 불변식은 모든 쓰기 경로에 걸린다 ──
+
+    @Autowired com.platform.wikibackend.repository.PageRevisionRepository revisionRepo;
+    @Autowired com.platform.wikibackend.repository.CollaborationDraftMetadataRepository drafts;
+    @Autowired PageService pageService;
+
+    private Page archived(String title) throws Exception {
+        Page page = pages.save(Page.of(spaceId, null, title, "본문", EDITOR));
+        revisionRepo.save(com.platform.wikibackend.domain.PageRevision.snapshotOf(page));
+        mvc.perform(post("/api/wiki/pages/{id}/archive", page.getId()).with(asUser(EDITOR, "Alice")))
+                .andExpect(status().isOk());
+        return page;
+    }
+
+    private void expectArchivedConflict(org.springframework.test.web.servlet.RequestBuilder request) throws Exception {
+        mvc.perform(request)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("보관")));
+    }
+
+    /**
+     * 화면은 보관 문서를 읽기 전용으로 보여 주지만, 이력의 "이 버전으로 복원"이나 이미 열린 공동 편집 세션,
+     * 메타 변경으로 계속 바뀌었다(감사 W-07). 보관 해제 전까지 변경이 없다는 전제가 감사·검증 배지의 바닥이다.
+     */
+    @Test
+    void 보관된_문서는_어떤_쓰기_경로로도_바뀌지_않는다() throws Exception {
+        Page page = archived("보관 문서");
+        long id = page.getId();
+        var alice = asUser(EDITOR, "Alice");
+
+        expectArchivedConflict(post("/api/wiki/pages/{id}/revisions/{v}/restore", id, 1).with(alice));
+        expectArchivedConflict(post("/api/wiki/pages/{id}/publish", id).with(alice));
+        expectArchivedConflict(put("/api/wiki/pages/{id}/icon", id).with(alice)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"icon\":\"📌\"}"));
+        expectArchivedConflict(put("/api/wiki/pages/{id}/owner", id).with(alice)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"ownerId\":1}"));
+        expectArchivedConflict(put("/api/wiki/pages/{id}/verification", id).with(alice)
+                .contentType(MediaType.APPLICATION_JSON).content("{}"));
+        expectArchivedConflict(put("/api/wiki/pages/{id}/labels", id).with(alice)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"labels\":[\"새 라벨\"]}"));
+        expectArchivedConflict(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .multipart("/api/wiki/pages/{id}/attachments", id)
+                .file(new org.springframework.mock.web.MockMultipartFile("file", "a.txt", "text/plain", "x".getBytes()))
+                .with(alice));
+        expectArchivedConflict(post("/api/wiki/pages/{id}/move", id).with(alice)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"parentId\":null}"));
+
+        Page after = pages.findById(id).orElseThrow();
+        assertThat(after.getVersion()).isEqualTo(1);
+        assertThat(after.getIcon()).isNull();
+        assertThat(after.getOwnerId()).isNull();
+    }
+
+    @Test
+    void 보관된_문서의_공동_초안은_게시되지_않고_공동_편집_티켓도_나가지_않는다() throws Exception {
+        Page page = archived("공동 편집 중 보관");
+        drafts.save(com.platform.wikibackend.domain.CollaborationDraftMetadata.of(page.getId(), 1, 1));
+
+        expectArchivedConflict(put("/api/wiki/pages/{id}/collaboration-draft", page.getId())
+                .with(asUser(EDITOR, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"t\",\"content\":\"c\",\"expectedPageVersion\":1,\"expectedGeneration\":1}"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> pageService.getEditable(EDITOR, page.getId()))
+                .isInstanceOf(com.platform.common.error.ConflictException.class);
+        assertThat(pages.findById(page.getId()).orElseThrow().getVersion()).isEqualTo(1);
+    }
+
+    @Test
+    void 보관된_문서_아래로는_옮길_수_없다() throws Exception {
+        Page box = archived("보관 상자");
+        Page page = pages.save(Page.of(spaceId, null, "옮길 문서", "본문", EDITOR));
+
+        expectArchivedConflict(post("/api/wiki/pages/{id}/move", page.getId()).with(asUser(EDITOR, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"parentId\":" + box.getId() + "}"));
+        assertThat(pages.findById(page.getId()).orElseThrow().getParentId()).isNull();
+    }
 }
