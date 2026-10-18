@@ -91,14 +91,17 @@ public class SecurityConfig {
     /** W18 TEAM 주체 판정 — 테스트는 FakeTeamDirectory(@Primary)가 대체한다. */
     @Bean
     @ConditionalOnMissingBean(TeamDirectory.class)
-    TeamDirectory teamDirectory(io.grpc.ManagedChannel orgChannel) {
-        return new GrpcTeamDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    TeamDirectory teamDirectory(io.grpc.ManagedChannel orgChannel,
+                                @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        // 권한 클라이언트와 같은 규약: 연결 수립을 데드라인 안에서 기다리고, 넘기면 DEADLINE → 503
+        return new GrpcTeamDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel).withWaitForReady(), deadlineSeconds);
     }
 
     /** W18 제한 저장 전 USER/TEAM 실재 검증 — org 원장 불능 시 저장을 fail-closed한다. */
     @Bean
     @ConditionalOnMissingBean(PrincipalDirectory.class)
-    PrincipalDirectory principalDirectory(io.grpc.ManagedChannel orgChannel) {
-        return new GrpcPrincipalDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel));
+    PrincipalDirectory principalDirectory(io.grpc.ManagedChannel orgChannel,
+                                          @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        return new GrpcPrincipalDirectory(PermissionServiceGrpc.newBlockingStub(orgChannel).withWaitForReady(), deadlineSeconds);
     }
 }

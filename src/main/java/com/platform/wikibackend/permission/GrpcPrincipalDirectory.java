@@ -24,6 +24,8 @@ import java.util.LinkedHashSet;
 public class GrpcPrincipalDirectory implements PrincipalDirectory {
 
     private final PermissionServiceGrpc.PermissionServiceBlockingStub stub;
+    /** 호출마다 거는 데드라인(초) — 권한·멤버 디렉터리와 같은 설정. 없으면 org 멈춤에 스레드가 묶인다(감사 W-10). */
+    private final long deadlineSeconds;
 
     @Override
     public void requireExisting(Collection<RestrictionPrincipal> principals) {
@@ -42,7 +44,8 @@ public class GrpcPrincipalDirectory implements PrincipalDirectory {
         if (request.getPrincipalsCount() == 0) return;
 
         try {
-            var response = stub.validatePrincipals(request.build());
+            var response = stub.withDeadlineAfter(deadlineSeconds, java.util.concurrent.TimeUnit.SECONDS)
+                    .validatePrincipals(request.build());
             if (response.getMissingCount() > 0) {
                 PrincipalRef missing = response.getMissing(0);
                 String type = missing.getKind() == PrincipalKind.PRINCIPAL_TEAM ? "TEAM" : "USER";

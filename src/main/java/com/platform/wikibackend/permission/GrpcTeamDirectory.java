@@ -25,15 +25,21 @@ public class GrpcTeamDirectory implements TeamDirectory {
             .maximumSize(10_000)
             .build();
 
-    public GrpcTeamDirectory(PermissionServiceGrpc.PermissionServiceBlockingStub stub) {
+    /** 호출마다 거는 데드라인(초) — 권한·멤버 디렉터리와 같은 설정(platform.org-grpc.deadline-seconds). */
+    private final long deadlineSeconds;
+
+    public GrpcTeamDirectory(PermissionServiceGrpc.PermissionServiceBlockingStub stub, long deadlineSeconds) {
         this.stub = stub;
+        this.deadlineSeconds = deadlineSeconds;
     }
 
     @Override
     public List<Long> teamsOf(long userId) {
         return cache.get(userId, id -> {
             try {
-                return List.copyOf(stub.listUserTeams(
+                // 데드라인 없이는 org가 연결을 쥔 채 멈출 때 요청 스레드가 무기한 대기한다(감사 W-10).
+                // DEADLINE_EXCEEDED는 아래 isUnavailable 경로로 503이 된다.
+                return List.copyOf(stub.withDeadlineAfter(deadlineSeconds, java.util.concurrent.TimeUnit.SECONDS).listUserTeams(
                         ListUserTeamsRequest.newBuilder().setUserId(id).build()).getTeamIdsList());
             } catch (Exception e) {
                 if (GrpcPermissionClient.isUnavailable(e)) {
