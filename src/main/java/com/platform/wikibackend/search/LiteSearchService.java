@@ -3,7 +3,7 @@ package com.platform.wikibackend.search;
 import com.platform.wikibackend.permission.AccessScope;
 import com.platform.wikibackend.permission.EffectivePermissionService;
 import com.platform.wikibackend.permission.PermissionClient;
-import com.platform.wikibackend.repository.PageRepository;
+import com.platform.wikibackend.repository.PageSearchRepository;
 import com.platform.wikibackend.repository.SpaceRepository;
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
@@ -47,7 +47,7 @@ public class LiteSearchService {
      */
     static final int SCAN_LIMIT = 10_000;
 
-    private final PageRepository pageRepository;
+    private final PageSearchRepository pageRepository;
     private final SpaceRepository spaceRepository;
     private final PermissionClient permissions;
     private final EffectivePermissionService effective;
@@ -55,7 +55,7 @@ public class LiteSearchService {
     private final int scanLimit;
 
     /** 상한은 설정으로도 바꿀 수 있다 — 테스트가 작은 값으로 상한 경계(절단·하한 total)를 실제로 태운다. */
-    public LiteSearchService(PageRepository pageRepository,
+    public LiteSearchService(PageSearchRepository pageRepository,
                              SpaceRepository spaceRepository,
                              PermissionClient permissions,
                              EffectivePermissionService effective,

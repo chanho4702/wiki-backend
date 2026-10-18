@@ -70,6 +70,7 @@ class FlywaySchemaValidationTest {
 
     @Autowired SpaceRepository spaces;
     @Autowired PageRepository pages;
+    @Autowired com.platform.wikibackend.repository.PageSearchRepository search;
     @Autowired PageCommentRepository comments;
     @Autowired JdbcTemplate jdbc;
     @Autowired WebApplicationContext context;
@@ -207,14 +208,14 @@ class FlywaySchemaValidationTest {
         List<Long> none = List.of(-1L);
         List<String> noLabels = List.of("");
 
-        assertThat(pages.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
+        assertThat(search.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
                 null, null, true, noLabels, true, none)).isEqualTo(1);
-        assertThat(pages.searchPageKeys("%검색%", List.of(space.getId()), true, true, none,
+        assertThat(search.searchPageKeys("%검색%", List.of(space.getId()), true, true, none,
                 null, null, true, noLabels, true, none, org.springframework.data.domain.Limit.of(10)))
                 .extracting(k -> k.id()).containsExactly(page.getId());
-        assertThat(pages.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
+        assertThat(search.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
                 Instant.now().plusSeconds(3600), null, true, noLabels, true, none)).isZero();
-        assertThat(pages.countAttachmentMatches("%검색%", List.of(space.getId()), null, null, true, none))
+        assertThat(search.countAttachmentMatches("%검색%", List.of(space.getId()), null, null, true, none))
                 .isZero();
     }
 
