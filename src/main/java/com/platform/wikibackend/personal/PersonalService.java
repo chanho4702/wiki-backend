@@ -96,6 +96,19 @@ public class PersonalService {
         return visible.size() <= capped ? visible : visible.subList(0, capped);
     }
 
+    /** 내 초안 목록 상한. */
+    public static final int DRAFTS_LIMIT = 50;
+
+    /**
+     * 내 초안(작성자가 나인 status=draft) — 최근 편집순. 행 모양은 최근 방문과 같다({page, spaceId, spaceName}).
+     * 지금 볼 수 있는 것만 남긴다(스페이스 권한을 잃은 초안 등).
+     */
+    @Transactional(readOnly = true)
+    public List<StarredPage> drafts(long userId, int limit) {
+        int capped = Math.max(1, Math.min(limit, DRAFTS_LIMIT));
+        return visibleInOrder(userId, pages.findDraftIdsByAuthor(userId, Limit.of(capped)));
+    }
+
     /**
      * 방문 기록 — 페이지 조회수 증가와 같은 요청에서 부른다(왕복을 늘리지 않는다).
      *

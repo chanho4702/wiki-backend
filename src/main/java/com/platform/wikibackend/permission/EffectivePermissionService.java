@@ -138,6 +138,13 @@ public class EffectivePermissionService {
         return hidden;
     }
 
+    /** 예외 대신 판정값 — 화면의 편집 버튼 표시용(space 권한은 호출부 책임). */
+    public boolean canEdit(long userId, Page page) {
+        SpaceIndex idx = chainIndex(List.of(page.getId()));
+        Principals me = principalsOf(userId);
+        return idx.canView(me, page.getId()) && idx.canEdit(me, page.getId());
+    }
+
     public void requireEdit(long userId, Page page) {
         SpaceIndex idx = chainIndex(List.of(page.getId()));
         Principals me = principalsOf(userId);

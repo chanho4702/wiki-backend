@@ -214,6 +214,11 @@ public class SpaceService {
         return permissions.isAllowed(userId, spaceId, WikiAction.VIEW);
     }
 
+    /** 판정값 — 편집 버튼 표시처럼 거부를 예외로 올리지 않는 경로가 쓴다. */
+    public boolean canEdit(long userId, long spaceId) {
+        return permissions.isAllowed(userId, spaceId, WikiAction.EDIT);
+    }
+
     /** 전역 권한(GLOBAL grant) 보유자에게 "전부"를 구체적인 id 집합으로 풀어 준다. */
     @Transactional(readOnly = true)
     public java.util.Set<Long> allIds() {

@@ -37,12 +37,23 @@ public record PageResponse(
         String importedAuthorName,
         /** 원본 문서 주소 — 이름만으로 확인할 수 없어 원본으로 가는 길을 함께 준다. */
         @Schema(description = "이관 원본 문서 주소", example = "https://confluence.example.com/x/AB")
-        String importedSourceUrl) {
+        String importedSourceUrl,
+        /**
+         * 지금 사용자가 이 문서를 편집할 수 있는가(2026-10-18) — 스페이스 EDIT + 페이지 EDIT 제한 + 보관 아님.
+         * 단건 조회(GET /pages/{id})에서만 채운다. 다른 응답(생성·수정·이동 등)은 null — 화면은 null을
+         * "모름"으로 보고 이전 값을 유지한다. 하위 호환을 위해 추가만 한 필드다.
+         */
+        @Schema(description = "현재 사용자의 편집 가능 여부. 단건 조회에서만 채우고 그 외 응답은 null")
+        Boolean canEdit) {
     public static PageResponse from(Page p) {
+        return from(p, null);
+    }
+
+    public static PageResponse from(Page p, Boolean canEdit) {
         return new PageResponse(p.getId(), p.getSpaceId(), p.getParentId(), p.getTitle(), p.getContent(),
                 p.getVersion(), p.getType(), p.getStatus(), p.getSortOrder(),
                 p.getIcon(), p.getViewCount(), p.getArchivedAt(),
                 p.getOwnerId(), p.getVerifiedAt(), p.getVerifiedBy(), p.getVerifiedUntil(),
-                p.getImportedAuthorName(), p.getImportedSourceUrl());
+                p.getImportedAuthorName(), p.getImportedSourceUrl(), canEdit);
     }
 }

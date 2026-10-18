@@ -66,6 +66,14 @@ public class PersonalController {
         personal.unstarSpace(userId(jwt), spaceId);
     }
 
+    @Operation(summary = "내가 만든 초안을 최근 편집순으로 조회한다")
+    @GetMapping("/api/wiki/drafts")
+    public List<PersonalService.StarredPage> drafts(
+            @AuthenticationPrincipal Jwt jwt,
+            @Parameter(description = "최대 건수(최대 50)") @RequestParam(defaultValue = "20") int limit) {
+        return personal.drafts(userId(jwt), limit);
+    }
+
     @Operation(summary = "내가 최근에 본 페이지를 조회한다")
     @GetMapping("/api/wiki/recent")
     public List<PersonalService.StarredPage> recent(

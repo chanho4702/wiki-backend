@@ -104,6 +104,10 @@ public class PageMetaService {
         Page p = structure.getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
+        // 초안은 작성자·관리자만 보므로 공유해도 받는 사람이 열 수 없다 — 조용히 건너뛰지 않고 거부한다.
+        if (p.getStatus() == com.platform.wikibackend.domain.PageStatus.DRAFT) {
+            throw new IllegalArgumentException("초안은 공유할 수 없습니다. 게시한 뒤 공유하세요");
+        }
         int delivered = notificationService.share(userId, p, req.userIds(), req.note());
         return new ShareResponse(delivered);
     }

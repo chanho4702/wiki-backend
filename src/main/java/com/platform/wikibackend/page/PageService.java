@@ -96,7 +96,11 @@ public class PageService {
         Page p = getOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
         effective.requireView(userId, p);
-        return PageResponse.from(p);
+        // 편집 버튼 표시용 — 저장 경로와 같은 세 조건(스페이스 EDIT·페이지 EDIT 제한·보관 아님)
+        boolean canEdit = !p.isArchived()
+                && spaces.canEdit(userId, p.getSpaceId())
+                && effective.canEdit(userId, p);
+        return PageResponse.from(p, canEdit);
     }
 
     /** 수정 = 새 버전. expectedVersion 불일치 409. 부모 변경은 이동 API(PageMoveService). */

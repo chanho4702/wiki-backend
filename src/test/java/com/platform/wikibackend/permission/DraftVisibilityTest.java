@@ -186,15 +186,49 @@ class DraftVisibilityTest {
     }
 
     @Test
-    void 초안을_공유해도_볼_수_없는_사람에게는_가지_않는다() throws Exception {
+    void 초안_공유는_거부된다() throws Exception {
         long draft = create(AUTHOR, null, "공유 초안", "draft");
 
+        // 조용히 건너뛰지 않는다 — 공유한 사람이 왜 아무도 못 받는지 알아야 한다(프론트 계약 2026-10-18)
         mvc.perform(post("/api/wiki/pages/{id}/share", draft).with(asUser(AUTHOR, "Author"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userIds\":[" + READER + "," + SPACE_ADMIN + "]}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.delivered").value(1)); // 스페이스 관리자만
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("초안은 공유할 수 없습니다. 게시한 뒤 공유하세요"));
         assertThat(notifications.findByUserIdAndReadAtIsNull(READER)).isEmpty();
+        assertThat(notifications.findByUserIdAndReadAtIsNull(SPACE_ADMIN)).isEmpty();
+    }
+
+    // ── 내 초안 목록·편집 가능 여부(프론트 계약 2026-10-18) ──
+
+    @Test
+    void 내_초안은_최근_편집순으로_나만_본다() throws Exception {
+        long older = create(AUTHOR, null, "옛 초안", "draft");
+        long newer = create(AUTHOR, null, "새 초안", "draft");
+        create(AUTHOR, null, "게시 문서", "published");
+        create(READER, null, "남의 초안", "draft");
+        update(AUTHOR, older, "옛 초안", "고쳤다", 1); // 최근 편집이 맨 앞
+
+        mvc.perform(get("/api/wiki/drafts").with(asUser(AUTHOR, "Author")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].page.id").value(older))
+                .andExpect(jsonPath("$[1].page.id").value(newer))
+                .andExpect(jsonPath("$[0].spaceId").value(String.valueOf(space.getId())))
+                .andExpect(jsonPath("$[0].spaceName").value("초안"));
+        mvc.perform(get("/api/wiki/drafts").param("limit", "1").with(asUser(AUTHOR, "Author")))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void 단건_조회는_편집_가능_여부를_준다() throws Exception {
+        long page = create(AUTHOR, null, "편집 가능?", "published");
+
+        open(AUTHOR, page).andExpect(jsonPath("$.canEdit").value(true));
+        open(GLOBAL_ADMIN, page).andExpect(jsonPath("$.canEdit").value(false)); // VIEW만 있다
+        mvc.perform(post("/api/wiki/pages/{id}/archive", page).with(asUser(AUTHOR, "Author")))
+                .andExpect(status().isOk());
+        open(AUTHOR, page).andExpect(jsonPath("$.canEdit").value(false)); // 보관 문서는 읽기 전용
     }
 
     // ── 도우미 ──

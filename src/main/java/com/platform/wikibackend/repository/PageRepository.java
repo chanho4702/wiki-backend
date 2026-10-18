@@ -306,6 +306,15 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     List<Long> findSpaceIdsWithOthersDrafts(@Param("spaceIds") Collection<Long> spaceIds,
                                             @Param("userId") long userId);
 
+    /** 내 초안(작성자 = 나) — 최근 편집순. 보관 문서는 빠진다. 권한 재판정은 호출부가 한다. */
+    @Query("""
+            select p.id from Page p
+             where p.createdBy = :userId and p.status = com.platform.wikibackend.domain.PageStatus.DRAFT
+               and p.archivedAt is null
+             order by p.updatedAt desc, p.id desc
+            """)
+    List<Long> findDraftIdsByAuthor(@Param("userId") long userId, Limit limit);
+
     /** 휴지통 포함 단건 조회. */
     @Query(value = "select * from page where id = :id", nativeQuery = true)
     Optional<Page> findAnyById(@Param("id") Long id);
