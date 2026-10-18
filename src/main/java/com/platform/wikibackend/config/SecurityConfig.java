@@ -57,16 +57,29 @@ public class SecurityConfig {
     @ConditionalOnMissingBean(name = "orgChannel")
     io.grpc.ManagedChannel orgChannel(
             @Value("${platform.org-grpc.host}") String host,
-            @Value("${platform.org-grpc.port}") int port) {
-        // 콜드 스타트 방지: 첫 요청이 이름 해석·연결 수립에 1초 넘게 걸려 DEADLINE_EXCEEDED(→503)가 나던 것을
-        // 시작 시 연결을 선점(getState(true))하고 keepalive로 유휴 끊김을 막아 없앤다(alm-backend 2026-09-05 실측).
-        io.grpc.ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port)
+            @Value("${platform.org-grpc.port}") int port,
+            com.platform.common.grpc.InternalTokenClientInterceptor platformGrpcClientInterceptor) {
+        io.grpc.ManagedChannel channel = buildOrgChannel(host, port, platformGrpcClientInterceptor);
+        channel.getState(true);
+        return channel;
+    }
+
+    /**
+     * org 채널 빌더 — 권한·팀·주체·멤버 디렉터리 호출이 모두 이 채널을 탄다.
+     *
+     * 콜드 스타트 방지: 첫 요청이 이름 해석·연결 수립에 1초 넘게 걸려 DEADLINE_EXCEEDED(→503)가 나던 것을
+     * 시작 시 연결을 선점(getState(true))하고 keepalive로 유휴 끊김을 막아 없앤다(alm-backend 2026-09-05 실측).
+     * 서비스 간 토큰(P-01, common-starter 0.17.0): 모든 호출 메타데이터에 PLATFORM_GRPC_TOKEN을 싣는다.
+     * 토큰이 비면 싣지 않는다(org가 monitor면 경고만, enforce면 거부).
+     */
+    static io.grpc.ManagedChannel buildOrgChannel(String host, int port,
+                                                  com.platform.common.grpc.InternalTokenClientInterceptor tokens) {
+        return ManagedChannelBuilder.forAddress(host, port)
                 .usePlaintext()
                 .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
+                .intercept(tokens)
                 .build();
-        channel.getState(true);
-        return channel;
     }
 
     /** 테스트는 FakePermissionClient 빈이 이 빈을 대체한다(@ConditionalOnMissingBean). */
