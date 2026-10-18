@@ -54,6 +54,7 @@ class EmailNotificationTest {
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @MockitoBean OrgMailClient orgMail;
     @Autowired NotificationDigestService digest;
+    @Autowired com.platform.wikibackend.repository.PageRestrictionRepository restrictions;
     MockMvc mvc;
 
     Space space;
@@ -66,6 +67,7 @@ class EmailNotificationTest {
         given(orgMail.send(anyList(), any(), any())).willReturn(true);
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         notifications.deleteAll();
+        restrictions.deleteAll();
         prefs.deleteAll();
         revisions.deleteAll();
         TestPages.deleteAll(jdbc);
@@ -79,7 +81,7 @@ class EmailNotificationTest {
     }
 
     /** 생성은 알림 트리거가 아니다(V11 재량) — 만든 뒤 멘션을 넣는 업데이트로 MENTIONED를 낸다. */
-    private void mentionBob() throws Exception {
+    private long mentionBob() throws Exception {
         String body = mvc.perform(post("/api/wiki/pages").with(asUser(ALICE, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"spaceId\":" + space.getId()
@@ -91,6 +93,7 @@ class EmailNotificationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"회의록\",\"content\":\"[@Bob](user:2) 확인 부탁\",\"expectedVersion\":1}"))
                 .andExpect(status().isOk());
+        return id;
     }
 
     @Test
@@ -197,5 +200,58 @@ class EmailNotificationTest {
         mentionBob(); // Bob은 한 번도 다녀가지 않았다
 
         verify(orgMail, after(500).never()).send(anyList(), any(), any());
+    }
+
+    // ── W-04: 요약 메일은 발송 시점 권한으로 다시 거른다 ──
+
+    private void bobDaily() throws Exception {
+        mvc.perform(put("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true,\"emailMode\":\"DAILY\",\"mentioned\":true,\"pageUpdated\":true,\"comment\":true,\"shared\":true}"))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * 알림이 쌓인 뒤 문서에 VIEW 제한이 걸리면 다음날 요약에 그 제목이 나가면 안 된다 —
+     * 즉시 알림·알림함이 일부러 막은 바로 그 누출이다(감사 W-04).
+     */
+    @Test
+    void 요약_전에_문서가_제한되면_그_제목은_메일에_실리지_않는다() throws Exception {
+        bobDaily();
+        long pageId = mentionBob();
+        restrictions.save(com.platform.wikibackend.domain.PageRestriction.of(pageId,
+                com.platform.wikibackend.domain.PageRestriction.Type.VIEW,
+                com.platform.wikibackend.domain.PageRestriction.PrincipalType.USER, ALICE, ALICE));
+
+        assertThat(digest.run()).isZero();
+        verify(orgMail, after(500).never()).send(anyList(), any(), any());
+        // 거른 알림은 처리됨 — 제한이 풀린 뒤 몇 주 지난 요약에 갑자기 나타나지 않는다
+        assertThat(notifications.findAll()).allMatch(n -> n.getEmailedAt() != null);
+    }
+
+    @Test
+    void 요약_전에_스페이스_권한이_회수되면_실리지_않는다() throws Exception {
+        bobDaily();
+        mentionBob();
+        perms.reset();
+        perms.allow(ALICE, space.getId(), WikiAction.VIEW);
+
+        assertThat(digest.run()).isZero();
+        verify(orgMail, after(500).never()).send(anyList(), any(), any());
+    }
+
+    /** org 불능이면 그 사용자는 이번 회차를 건너뛴다 — 처리됨으로 찍지 않아 다음 회차에 나간다. */
+    @Test
+    void 권한을_판정할_수_없으면_보내지도_처리하지도_않는다() throws Exception {
+        bobDaily();
+        mentionBob();
+        perms.makeUnavailable(BOB);
+
+        assertThat(digest.run()).isZero();
+        assertThat(notifications.findAll()).allMatch(n -> n.getEmailedAt() == null);
+
+        perms.reset();
+        perms.allow(BOB, space.getId(), WikiAction.VIEW);
+        assertThat(digest.run()).isEqualTo(1);
     }
 }

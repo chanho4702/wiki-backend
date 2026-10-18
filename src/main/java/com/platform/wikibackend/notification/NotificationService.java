@@ -55,6 +55,7 @@ public class NotificationService {
     private final com.platform.wikibackend.watch.WatchService watches;
     private final com.platform.wikibackend.watch.SpaceWatchService spaceWatches;
     private final EmailNotifier email;
+    private final NotificationVisibility visibility;
 
     static Set<Long> mentionIds(String body) {
         Set<Long> ids = new HashSet<>();
@@ -208,20 +209,11 @@ public class NotificationService {
         unreadRows.forEach(n -> pageIds.add(n.getPageId()));
         Map<Long, Page> byId = pages.findAllById(pageIds)
                 .stream().collect(Collectors.toMap(Page::getId, p -> p, (a, b) -> a));
-        // 제한 인덱스와 space 권한은 각각 스페이스당 한 번만 계산한다. 알림 수만큼 전체
-        // 페이지 제한 인덱스를 다시 만드는 N+1을 피하면서 제목·경로 노출은 동일하게 닫는다.
-        Set<Long> effectiveVisible = effective.viewablePageIds(userId, byId.values());
-        Map<Long, Boolean> visibleSpaces = byId.values().stream()
-                .map(Page::getSpaceId)
-                .distinct()
-                .collect(Collectors.toMap(
-                        spaceId -> spaceId,
-                        spaceId -> permissions.isAllowed(userId, spaceId, WikiAction.VIEW)));
+        // 제한 인덱스와 space 권한은 각각 스페이스당 한 번만 계산한다(요약 메일과 같은 판정).
+        Set<Long> visibleIds = visibility.visiblePageIds(userId, byId.values());
         java.util.function.Predicate<Notification> visible = n -> {
             Page page = byId.get(n.getPageId());
-            return page != null
-                    && visibleSpaces.getOrDefault(page.getSpaceId(), false)
-                    && effectiveVisible.contains(page.getId());
+            return page != null && visibleIds.contains(page.getId());
         };
         List<NotificationResponse> items = rows.stream()
                 .filter(visible)

@@ -1,5 +1,6 @@
 package com.platform.wikibackend.notification;
 
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.wikibackend.domain.Notification;
 import com.platform.wikibackend.domain.NotificationPref;
 import com.platform.wikibackend.domain.Page;
@@ -38,6 +39,7 @@ public class NotificationDigestService {
     private final NotificationRepository notifications;
     private final PageRepository pages;
     private final EmailNotifier email;
+    private final NotificationVisibility visibility;
 
     /** 보낸 요약 통 수. */
     @Transactional
@@ -53,12 +55,22 @@ public class NotificationDigestService {
             Set<Long> pageIds = rows.stream().map(Notification::getPageId).collect(Collectors.toCollection(HashSet::new));
             Map<Long, Page> byId = pages.findAllById(pageIds).stream()
                     .collect(Collectors.toMap(Page::getId, Function.identity(), (a, b) -> a));
+            // 발송 시점 권한으로 다시 거른다 — 알림이 쌓인 뒤 걸린 제한·회수된 스페이스 권한의
+            // 제목이 메일로 새지 않게(알림함과 같은 판정, 감사 W-04).
+            Set<Long> visible;
+            try {
+                visible = visibility.visiblePageIds(pref.getUserId(), byId.values());
+            } catch (ServiceUnavailableException e) {
+                // 판정할 수 없으면 이번 회차는 건너뛴다. 처리됨으로 찍지 않아 다음 회차에 다시 모인다.
+                log.warn("요약 메일 권한 확인 불가 — 이번 회차 생략: user={}", pref.getUserId());
+                continue;
+            }
             List<EmailNotifier.DigestLine> lines = new ArrayList<>();
             Instant now = Instant.now();
             for (Notification n : rows) {
                 n.markEmailed(now); // 페이지가 사라진 알림도 "처리됨"으로 — 매일 다시 모이지 않게
                 Page page = byId.get(n.getPageId());
-                if (page == null || page.isArchived()) continue;
+                if (page == null || page.isArchived() || !visible.contains(page.getId())) continue;
                 lines.add(new EmailNotifier.DigestLine(EmailNotifier.describe(n.getType()), page.getTitle(),
                         page.getSpaceId(), page.getId(), n.getNote()));
             }
