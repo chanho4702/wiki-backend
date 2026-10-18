@@ -414,6 +414,7 @@ public class PageService {
         p.edit(req.title(), req.content(), userId);
         collaborationReset.afterExternalWrite(p); // 공동 초안이 옛 base에 묶이지 않게(차단-1)
         revisions.save(PageRevision.snapshotOf(p, req.changeNote()).withEditorName(actorNames.current()));
+        taskSync.sync(p); // 작업 표는 본문의 파생물(W23) — 일반 저장이 빠지면 줄 번호 토글이 남의 항목을 바꾼다(W-01)
         labelService.reindexLinks(p);
         watches.autoWatch(pageId, userId); // 고친 문서는 자동 구독(W21-4)
         events.afterCommit(WikiEvents.pageUpdated(userId, p));

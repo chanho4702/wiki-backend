@@ -87,6 +87,7 @@ class PostgresWritePathTest extends PostgresTestSupport {
 
         assertThat(jdbc.queryForObject("select version from page where id = ?", Integer.class, page)).isEqualTo(2);
         assertThat(count("page_revision", "page_id", page)).isEqualTo(2);
+        assertThat(count("page_task", "page_id", page)).isEqualTo(2); // 일반 저장도 작업 표를 다시 만든다(W-01)
     }
 
     @Test

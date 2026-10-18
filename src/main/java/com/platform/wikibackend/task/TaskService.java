@@ -88,10 +88,20 @@ public class TaskService {
                     // 날짜 요소가 깨진 값이면 기한 없음으로 둔다 — 한 줄 때문에 저장이 실패하면 안 된다
                 }
             }
-            String text = DATE_TO_TEXT.matcher(MENTION_TO_TEXT.matcher(raw).replaceAll("$1")).replaceAll("$1").trim();
+            String text = toText(raw);
             out.add(PageTask.of(pageId, i + 1, text, assignee, due, !m.group(1).equals(" ")));
         }
         return out;
+    }
+
+    private static String toText(String raw) {
+        return DATE_TO_TEXT.matcher(MENTION_TO_TEXT.matcher(raw).replaceAll("$1")).replaceAll("$1").trim();
+    }
+
+    /** 작업 줄 하나의 표시 텍스트(목록 응답의 text와 같은 규칙). 작업 줄이 아니면 null. */
+    static String displayText(String line) {
+        Matcher m = TASK_LINE.matcher(line);
+        return m.matches() ? toText(m.group(2)) : null;
     }
 
     /**
@@ -128,6 +138,14 @@ public class TaskService {
      * 줄이 이미 다른 내용이면(동시 편집) 엉뚱한 줄을 건드리지 않고 409로 끝낸다.
      */
     public TaskView setDone(long userId, long pageId, int lineNo, boolean done) {
+        return setDone(userId, pageId, lineNo, done, null);
+    }
+
+    /**
+     * expectedText가 있으면 그 줄의 현재 항목 표시 텍스트와 같아야 한다(W-01). 줄 번호만 보면
+     * 다른 사람이 위에 줄을 넣은 뒤의 토글이 "어떤 작업 줄"이기만 하면 통과해 남의 항목을 바꾼다.
+     */
+    public TaskView setDone(long userId, long pageId, int lineNo, boolean done, String expectedText) {
         // 버전을 올리는 쓰기라 page를 먼저 잠근다(page → 공동 초안 순서).
         Page page = pages.findByIdForUpdate(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
         com.platform.wikibackend.permission.PermissionDecision decision =
@@ -144,6 +162,9 @@ public class TaskService {
         String[] lines = page.getContent().split("\n", -1);
         if (lineNo < 1 || lineNo > lines.length || !TASK_LINE.matcher(lines[lineNo - 1]).matches()) {
             throw new ConflictException("그 줄은 더 이상 작업 항목이 아닙니다. 문서를 새로고침하세요");
+        }
+        if (expectedText != null && !expectedText.equals(displayText(lines[lineNo - 1]))) {
+            throw new ConflictException("그 줄의 작업 항목이 바뀌었습니다. 문서를 새로고침하세요");
         }
         lines[lineNo - 1] = lines[lineNo - 1].replaceFirst("\\[( |x|X)\\]", done ? "[x]" : "[ ]");
         page.edit(page.getTitle(), String.join("\n", lines), userId);

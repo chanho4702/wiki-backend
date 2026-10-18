@@ -157,4 +157,63 @@ class TaskApiTest {
         mvc.perform(get("/api/wiki/tasks/mine").with(asUser(YOU, "You")))
                 .andExpect(jsonPath("$.length()").value(0));
     }
+
+    // ── W-01: 일반 저장(PUT)도 작업 표를 다시 만든다 ──
+
+    private void putPage(long pageId, String body, int expectedVersion) throws Exception {
+        mvc.perform(put("/api/wiki/pages/{id}", pageId).with(asUser(ME, "Me"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+                                java.util.Map.of("title", "회의록", "content", body,
+                                        "expectedVersion", expectedVersion))))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * 일반 저장 뒤 "내 작업"이 옛 본문 기준으로 남으면 지운 항목이 보이고, 줄이 밀린 뒤의 토글이
+     * 다른 사람의 항목을 바꾼다(감사 W-01). 저장 경로마다 표를 다시 만들어야 한다.
+     */
+    @Test
+    void 일반_저장도_작업_표를_현재_본문으로_다시_만든다() throws Exception {
+        long pageId = createPage(BODY);
+
+        // 위에 줄을 하나 넣고, 내 작업 하나를 지우고, 새 작업을 더한다
+        putPage(pageId, "추가된 머리말\n" + BODY.replace("- [x] 회의실 예약 [@나](user:1)\n", "")
+                + "\n- [ ] 새 작업 [@나](user:1)", 1);
+
+        var rows = tasks.findByPageIdOrderByLineNoAsc(pageId);
+        assertThat(rows).extracting(t -> t.getText())
+                .containsExactly("배포 공지 @나 2026-09-01", "문서 정리 @너", "담당자 없음", "새 작업 @나");
+        assertThat(rows.get(0).getLineNo()).isEqualTo(4); // 3 → 4로 밀렸다
+        mvc.perform(get("/api/wiki/tasks/mine?done=true").with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.length()").value(0)); // 지운 완료 항목이 남지 않는다
+        mvc.perform(get("/api/wiki/tasks/mine").with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].lineNo").value(4));
+    }
+
+    /**
+     * 옛 목록을 들고 있는 화면이 옛 줄 번호로 토글하면, 그 줄이 여전히 "어떤 작업 줄"이더라도
+     * 화면이 본 항목과 다르면 409다 — 요청에 항목 텍스트를 실으면 서버가 대조한다.
+     */
+    @Test
+    void 항목_텍스트가_다르면_토글하지_않는다() throws Exception {
+        long pageId = createPage(BODY);
+        // 빈 줄을 지워 줄이 하나씩 당겨진다 → 옛 4번 줄(회의실 예약) 자리에 "문서 정리"가 온다
+        putPage(pageId, BODY.replace("# 회의록\n\n", "# 회의록\n"), 1);
+
+        // 옛 목록을 든 화면이 "회의실 예약"을 다시 열려고 옛 줄 번호 4로 보낸다
+        mvc.perform(put("/api/wiki/pages/{id}/tasks/{line}", pageId, 4).with(asUser(ME, "Me"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"done\":true,\"text\":\"회의실 예약 @나\"}"))
+                .andExpect(status().isConflict());
+        assertThat(pages.findById(pageId).orElseThrow().getVersion()).isEqualTo(2); // 아무것도 바뀌지 않았다
+
+        // 현재 줄 번호와 텍스트가 맞으면 통과한다
+        mvc.perform(put("/api/wiki/pages/{id}/tasks/{line}", pageId, 3).with(asUser(ME, "Me"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"done\":false,\"text\":\"회의실 예약 @나\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.done").value(false));
+    }
 }

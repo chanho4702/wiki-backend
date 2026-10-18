@@ -41,8 +41,13 @@ public class TaskController {
     public TaskService.TaskView setDone(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable long pageId,
                                         @Parameter(description = "본문에서 그 체크박스가 있는 줄 번호") @PathVariable int lineNo,
                                         @RequestBody DoneRequest req) {
-        return tasks.setDone(userId(jwt), pageId, lineNo, req.done());
+        return tasks.setDone(userId(jwt), pageId, lineNo, req.done(), req.text());
     }
 
-    public record DoneRequest(boolean done) {}
+    /**
+     * text(선택) — 화면이 본 항목의 표시 텍스트(목록 응답의 text 그대로). 주면 서버가 그 줄의 현재
+     * 항목과 대조해 다르면 409다. 옛 목록을 든 화면이 줄이 밀린 뒤 남의 항목을 토글하지 않게 한다.
+     * 비우면 예전처럼 "그 줄이 작업 항목인가"만 본다(구 클라이언트 호환).
+     */
+    public record DoneRequest(boolean done, String text) {}
 }
