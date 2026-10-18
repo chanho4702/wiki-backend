@@ -52,7 +52,25 @@ public class MarkdownPdfRenderer {
     public record Doc(String title, String markdown) {
     }
 
+    /**
+     * 위키 첨부 이미지 해석기 — 첨부 id를 받아 PDF에 심을 data URI를 준다. 볼 수 없거나 이미지가 아니면
+     * 빈 값이다(그 이미지는 대체 텍스트로 바뀐다). 렌더러는 이것 말고는 어떤 주소도 열지 않는다.
+     */
+    @FunctionalInterface
+    public interface ImageSource {
+        java.util.Optional<String> dataUri(long attachmentId);
+
+        ImageSource NONE = id -> java.util.Optional.empty();
+    }
+
+    /** 본문이 쓰는 위키 첨부 참조(인라인·내려받기) — 상대 경로만. 호스트가 붙은 주소는 외부 URL로 본다. */
+    private static final Pattern WIKI_ATTACHMENT = Pattern.compile("^/api/wiki/attachments/(\\d+)(?:/inline)?$");
+
     public byte[] render(String exportTitle, List<Doc> docs) {
+        return render(exportTitle, docs, ImageSource.NONE);
+    }
+
+    public byte[] render(String exportTitle, List<Doc> docs, ImageSource images) {
         StringBuilder body = new StringBuilder();
         for (Doc doc : docs) {
             body.append("<section class=\"doc\"><h1 class=\"doc-title\">")
@@ -64,7 +82,9 @@ public class MarkdownPdfRenderer {
         String page = "<html><head><style>" + CSS + "</style><title>"
                 + org.jsoup.nodes.Entities.escape(exportTitle) + "</title></head><body>" + body + "</body></html>";
 
-        org.w3c.dom.Document w3c = new W3CDom().fromJsoup(Jsoup.parse(page));
+        org.jsoup.nodes.Document parsed = Jsoup.parse(page);
+        inlineImages(parsed, images);
+        org.w3c.dom.Document w3c = new W3CDom().fromJsoup(parsed);
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
@@ -72,12 +92,43 @@ public class MarkdownPdfRenderer {
                     "NanumGothic", 400, BaseRendererBuilder.FontStyle.NORMAL, true);
             builder.useFont(() -> MarkdownPdfRenderer.class.getResourceAsStream("/fonts/NanumGothic-Bold.ttf"),
                     "NanumGothic", 700, BaseRendererBuilder.FontStyle.NORMAL, true);
+            // SSRF 차단(감사 W-06): 기본 스트림 구현은 http(s)·file URL을 서버에서 연다. 이미지는 위에서 전부
+            // data URI로 바꿨거나 지웠으므로, data: 외의 모든 URI는 해석하지 않는다(두 겹째 방어).
+            builder.useUriResolver((base, uri) -> uri != null && uri.startsWith("data:") ? uri : null);
+            builder.useProtocolsStreamImplementation(url -> {
+                throw new SecurityException("PDF 렌더러는 외부 주소를 열지 않습니다: " + url);
+            }, "http", "https", "file", "ftp", "jar");
             builder.withW3cDocument(w3c, null);
             builder.toStream(out);
             builder.run();
             return out.toByteArray();
         } catch (IOException e) {
             throw new UncheckedIOException("PDF 렌더링 실패", e);
+        }
+    }
+
+    /**
+     * 모든 &lt;img&gt;를 정리한다. 위키 첨부 참조면 해석기가 준 data URI로 바꾸고, 그 밖의 주소(외부 URL,
+     * 프로토콜 상대, file: 등)나 해석기가 거절한 첨부는 대체 텍스트로 바꾼다 — 렌더러가 열 주소가 남지 않는다.
+     */
+    static void inlineImages(org.jsoup.nodes.Document doc, ImageSource images) {
+        for (org.jsoup.nodes.Element img : doc.select("img")) {
+            String src = img.attr("src").trim();
+            java.util.regex.Matcher m = WIKI_ATTACHMENT.matcher(src);
+            java.util.Optional<String> data = java.util.Optional.empty();
+            if (m.matches()) {
+                try {
+                    data = images.dataUri(Long.parseLong(m.group(1)));
+                } catch (NumberFormatException ignored) {
+                    // 범위를 넘는 id — 그냥 대체 텍스트
+                }
+            }
+            if (data.isPresent()) {
+                img.attr("src", data.get());
+            } else {
+                String alt = img.attr("alt");
+                img.replaceWith(new org.jsoup.nodes.TextNode(alt.isBlank() ? "[이미지]" : "[이미지: " + alt + "]"));
+            }
         }
     }
 

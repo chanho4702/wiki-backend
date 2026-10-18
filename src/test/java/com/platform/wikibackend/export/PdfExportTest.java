@@ -95,6 +95,120 @@ class PdfExportTest {
         assertThat(textOf(pdf)).contains("부모 본문").contains("자식 문서").contains("자식 본문");
     }
 
+    // ── W-06: 서버가 본문 이미지 URL을 가져오지 않는다(SSRF) ──
+
+    /**
+     * EDIT 권한만 있으면 본문에 내부망 주소를 이미지로 넣고 PDF를 내보내는 것만으로 서버가 그 주소에
+     * GET을 보냈다(감사 W-06). 외부 URL은 어떤 것도 열지 않는다 — 요청 자체가 나가지 않아야 한다.
+     */
+    @Test
+    void 본문의_외부_이미지_URL로는_요청이_나가지_않는다() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer probe = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        probe.createContext("/", exchange -> {
+            hits.incrementAndGet();
+            byte[] png = png();
+            exchange.getResponseHeaders().add("Content-Type", "image/png");
+            exchange.sendResponseHeaders(200, png.length);
+            exchange.getResponseBody().write(png);
+            exchange.close();
+        });
+        probe.start();
+        try {
+            String url = "http://127.0.0.1:" + probe.getAddress().getPort();
+            Page page = pages.save(Page.of(space.getId(), null, "외부 이미지", "본문\n\n![내부](" + url
+                    + "/latest/meta-data.png)\n\n![상대](//127.0.0.1:" + probe.getAddress().getPort()
+                    + "/x.png)\n\n![파일](file:///etc/passwd)\n\n끝 문단", USER));
+
+            byte[] pdf = mvc.perform(get("/api/wiki/pages/{id}/export.pdf", page.getId()).with(asUser(USER, "김")))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsByteArray();
+
+            assertThat(hits.get()).isZero();
+            assertThat(textOf(pdf)).contains("끝 문단");
+            assertThat(imageCount(pdf)).isZero();
+        } finally {
+            probe.stop(0);
+        }
+    }
+
+    /**
+     * 위키 자체 첨부 이미지는 상대 경로(/api/wiki/attachments/{id}/inline)라 예전엔 PDF에 아예 안 나왔다.
+     * 저장소에서 바로 읽어 PDF에 넣는다 — 볼 수 있는 문서의 첨부일 때만.
+     */
+    @Test
+    void 위키_첨부_이미지는_저장소에서_읽어_PDF에_넣는다() throws Exception {
+        perms.allow(USER, space.getId(), WikiAction.EDIT);
+        Page page = pages.save(Page.of(space.getId(), null, "첨부 이미지", "본문", USER));
+        long attachmentId = uploadPng(page.getId());
+        page.rewriteContentForCopy("본문\n\n![그림](/api/wiki/attachments/" + attachmentId + "/inline)\n");
+        pages.save(page);
+
+        byte[] pdf = mvc.perform(get("/api/wiki/pages/{id}/export.pdf", page.getId()).with(asUser(USER, "김")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        assertThat(imageCount(pdf)).isEqualTo(1);
+    }
+
+    /** 다른(볼 수 없는) 문서의 첨부 id를 본문에 적어도 그 이미지는 들어가지 않는다. */
+    @Test
+    void 볼_수_없는_문서의_첨부_이미지는_넣지_않는다() throws Exception {
+        perms.allow(USER, space.getId(), WikiAction.EDIT);
+        Space secret = spaces.save(Space.of("secret", "비밀", null, STRANGER));
+        perms.allow(STRANGER, secret.getId(), WikiAction.VIEW);
+        perms.allow(STRANGER, secret.getId(), WikiAction.EDIT);
+        Page hidden = pages.save(Page.of(secret.getId(), null, "비밀 문서", "본문", STRANGER));
+        long secretAttachment = uploadPng(hidden.getId(), STRANGER);
+        Page mine = pages.save(Page.of(space.getId(), null, "내 문서",
+                "![훔치기](/api/wiki/attachments/" + secretAttachment + "/inline)\n\n끝", USER));
+
+        byte[] pdf = mvc.perform(get("/api/wiki/pages/{id}/export.pdf", mine.getId()).with(asUser(USER, "김")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        assertThat(imageCount(pdf)).isZero();
+    }
+
+    private long uploadPng(long pageId) throws Exception {
+        return uploadPng(pageId, USER);
+    }
+
+    private long uploadPng(long pageId, long userId) throws Exception {
+        String body = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/api/wiki/pages/{id}/attachments", pageId)
+                        .file(new org.springframework.mock.web.MockMultipartFile("file", "dot.png", "image/png", png()))
+                        .with(asUser(userId, "u" + userId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).get("id").asLong();
+    }
+
+    private static byte[] png() {
+        try {
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(img, "png", out);
+            return out.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static int imageCount(byte[] pdf) throws Exception {
+        int count = 0;
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            for (var p : doc.getPages()) {
+                var resources = p.getResources();
+                for (var name : resources.getXObjectNames()) {
+                    if (resources.isImageXObject(name)) count++;
+                }
+            }
+        }
+        return count;
+    }
+
     @Test
     void 볼_수_없는_사용자는_받을_수_없다() throws Exception {
         Page page = pages.save(Page.of(space.getId(), null, "문서", "본문", USER));
