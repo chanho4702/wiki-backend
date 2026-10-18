@@ -209,12 +209,12 @@ class FlywaySchemaValidationTest {
         List<String> noLabels = List.of("");
 
         assertThat(search.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
-                null, null, true, noLabels, true, none)).isEqualTo(1);
+                null, null, true, noLabels, true, List.of(PageType.PAGE), true, none)).isEqualTo(1);
         assertThat(search.searchPageKeys("%검색%", List.of(space.getId()), true, true, none,
-                null, null, true, noLabels, true, none, org.springframework.data.domain.Limit.of(10)))
+                null, null, true, noLabels, true, List.of(PageType.PAGE), true, none, org.springframework.data.domain.Limit.of(10)))
                 .extracting(k -> k.id()).containsExactly(page.getId());
         assertThat(search.countPageMatches("%검색%", List.of(space.getId()), true, true, none,
-                Instant.now().plusSeconds(3600), null, true, noLabels, true, none)).isZero();
+                Instant.now().plusSeconds(3600), null, true, noLabels, true, List.of(PageType.PAGE), true, none)).isZero();
         assertThat(search.countAttachmentMatches("%검색%", List.of(space.getId()), null, null, true, none))
                 .isZero();
     }

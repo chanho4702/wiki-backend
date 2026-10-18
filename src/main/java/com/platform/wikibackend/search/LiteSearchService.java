@@ -244,7 +244,7 @@ public class LiteSearchService {
     private long countPages(Criteria c, Set<Long> hidden) {
         PageArgs a = new PageArgs(c);
         return pageRepository.countPageMatches(c.like(), c.spaceIds(), a.drafts, a.anyAuthor, a.authorIds,
-                c.after(), c.before(), a.anyLabel, a.labels, hidden.isEmpty(), idsOrPlaceholder(hidden));
+                c.after(), c.before(), a.anyLabel, a.labels, a.anyType, a.pageTypes, hidden.isEmpty(), idsOrPlaceholder(hidden));
     }
 
     private List<SearchKey> pageKeys(Criteria c, Set<Long> hidden, Limit limit) {
@@ -255,11 +255,11 @@ public class LiteSearchService {
         // 다시 세우면 "가장 최신 N건 중 오래된 순"이 된다(2026-09-13 결함).
         return switch (c.input().normalizedSort()) {
             case RELEVANCE -> pageRepository.searchPageKeys(c.like(), c.spaceIds(), a.drafts, a.anyAuthor,
-                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, noHidden, hiddenIds, limit);
+                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, a.anyType, a.pageTypes, noHidden, hiddenIds, limit);
             case UPDATED_DESC -> pageRepository.searchPageKeysNewest(c.like(), c.spaceIds(), a.drafts, a.anyAuthor,
-                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, noHidden, hiddenIds, limit);
+                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, a.anyType, a.pageTypes, noHidden, hiddenIds, limit);
             case UPDATED_ASC -> pageRepository.searchPageKeysOldest(c.like(), c.spaceIds(), a.drafts, a.anyAuthor,
-                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, noHidden, hiddenIds, limit);
+                    a.authorIds, c.after(), c.before(), a.anyLabel, a.labels, a.anyType, a.pageTypes, noHidden, hiddenIds, limit);
         };
     }
 
@@ -288,6 +288,8 @@ public class LiteSearchService {
         final Collection<Long> authorIds;
         final boolean anyLabel;
         final List<String> labels;
+        final boolean anyType;
+        final Collection<com.platform.wikibackend.domain.PageType> pageTypes;
 
         PageArgs(Criteria c) {
             Set<Long> authors = c.input().requestedAuthorIds();
@@ -297,6 +299,9 @@ public class LiteSearchService {
             authorIds = anyAuthor ? Set.of(-1L) : authors;
             anyLabel = requested.isEmpty();
             labels = anyLabel ? List.of("") : requested;
+            Set<com.platform.wikibackend.domain.PageType> types = c.input().requestedPageTypes();
+            anyType = types.isEmpty();
+            pageTypes = anyType ? List.of(com.platform.wikibackend.domain.PageType.PAGE) : types;
         }
     }
 

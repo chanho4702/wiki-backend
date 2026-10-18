@@ -28,7 +28,9 @@ public record SearchInput(
         /** 정렬. null이면 관련도. */
         SearchSort sort,
         Integer page,
-        Integer size
+        Integer size,
+        /** 문서 종류 필터(2026-10-18) — PAGE·FOLDER·BLOG의 부분집합. 비우면 전부. PAGE 결과에만 걸린다. */
+        List<String> pageTypes
 ) {
     static final int DEFAULT_SIZE = 20;
     static final int MAX_SIZE = 100;
@@ -91,6 +93,23 @@ public record SearchInput(
         return sort == null ? SearchSort.RELEVANCE : sort;
     }
 
+    public Set<com.platform.wikibackend.domain.PageType> requestedPageTypes() {
+        if (pageTypes == null || pageTypes.isEmpty()) return Set.of();
+        Set<com.platform.wikibackend.domain.PageType> out = new LinkedHashSet<>();
+        for (String raw : pageTypes) {
+            try {
+                out.add(com.platform.wikibackend.domain.PageType.valueOf(raw.trim().toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException | NullPointerException e) {
+                throw new IllegalArgumentException("pageTypes는 PAGE·FOLDER·BLOG 중에서 고르세요: " + raw);
+            }
+        }
+        return Set.copyOf(out);
+    }
+
+    /**
+     * 초안 포함 여부. 기본(false)은 게시된 문서만 찾는다. true면 초안도 후보지만, 초안 노출 정책(2026-10-18)에
+     * 따라 볼 수 있는 초안(내가 쓴 것, 관리자면 스페이스의 초안)만 결과에 남는다 — 권한을 넓히는 스위치가 아니다.
+     */
     public boolean draftsIncluded() {
         return Boolean.TRUE.equals(includeDrafts);
     }

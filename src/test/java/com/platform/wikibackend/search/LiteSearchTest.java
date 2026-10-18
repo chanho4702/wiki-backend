@@ -509,4 +509,22 @@ class LiteSearchTest {
                         .with(asUser(USER, "u")))
                 .andExpect(jsonPath("$.length()").value(1));
     }
+
+    // ── 문서 종류 필터(pageTypes, 프론트 계약 2026-10-18) ──
+
+    @Test
+    void pageTypes로_문서_종류를_거른다() throws Exception {
+        pages.save(Page.of(space.getId(), null, "종류검색 문서", "본문", USER));
+        Page blog = pages.save(Page.of(space.getId(), null, "종류검색 블로그", "본문", USER,
+                com.platform.wikibackend.domain.PageType.BLOG, com.platform.wikibackend.domain.PageStatus.PUBLISHED));
+
+        Map<String, Object> in = input("종류검색");
+        in.put("pageTypes", List.of("BLOG"));
+        search(USER, in)
+                .andExpect(jsonPath("$.data.search.total").value(1))
+                .andExpect(jsonPath("$.data.search.hits[0].id").value(String.valueOf(blog.getId())));
+        in.put("pageTypes", List.of("PAGE", "BLOG"));
+        search(USER, in).andExpect(jsonPath("$.data.search.total").value(2));
+        search(USER, input("종류검색")).andExpect(jsonPath("$.data.search.total").value(2));
+    }
 }

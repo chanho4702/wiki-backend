@@ -43,6 +43,7 @@ public interface PageSearchRepository extends Repository<Page, Long> {
               and (cast(:before as java.time.Instant) is null or p.updatedAt <= :before)
               and (:anyLabel = true
                    or exists (select 1 from PageLabel l where l.pageId = p.id and l.name in :labels))
+              and (:anyType = true or p.type in :pageTypes)
               and (:noHidden = true or p.id not in :hiddenIds)
             """;
 
@@ -65,6 +66,8 @@ public interface PageSearchRepository extends Repository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("anyType") boolean anyType,
+            @Param("pageTypes") Collection<com.platform.wikibackend.domain.PageType> pageTypes,
             @Param("noHidden") boolean noHidden,
             @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
@@ -81,6 +84,8 @@ public interface PageSearchRepository extends Repository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("anyType") boolean anyType,
+            @Param("pageTypes") Collection<com.platform.wikibackend.domain.PageType> pageTypes,
             @Param("noHidden") boolean noHidden,
             @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
@@ -97,6 +102,8 @@ public interface PageSearchRepository extends Repository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("anyType") boolean anyType,
+            @Param("pageTypes") Collection<com.platform.wikibackend.domain.PageType> pageTypes,
             @Param("noHidden") boolean noHidden,
             @Param("hiddenIds") Collection<Long> hiddenIds,
             org.springframework.data.domain.Limit limit);
@@ -113,6 +120,8 @@ public interface PageSearchRepository extends Repository<Page, Long> {
             @Param("before") java.time.Instant before,
             @Param("anyLabel") boolean anyLabel,
             @Param("labels") Collection<String> labels,
+            @Param("anyType") boolean anyType,
+            @Param("pageTypes") Collection<com.platform.wikibackend.domain.PageType> pageTypes,
             @Param("noHidden") boolean noHidden,
             @Param("hiddenIds") Collection<Long> hiddenIds);
 

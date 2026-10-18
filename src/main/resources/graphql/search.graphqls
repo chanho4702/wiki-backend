@@ -15,8 +15,10 @@ input SearchInput {
   "접근 가능한 스페이스와 교집합을 취한다 — 여기로 권한을 넓힐 수는 없다"
   spaceIds: [ID!]
   docTypes: [DocType!]
-  "기본은 게시된 문서만"
+  "기본은 게시된 문서만. true여도 볼 수 있는 초안(내 초안, 관리자면 스페이스 초안)만 나온다"
   includeDrafts: Boolean = false
+  "문서 종류(PAGE·FOLDER·BLOG). 비우면 전부. PAGE 결과에만 걸린다(첨부는 docTypes로 거른다)"
+  pageTypes: [PageType!]
   "마지막 수정자 — 첨부에는 없는 필드라 페이지만 걸린다"
   authorIds: [ID!]
   "이 시각 이후 수정된 문서만(ISO-8601 시각 또는 날짜)"
