@@ -229,4 +229,64 @@ class PageCopyTest {
                 .andReturn().getResponse().getContentAsString();
         return JSON.readTree(res).get("id").asLong();
     }
+
+    // ── F-03: 복사 대상 스페이스·위치 ──
+
+    @Test
+    void 다른_스페이스의_문서_아래로_하위까지_복사한다() throws Exception {
+        long other = spaces.save(Space.of("cpt" + (System.nanoTime() % 100000), "대상", null, EDITOR)).getId();
+        perms.allow(EDITOR, other, WikiAction.VIEW);
+        perms.allow(EDITOR, other, WikiAction.EDIT);
+        Page target = pages.save(Page.of(other, null, "대상 부모", "본문", EDITOR));
+        Page root = pages.save(Page.of(spaceId, null, "원본", "본문", EDITOR));
+        Page child = pages.save(Page.of(spaceId, root.getId(), "원본 하위", "본문", EDITOR));
+
+        long copyId = copy(root.getId(), "{\"includeDescendants\":true,\"targetSpaceId\":" + other
+                + ",\"targetParentId\":" + target.getId() + "}");
+
+        Page copied = pages.findById(copyId).orElseThrow();
+        assertThat(copied.getSpaceId()).isEqualTo(other);
+        assertThat(copied.getParentId()).isEqualTo(target.getId());
+        assertThat(pages.findByParentId(copyId)).singleElement()
+                .satisfies(p -> assertThat(p.getSpaceId()).isEqualTo(other));
+        // 원본은 그대로
+        assertThat(pages.findById(root.getId()).orElseThrow().getSpaceId()).isEqualTo(spaceId);
+        assertThat(pages.findById(child.getId()).orElseThrow().getParentId()).isEqualTo(root.getId());
+    }
+
+    @Test
+    void 대상_스페이스에_편집_권한이_없으면_403이고_아무것도_생기지_않는다() throws Exception {
+        long other = spaces.save(Space.of("cpn" + (System.nanoTime() % 100000), "남의", null, VIEWER)).getId();
+        perms.allow(EDITOR, other, WikiAction.VIEW);
+        Page root = pages.save(Page.of(spaceId, null, "원본", "본문", EDITOR));
+        long before = pages.count();
+
+        mvc.perform(post("/api/wiki/pages/{id}/copy", root.getId()).with(asUser(EDITOR, "Alice"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"targetSpaceId\":" + other + "}"))
+                .andExpect(status().isForbidden());
+        assertThat(pages.count()).isEqualTo(before);
+    }
+
+    @Test
+    void 대상_부모가_대상_스페이스에_없으면_400이다() throws Exception {
+        Page root = pages.save(Page.of(spaceId, null, "원본", "본문", EDITOR));
+        long other = spaces.save(Space.of("cpx" + (System.nanoTime() % 100000), "대상", null, EDITOR)).getId();
+        perms.allow(EDITOR, other, WikiAction.EDIT);
+
+        mvc.perform(post("/api/wiki/pages/{id}/copy", root.getId()).with(asUser(EDITOR, "Alice"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"targetSpaceId\":" + other + ",\"targetParentId\":" + root.getId() + "}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 위치를_고르지_않으면_원본_옆에_생긴다() throws Exception {
+        Page parent = pages.save(Page.of(spaceId, null, "부모", "본문", EDITOR));
+        Page source = pages.save(Page.of(spaceId, parent.getId(), "원본", "본문", EDITOR));
+
+        long copyId = copy(source.getId(), "{}");
+
+        assertThat(pages.findById(copyId).orElseThrow().getParentId()).isEqualTo(parent.getId());
+    }
 }

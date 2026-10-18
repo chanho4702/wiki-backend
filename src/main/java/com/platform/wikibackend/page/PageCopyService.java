@@ -9,6 +9,7 @@ import com.platform.wikibackend.domain.Attachment;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.domain.PageRevision;
+import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
 import com.platform.wikibackend.label.LabelService;
@@ -79,8 +80,20 @@ public class PageCopyService {
         Page source = structure.getOwned(pageId);
         spaces.require(userId, source.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, source);
-        // 사본은 원본의 부모 아래 생긴다 — 그 부모가 보관 중이면 보관 상자에 새 문서가 들어간다
-        if (source.getParentId() != null) pages.findById(source.getParentId()).ifPresent(PageWriteGuard::requireWritableParent);
+        // 대상 위치(F-03) — 생략하면 원본 옆. 대상 스페이스 EDIT와 대상 부모(같은 스페이스·편집 가능·보관 아님)를 본다.
+        long targetSpaceId = req.targetSpaceId() != null ? req.targetSpaceId() : source.getSpaceId();
+        Long targetParentId = req.locationGiven() ? req.targetParentId() : source.getParentId();
+        if (req.locationGiven()) {
+            spaces.require(userId, targetSpaceId, WikiAction.EDIT);
+            if (source.getType() == PageType.BLOG && targetParentId != null) {
+                throw new IllegalArgumentException("블로그 글은 트리에 넣을 수 없습니다");
+            }
+            structure.validateParent(targetSpaceId, targetParentId, null);
+            structure.requireEditableTargetParent(userId, targetSpaceId, targetParentId);
+        } else if (source.getParentId() != null) {
+            // 사본은 원본의 부모 아래 생긴다 — 그 부모가 보관 중이면 보관 상자에 새 문서가 들어간다
+            pages.findById(source.getParentId()).ifPresent(PageWriteGuard::requireWritableParent);
+        }
 
         List<Page> sources = new ArrayList<>(List.of(source));
         if (req.descendantsIncluded()) sources.addAll(copyableDescendants(userId, source));
@@ -90,15 +103,15 @@ public class PageCopyService {
                             + sources.size() + "개)");
         }
 
-        long rootSortOrder = pages.findMaxSortOrder(source.getSpaceId(), source.getParentId()) + 1;
+        long rootSortOrder = pages.findMaxSortOrder(targetSpaceId, targetParentId) + 1;
         Map<Long, Long> newIdOf = new HashMap<>();
         Page copiedRoot = null;
         for (Page original : sources) {
             boolean isRoot = original.getId().equals(source.getId());
             // 사본 표시는 뿌리에만 붙인다 — 하위까지 제목을 바꾸면 문서 안의 `[[제목]]`이 전부 어긋난다.
             String title = isRoot ? copyTitle(original.getTitle()) : original.getTitle();
-            Long parentId = isRoot ? original.getParentId() : newIdOf.get(original.getParentId());
-            Page saved = pages.save(Page.of(original.getSpaceId(), parentId, title,
+            Long parentId = isRoot ? targetParentId : newIdOf.get(original.getParentId());
+            Page saved = pages.save(Page.of(targetSpaceId, parentId, title,
                     original.getContent(), userId, original.getType(), original.getStatus()));
             saved.resequence(isRoot ? rootSortOrder : original.getSortOrder());
             newIdOf.put(original.getId(), saved.getId());

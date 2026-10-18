@@ -78,7 +78,7 @@ public class PageController {
     @PostMapping("/api/wiki/pages/{id}/copy")
     @ResponseStatus(HttpStatus.CREATED)
     public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
-                             @RequestBody(required = false) com.platform.wikibackend.page.dto.CopyRequest req) {
+                             @Valid @RequestBody(required = false) com.platform.wikibackend.page.dto.CopyRequest req) {
         return copies.copy(userId(jwt), id,
                 req == null ? new com.platform.wikibackend.page.dto.CopyRequest(null, null) : req);
     }
