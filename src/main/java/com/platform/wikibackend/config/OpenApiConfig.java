@@ -46,6 +46,13 @@ import java.util.Map;
 @Configuration
 public class OpenApiConfig {
 
+    static {
+        // common-starter 0.17.0의 /error 컨트롤러(플랫폼 오류 본문)는 공개 API가 아니다 — 스펙에서 숨긴다
+        // (alm·migration과 같은 처리).
+        org.springdoc.core.utils.SpringDocUtils.getConfig()
+                .addHiddenRestControllers(com.platform.common.web.PlatformErrorController.class);
+    }
+
     /** common-starter의 오류 계약 — 어떤 실패든 바디는 이 모양 하나뿐이다. */
     static final String ERROR_SCHEMA = "PlatformError";
     private static final String ERROR_REF = "#/components/schemas/" + ERROR_SCHEMA;
