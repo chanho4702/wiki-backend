@@ -2,6 +2,7 @@ package com.platform.wikibackend.repository;
 
 import com.platform.wikibackend.domain.PageRestriction;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -10,7 +11,14 @@ import java.util.List;
 public interface PageRestrictionRepository extends JpaRepository<PageRestriction, Long> {
     List<PageRestriction> findByPageId(Long pageId);
 
-    void deleteByPageId(Long pageId);
+    /**
+     * 단일 bulk DELETE(즉시 실행). 파생 deleteBy는 행을 읽어 지우기를 flush까지 미루고, Hibernate는
+     * flush 때 INSERT를 DELETE보다 먼저 보낸다 — "지우고 다시 넣기" 교체가 같은 키를 다시 넣으면
+     * 운영 PG의 유니크 제약에 걸렸다(H2 create-drop엔 제약이 없어 테스트가 못 봤다, 2026-10-18).
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from PageRestriction r where r.pageId = :pageId")
+    int deleteByPageId(@Param("pageId") Long pageId);
 
     /** 조상 체인 스코프 조회 — 스페이스 전량을 읽지 않는 판정 경로가 쓴다(2026-08-28 규모 개선). */
     List<PageRestriction> findByPageIdIn(java.util.Collection<Long> pageIds);

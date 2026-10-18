@@ -90,6 +90,46 @@ class PostgresWritePathTest extends PostgresTestSupport {
         assertThat(count("page_task", "page_id", page)).isEqualTo(2); // 일반 저장도 작업 표를 다시 만든다(W-01)
     }
 
+    /**
+     * "지우고 다시 넣기"로 파생 표를 교체하는 경로들. Hibernate는 flush 때 INSERT를 DELETE보다 먼저
+     * 보내므로, 같은 키가 남는 교체는 유니크 제약에 걸린다 — H2(create-drop)에는 그 제약이 없어 안 보였다.
+     */
+    @Test
+    void 작업_토글은_같은_줄_번호의_작업_행을_다시_만든다() throws Exception {
+        long page = create("page", null, "토글", "- [ ] 첫 작업\\n- [ ] 둘째 작업");
+        mvc.perform(put("/api/wiki/pages/" + page + "/tasks/1").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"done\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.done").value(true));
+        assertThat(count("page_task", "page_id", page)).isEqualTo(2);
+    }
+
+    @Test
+    void 제한_교체는_기존_주체를_남긴_채_더할_수_있다() throws Exception {
+        long page = create("page", null, "제한", "본문");
+        restrict(page, "[{\"type\":\"USER\",\"id\":1}]");
+        restrict(page, "[{\"type\":\"USER\",\"id\":1},{\"type\":\"USER\",\"id\":2}]");
+        assertThat(count("page_restriction", "page_id", page)).isEqualTo(2);
+    }
+
+    @Test
+    void 스페이스_라벨_교체는_기존_라벨을_남긴_채_더할_수_있다() throws Exception {
+        spaceLabels("[\"운영\"]");
+        spaceLabels("[\"운영\",\"배포\"]");
+        assertThat(count("space_label", "space_id", space.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void 문서_라벨_교체도_같다() throws Exception {
+        long page = create("page", null, "라벨", "본문");
+        label(page, "운영");
+        mvc.perform(put("/api/wiki/pages/" + page + "/labels").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"labels\":[\"운영\",\"배포\"]}"))
+                .andExpect(status().isOk());
+        assertThat(count("page_label", "page_id", page)).isEqualTo(2);
+    }
+
     @Test
     void 휴지통_삭제와_영구_삭제가_딸린_행까지_지운다() throws Exception {
         long parent = create("page", null, "부모", "- [ ] 할 일 [[자식]]");
@@ -165,6 +205,20 @@ class PostgresWritePathTest extends PostgresTestSupport {
         mvc.perform(put("/api/wiki/pages/" + pageId + "/labels").with(asUser(ALICE, "앨리스"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"labels\":[\"" + name + "\"]}"))
+                .andExpect(status().isOk());
+    }
+
+    void restrict(long pageId, String viewPrincipals) throws Exception {
+        mvc.perform(put("/api/wiki/pages/" + pageId + "/restrictions").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"view\":" + viewPrincipals + ",\"edit\":[]}"))
+                .andExpect(status().isOk());
+    }
+
+    void spaceLabels(String labels) throws Exception {
+        mvc.perform(put("/api/wiki/spaces/" + space.getId() + "/labels").with(asUser(ALICE, "앨리스"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"labels\":" + labels + "}"))
                 .andExpect(status().isOk());
     }
 
