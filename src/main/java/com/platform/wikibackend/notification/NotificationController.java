@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import com.platform.wikibackend.domain.Notification;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import static com.platform.wikibackend.space.SpaceController.userId;
@@ -25,10 +27,32 @@ public class NotificationController {
 
     @Operation(summary = "내 알림 목록을 조회한다 — 이때 메일 주소를 설정에 기억해 둔다")
     @GetMapping("/api/wiki/notifications")
-    public NotificationListResponse list(@AuthenticationPrincipal Jwt jwt) {
+    public NotificationListResponse list(@AuthenticationPrincipal Jwt jwt,
+                                         @Parameter(description = "이전 쪽 응답의 nextBefore — 그보다 오래된 알림부터")
+                                         @RequestParam(required = false) Long before,
+                                         @Parameter(description = "한 쪽 건수(기본 30, 최대 100)")
+                                         @RequestParam(required = false) Integer limit,
+                                         @Parameter(description = "종류 필터(여러 번 또는 쉼표): MENTIONED, PAGE_UPDATED, COMMENT, SHARED, PAGE_PUBLISHED")
+                                         @RequestParam(name = "type", required = false) List<String> types) {
         // 알림함을 여는 순간이 주소를 알게 되는 가장 이른 때다 — 설정을 연 적 없는 사용자도 메일을 받게.
         prefs.remember(userId(jwt), jwt.getClaimAsString("email"));
-        return service.list(userId(jwt));
+        return service.list(userId(jwt), before, limit, parseTypes(types));
+    }
+
+    private static List<Notification.Type> parseTypes(List<String> raw) {
+        if (raw == null) return List.of();
+        List<Notification.Type> out = new java.util.ArrayList<>();
+        for (String value : raw) {
+            for (String part : value.split(",")) {
+                if (part.isBlank()) continue;
+                try {
+                    out.add(Notification.Type.valueOf(part.trim().toUpperCase(java.util.Locale.ROOT)));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("알 수 없는 알림 종류입니다: " + part.trim());
+                }
+            }
+        }
+        return out;
     }
 
     /** 알림 설정(W23) — 이메일 채널 스위치. */

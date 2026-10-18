@@ -53,6 +53,10 @@ public class NotificationPref {
     @Column(name = "on_shared", nullable = false)
     private boolean onShared = true;
 
+    /** 새 문서 게시(V43) — 예전에는 on_page_updated를 함께 썼다. 마이그레이션이 그 값을 이어받았다. */
+    @Column(name = "on_page_published", nullable = false)
+    private boolean onPagePublished = true;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 
@@ -74,6 +78,12 @@ public class NotificationPref {
 
     public void update(boolean emailEnabled, EmailMode mode, boolean onMentioned, boolean onPageUpdated,
                        boolean onComment, boolean onShared) {
+        update(emailEnabled, mode, onMentioned, onPageUpdated, onComment, onShared, onPageUpdated);
+    }
+
+    public void update(boolean emailEnabled, EmailMode mode, boolean onMentioned, boolean onPageUpdated,
+                       boolean onComment, boolean onShared, boolean onPagePublished) {
+        this.onPagePublished = onPagePublished;
         this.emailEnabled = emailEnabled;
         this.emailMode = mode == null ? EmailMode.IMMEDIATE : mode;
         this.onMentioned = onMentioned;
@@ -91,9 +101,8 @@ public class NotificationPref {
             case PAGE_UPDATED -> onPageUpdated;
             case COMMENT -> onComment;
             case SHARED -> onShared;
-            // 새 문서 게시(W27-4)는 "문서 업데이트" 스위치를 함께 쓴다. 알림 종류마다 스위치를
-            // 늘리면 설정 화면이 켜고 끌 것을 고르는 화면이 아니라 목록이 된다.
-            case PAGE_PUBLISHED -> onPageUpdated;
+            // 새 문서 게시(W27-4)는 V43부터 따로 끈다(F-05) — "새 문서만 끄고 수정 알림은 받기".
+            case PAGE_PUBLISHED -> onPagePublished;
         };
     }
 

@@ -35,7 +35,8 @@ public class NotificationPrefService {
 
     public NotificationPrefResponse update(long userId, String jwtEmail, NotificationPrefUpdate req) {
         NotificationPref pref = ensure(userId, jwtEmail);
-        pref.update(req.emailEnabled(), req.emailMode(), req.mentioned(), req.pageUpdated(), req.comment(), req.shared());
+        pref.update(req.emailEnabled(), req.emailMode(), req.mentioned(), req.pageUpdated(), req.comment(), req.shared(),
+                req.pagePublishedOrInherited());
         return NotificationPrefResponse.from(pref, email.enabled());
     }
 

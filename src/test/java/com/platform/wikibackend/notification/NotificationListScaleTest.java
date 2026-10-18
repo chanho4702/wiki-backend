@@ -83,8 +83,9 @@ class NotificationListScaleTest {
     void 알림함은_표시할_한_쪽만_엔티티로_읽는다() throws Exception {
         unread(80);
 
-        // 표시용 30건만 엔티티다. 안 읽은 알림 전량(80)과 그 페이지(본문 포함 80)는 프로젝션·집계로 처리한다.
-        assertThat(entitiesForList()).isLessThanOrEqualTo(30);
+        // 표시용 한 쪽(30 + 다음 쪽 확인 1)만 엔티티다. 안 읽은 알림 전량(80)과 그 페이지(본문 포함 80)는
+        // 프로젝션·집계로 처리한다(수정 전 160).
+        assertThat(entitiesForList()).isLessThanOrEqualTo(31);
         mvc.perform(get("/api/wiki/notifications").with(asUser(ME, "Me")))
                 .andExpect(jsonPath("$.unreadCount").value(80))
                 .andExpect(jsonPath("$.items.length()").value(30));
@@ -102,6 +103,45 @@ class NotificationListScaleTest {
         mvc.perform(get("/api/wiki/notifications").with(asUser(ME, "Me")))
                 .andExpect(jsonPath("$.unreadCount").value(3))
                 .andExpect(jsonPath("$.items.length()").value(3));
+    }
+
+    // ── F-05: 전체 알림 화면 — 커서 쪽 넘김·종류 필터 ──
+
+    @Test
+    void 커서로_이전_알림을_끝까지_읽는다() throws Exception {
+        unread(45);
+        String first = mvc.perform(get("/api/wiki/notifications").param("limit", "20").with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.items.length()").value(20))
+                .andExpect(jsonPath("$.nextBefore").isNumber())
+                .andReturn().getResponse().getContentAsString();
+        long next = com.jayway.jsonpath.JsonPath.parse(first).read("$.nextBefore", Long.class);
+        String second = mvc.perform(get("/api/wiki/notifications").param("limit", "20")
+                        .param("before", String.valueOf(next)).with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.items.length()").value(20))
+                .andReturn().getResponse().getContentAsString();
+        long next2 = com.jayway.jsonpath.JsonPath.parse(second).read("$.nextBefore", Long.class);
+        mvc.perform(get("/api/wiki/notifications").param("limit", "20")
+                        .param("before", String.valueOf(next2)).with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.items.length()").value(5))
+                .andExpect(jsonPath("$.nextBefore").doesNotExist());
+        // 겹침 없음: 첫 쪽 마지막 id > 둘째 쪽 첫 id
+        long lastOfFirst = com.jayway.jsonpath.JsonPath.parse(first).read("$.items[19].id", Long.class);
+        long firstOfSecond = com.jayway.jsonpath.JsonPath.parse(second).read("$.items[0].id", Long.class);
+        assertThat(firstOfSecond).isLessThan(lastOfFirst);
+    }
+
+    @Test
+    void 종류_필터는_그_종류만_준다() throws Exception {
+        unread(3);
+        Page page = pages.save(Page.of(space.getId(), null, "멘션 문서", "본문", ACTOR));
+        notifications.save(Notification.of(ME, Notification.Type.MENTIONED, page.getId(), ACTOR));
+
+        mvc.perform(get("/api/wiki/notifications").param("type", "MENTIONED").with(asUser(ME, "Me")))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].type").value("MENTIONED"))
+                .andExpect(jsonPath("$.unreadCount").value(4)); // 배지는 필터와 무관한 전체 수
+        mvc.perform(get("/api/wiki/notifications").param("type", "nope").with(asUser(ME, "Me")))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

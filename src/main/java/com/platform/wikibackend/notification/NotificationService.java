@@ -203,35 +203,77 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public NotificationListResponse list(long userId) {
-        // 표시할 한 쪽(30건)만 엔티티로 읽는다. 안 읽은 건수는 페이지별 집계로, 페이지는 (id, 스페이스, 제목)
-        // 프로젝션으로 — 알림이 쌓인 사용자의 폴링마다 본문까지 전량을 읽던 비용을 없앴다(감사 W-11).
-        List<Notification> rows = notifications.findByUserIdOrderByIdDesc(userId, PageRequest.of(0, PAGE_SIZE));
-        List<NotificationRepository.PageCount> unreadByPage = notifications.countUnreadByPage(userId);
-        // 휴지통에 있는 페이지는 프로젝션에서 빠져(@SQLRestriction) 아래 visible 필터에서 함께 빠진다.
-        // 영구 삭제 시엔 FK cascade(또는 PageDataPurger)로 알림 행 자체가 사라진다.
-        Set<Long> pageIds = new HashSet<>();
-        rows.forEach(n -> pageIds.add(n.getPageId()));
-        unreadByPage.forEach(c -> pageIds.add(c.getPageId()));
-        Map<Long, PageRepository.IdSpaceTitle> byId = pageIds.isEmpty() ? Map.of()
-                : pages.findIdSpaceTitleByIds(pageIds).stream()
-                        .collect(Collectors.toMap(PageRepository.IdSpaceTitle::getId, p -> p, (a, b) -> a));
-        Map<Long, Long> spaceOf = new java.util.HashMap<>();
-        byId.forEach((id, p) -> spaceOf.put(id, p.getSpaceId()));
-        // 제한 인덱스와 space 권한은 각각 묶음·스페이스당 한 번(요약 메일과 같은 판정).
-        Set<Long> visibleIds = visibility.visibleIds(userId, spaceOf);
+        return list(userId, null, null, null);
+    }
 
-        List<NotificationResponse> items = rows.stream()
-                .filter(n -> visibleIds.contains(n.getPageId()))
-                .map(n -> {
-                    PageRepository.IdSpaceTitle page = byId.get(n.getPageId());
-                    return NotificationResponse.from(n, page.getSpaceId(), page.getTitle());
-                })
-                .toList();
+    /** 한 쪽 상한 — 전체 알림 화면의 "더 보기" 한 번. */
+    public static final int LIST_MAX = 100;
+    /** 볼 수 없는 알림을 건너뛰며 더 읽을 총량 상한. */
+    static final int LIST_SCAN_LIMIT = 2_000;
+
+    /**
+     * 알림 목록(F-05). 표시할 쪽만 엔티티로 읽는다. 안 읽은 건수는 페이지별 집계로, 페이지는 (id, 스페이스, 제목)
+     * 프로젝션으로 판정한다 — 알림이 쌓인 사용자의 폴링마다 본문까지 전량을 읽던 비용을 없앴다(감사 W-11).
+     *
+     * before(이전 쪽 nextBefore)·limit(기본 30, 최대 100)·types(종류 필터, 비우면 전부). 지금 볼 수 없는 문서의
+     * 알림은 건너뛰고 쪽을 채운다. unreadCount는 필터와 무관한 전체 안 읽은 수(벨 배지와 같은 값)다.
+     */
+    @Transactional(readOnly = true)
+    public NotificationListResponse list(long userId, Long before, Integer limit,
+                                         Collection<Notification.Type> types) {
+        int size = limit == null ? PAGE_SIZE : Math.max(1, Math.min(limit, LIST_MAX));
+        Collection<Notification.Type> kinds = types == null || types.isEmpty()
+                ? List.of(Notification.Type.values()) : types;
+
+        List<NotificationResponse> items = new java.util.ArrayList<>();
+        Long cursor = before;
+        boolean more = true;
+        int scanned = 0;
+        while (scanned < LIST_SCAN_LIMIT && items.size() < size && more) {
+            int batch = size + 1;
+            List<Notification> rows = cursor == null
+                    ? notifications.findPage(userId, kinds, org.springframework.data.domain.Limit.of(batch))
+                    : notifications.findPageBefore(userId, kinds, cursor, org.springframework.data.domain.Limit.of(batch));
+            scanned += rows.size();
+            more = rows.size() == batch;
+            Map<Long, PageRepository.IdSpaceTitle> byId = pagesOf(rows.stream().map(Notification::getPageId).toList());
+            Set<Long> visibleIds = visibility.visibleIds(userId, spaceOf(byId));
+            for (int k = 0; k < rows.size(); k++) {
+                Notification n = rows.get(k);
+                cursor = n.getId();
+                if (!visibleIds.contains(n.getPageId())) continue;
+                PageRepository.IdSpaceTitle page = byId.get(n.getPageId());
+                items.add(NotificationResponse.from(n, page.getSpaceId(), page.getTitle()));
+                if (items.size() == size) {
+                    if (k < rows.size() - 1) more = true; // 이번 묶음에 남은 행이 있다
+                    break;
+                }
+            }
+        }
+        Long next = more && !items.isEmpty() ? items.get(items.size() - 1).id() : null;
+
+        List<NotificationRepository.PageCount> unreadByPage = notifications.countUnreadByPage(userId);
+        Map<Long, PageRepository.IdSpaceTitle> unreadPages =
+                pagesOf(unreadByPage.stream().map(NotificationRepository.PageCount::getPageId).toList());
+        Set<Long> unreadVisible = visibility.visibleIds(userId, spaceOf(unreadPages));
         long unreadCount = unreadByPage.stream()
-                .filter(c -> visibleIds.contains(c.getPageId()))
+                .filter(c -> unreadVisible.contains(c.getPageId()))
                 .mapToLong(NotificationRepository.PageCount::getCount)
                 .sum();
-        return new NotificationListResponse(unreadCount, items);
+        return new NotificationListResponse(unreadCount, items, next);
+    }
+
+    /** 휴지통 페이지는 프로젝션에서 빠진다(@SQLRestriction) — 그 알림은 visible 판정에서 함께 빠진다. */
+    private Map<Long, PageRepository.IdSpaceTitle> pagesOf(Collection<Long> ids) {
+        if (ids.isEmpty()) return Map.of();
+        return pages.findIdSpaceTitleByIds(new HashSet<>(ids)).stream()
+                .collect(Collectors.toMap(PageRepository.IdSpaceTitle::getId, p -> p, (a, b) -> a));
+    }
+
+    private static Map<Long, Long> spaceOf(Map<Long, PageRepository.IdSpaceTitle> byId) {
+        Map<Long, Long> out = new java.util.HashMap<>();
+        byId.forEach((id, p) -> out.put(id, p.getSpaceId()));
+        return out;
     }
 
     /** 한 페이지의 수신자 판정 — space VIEW는 사용자별(gRPC 캐시), 페이지 제한·초안은 공유 인덱스. 지연 생성. */

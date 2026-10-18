@@ -202,6 +202,33 @@ class EmailNotificationTest {
         verify(orgMail, after(500).never()).send(anyList(), any(), any());
     }
 
+    // ── F-05: "새 문서" 메일 설정 분리 ──
+
+    @Test
+    void 새_문서_설정은_따로_끄고_보내지_않으면_문서_업데이트를_따른다() throws Exception {
+        mvc.perform(get("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob")))
+                .andExpect(jsonPath("$.pagePublished").value(true));
+        // 새 문서만 끈다
+        mvc.perform(put("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true,\"mentioned\":true,\"pageUpdated\":true,\"comment\":true,\"shared\":true,\"pagePublished\":false}"))
+                .andExpect(jsonPath("$.pagePublished").value(false))
+                .andExpect(jsonPath("$.pageUpdated").value(true));
+        var pref = prefs.findById(BOB).orElseThrow();
+        assertThat(pref.wants(com.platform.wikibackend.domain.Notification.Type.PAGE_PUBLISHED)).isFalse();
+        assertThat(pref.wants(com.platform.wikibackend.domain.Notification.Type.PAGE_UPDATED)).isTrue();
+
+        // 구 화면(필드 없음)은 예전 의미 — 문서 업데이트 스위치를 따른다
+        mvc.perform(put("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true,\"mentioned\":true,\"pageUpdated\":false,\"comment\":true,\"shared\":true}"))
+                .andExpect(jsonPath("$.pagePublished").value(false));
+        mvc.perform(put("/api/wiki/notifications/prefs").with(asUser(BOB, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true,\"mentioned\":true,\"pageUpdated\":true,\"comment\":true,\"shared\":true}"))
+                .andExpect(jsonPath("$.pagePublished").value(true));
+    }
+
     // ── W-04: 요약 메일은 발송 시점 권한으로 다시 거른다 ──
 
     private void bobDaily() throws Exception {

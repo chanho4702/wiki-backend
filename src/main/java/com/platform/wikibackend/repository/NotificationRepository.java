@@ -9,6 +9,21 @@ import java.util.Optional;
 
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
     List<Notification> findByUserIdOrderByIdDesc(Long userId, Pageable pageable);
+
+    /** 전체 알림 화면(F-05) — 최신순 첫 쪽, 종류 필터. 커서는 별도 질의(null 파라미터 타입 추론을 피한다). */
+    @org.springframework.data.jpa.repository.Query(
+            "select n from Notification n where n.userId = :userId and n.type in :types order by n.id desc")
+    List<Notification> findPage(@org.springframework.data.repository.query.Param("userId") long userId,
+                                @org.springframework.data.repository.query.Param("types") java.util.Collection<Notification.Type> types,
+                                org.springframework.data.domain.Limit limit);
+
+    /** 다음 쪽 — id 커서(이 id보다 오래된 것). */
+    @org.springframework.data.jpa.repository.Query(
+            "select n from Notification n where n.userId = :userId and n.type in :types and n.id < :before order by n.id desc")
+    List<Notification> findPageBefore(@org.springframework.data.repository.query.Param("userId") long userId,
+                                      @org.springframework.data.repository.query.Param("types") java.util.Collection<Notification.Type> types,
+                                      @org.springframework.data.repository.query.Param("before") long before,
+                                      org.springframework.data.domain.Limit limit);
     long countByUserIdAndReadAtIsNull(Long userId);
     Optional<Notification> findFirstByUserIdAndPageIdAndTypeAndReadAtIsNull(
             Long userId, Long pageId, Notification.Type type);
