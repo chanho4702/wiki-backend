@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.platform.wikibackend.TestPages;
 import com.platform.wikibackend.attachment.AttachmentLifecycleStatus;
-import com.platform.wikibackend.config.InternalTokenFilter;
+import com.platform.wikibackend.config.InternalApi;
 import com.platform.wikibackend.domain.Attachment;
 import com.platform.wikibackend.domain.AuditAction;
 import com.platform.wikibackend.domain.AuditLog;
@@ -125,7 +125,7 @@ class WikiImportApiTest {
     @Test
     void 토큰이_없으면_403() throws Exception {
         mvc.perform(post(BASE + "/pages")
-                        .header(InternalTokenFilter.ACTOR_HEADER, ACTOR)
+                        .header(InternalApi.ACTOR_HEADER, ACTOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden());
@@ -134,11 +134,14 @@ class WikiImportApiTest {
     @Test
     void 잘못된_토큰이면_403() throws Exception {
         mvc.perform(post(BASE + "/pages")
-                        .header(InternalTokenFilter.TOKEN_HEADER, "틀린-토큰")
-                        .header(InternalTokenFilter.ACTOR_HEADER, ACTOR)
+                        .header(InternalApi.TOKEN_HEADER, "틀린-토큰")
+                        .header(InternalApi.ACTOR_HEADER, ACTOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                // 스타터 필터로 바꾼 뒤에도 거부 본문은 그대로(호출자 계약)
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.error").value(InternalApi.DENIED_MESSAGE));
     }
 
     @Test
@@ -149,19 +152,19 @@ class WikiImportApiTest {
     @Test
     void actor_헤더가_없으면_400() throws Exception {
         MvcResult result = mvc.perform(post(BASE + "/pages")
-                        .header(InternalTokenFilter.TOKEN_HEADER, TOKEN)
+                        .header(InternalApi.TOKEN_HEADER, TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createPageBody().toString()))
                 .andExpect(status().isBadRequest())
                 .andReturn();
-        assertThat(body(result).path("error").asText()).contains(InternalTokenFilter.ACTOR_HEADER);
+        assertThat(body(result).path("error").asText()).contains(InternalApi.ACTOR_HEADER);
     }
 
     @Test
     void actor_헤더가_숫자가_아니면_400() throws Exception {
         mvc.perform(post(BASE + "/pages")
-                        .header(InternalTokenFilter.TOKEN_HEADER, TOKEN)
-                        .header(InternalTokenFilter.ACTOR_HEADER, "관리자")
+                        .header(InternalApi.TOKEN_HEADER, TOKEN)
+                        .header(InternalApi.ACTOR_HEADER, "관리자")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createPageBody().toString()))
                 .andExpect(status().isBadRequest());
@@ -679,16 +682,16 @@ class WikiImportApiTest {
     }
 
     private static MockHttpServletRequestBuilder internal(MockHttpServletRequestBuilder request) {
-        request.header(InternalTokenFilter.TOKEN_HEADER, TOKEN);
-        request.header(InternalTokenFilter.ACTOR_HEADER, ACTOR);
+        request.header(InternalApi.TOKEN_HEADER, TOKEN);
+        request.header(InternalApi.ACTOR_HEADER, ACTOR);
         return request;
     }
 
     /** multipart 빌더는 MockHttpServletRequestBuilder를 상속하지 않는다(Spring 6.2) — 따로 받는다. */
     private static MockMultipartHttpServletRequestBuilder internal(
             MockMultipartHttpServletRequestBuilder request) {
-        request.header(InternalTokenFilter.TOKEN_HEADER, TOKEN);
-        request.header(InternalTokenFilter.ACTOR_HEADER, ACTOR);
+        request.header(InternalApi.TOKEN_HEADER, TOKEN);
+        request.header(InternalApi.ACTOR_HEADER, ACTOR);
         return request;
     }
 

@@ -1,6 +1,6 @@
 package com.platform.wikibackend.importapi;
 
-import com.platform.wikibackend.config.InternalTokenFilter;
+import com.platform.wikibackend.config.InternalApi;
 import com.platform.wikibackend.importapi.dto.WikiImportRequests;
 import com.platform.wikibackend.importapi.dto.WikiImportResponses;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -22,7 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
  *
  * `/api/wiki/**`가 아니라 `/internal/**`인 것이 계약의 일부다 — 게이트웨이와 nginx가 이 접두를
  * 라우팅하지 않아 브라우저에서는 존재하지 않는 경로이고, 인증도 사용자 JWT가 아니라 공유 비밀
- * ({@link InternalTokenFilter})이다. 공개 REST에 이관용 우회로를 뚫지 않기 위한 분리다.
+ * ({@link com.platform.common.security.InternalTokenFilter})이다. 공개 REST에 이관용 우회로를 뚫지 않기 위한 분리다.
  *
  * OpenAPI 문서에서는 감춘다(@Hidden) — 수집한 스펙은 프론트가 보는 공개 계약이고, 여기에
  * 내부 경로가 실리면 "쓸 수 있는 API"로 읽힌다.
@@ -36,14 +36,14 @@ public class WikiImportController {
     private final WikiImportService service;
 
     @PostMapping("/pages")
-    public WikiImportResponses.PageWritten createPage(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public WikiImportResponses.PageWritten createPage(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                               required = false) String actor,
                                                       @RequestBody WikiImportRequests.CreatePage req) {
         return service.createPage(actorId(actor), req);
     }
 
     @PutMapping("/pages/{pageId}")
-    public WikiImportResponses.PageWritten reimportPage(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public WikiImportResponses.PageWritten reimportPage(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                                 required = false) String actor,
                                                         @PathVariable long pageId,
                                                         @RequestBody WikiImportRequests.ReimportPage req) {
@@ -51,7 +51,7 @@ public class WikiImportController {
     }
 
     @PutMapping("/pages/{pageId}/content")
-    public WikiImportResponses.ContentWritten rewriteContent(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public WikiImportResponses.ContentWritten rewriteContent(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                                      required = false) String actor,
                                                              @PathVariable long pageId,
                                                              @RequestBody WikiImportRequests.RewriteContent req) {
@@ -59,7 +59,7 @@ public class WikiImportController {
     }
 
     @PutMapping("/pages/{pageId}/order")
-    public WikiImportResponses.OrderWritten reorder(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public WikiImportResponses.OrderWritten reorder(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                             required = false) String actor,
                                                     @PathVariable long pageId,
                                                     @RequestBody WikiImportRequests.Reorder req) {
@@ -73,7 +73,7 @@ public class WikiImportController {
      */
     @PostMapping("/pages/{pageId}/attachments")
     public WikiImportResponses.AttachmentRegistered registerAttachment(
-            @RequestHeader(name = InternalTokenFilter.ACTOR_HEADER, required = false) String actor,
+            @RequestHeader(name = InternalApi.ACTOR_HEADER, required = false) String actor,
             @PathVariable long pageId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(name = "filename", required = false) String filename,
@@ -86,7 +86,7 @@ public class WikiImportController {
     }
 
     @PostMapping("/pages/{pageId}/comments")
-    public WikiImportResponses.CommentWritten createComment(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public WikiImportResponses.CommentWritten createComment(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                                     required = false) String actor,
                                                             @PathVariable long pageId,
                                                             @RequestBody WikiImportRequests.CreateComment req) {
@@ -99,7 +99,7 @@ public class WikiImportController {
     }
 
     @PutMapping("/pages/{pageId}/restrictions")
-    public ResponseEntity<Void> replaceRestrictions(@RequestHeader(name = InternalTokenFilter.ACTOR_HEADER,
+    public ResponseEntity<Void> replaceRestrictions(@RequestHeader(name = InternalApi.ACTOR_HEADER,
                                                             required = false) String actor,
                                                     @PathVariable long pageId,
                                                     @RequestBody WikiImportRequests.ReplaceRestrictions req) {
@@ -130,12 +130,12 @@ public class WikiImportController {
      */
     private static long actorId(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new IllegalArgumentException(InternalTokenFilter.ACTOR_HEADER + " 헤더가 필요합니다");
+            throw new IllegalArgumentException(InternalApi.ACTOR_HEADER + " 헤더가 필요합니다");
         }
         try {
             return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(InternalTokenFilter.ACTOR_HEADER + " 헤더는 숫자여야 합니다: " + raw);
+            throw new IllegalArgumentException(InternalApi.ACTOR_HEADER + " 헤더는 숫자여야 합니다: " + raw);
         }
     }
 }

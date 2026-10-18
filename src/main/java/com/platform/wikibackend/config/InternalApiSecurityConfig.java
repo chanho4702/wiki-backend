@@ -47,8 +47,12 @@ public class InternalApiSecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 // 인가 판정 직전에 주체를 심는다(DocsPrincipalFilter와 같은 자리) — 빈으로 노출하면
                 // Boot가 서블릿 필터로 한 번 더 등록해 모든 경로에서 돈다.
-                .addFilterBefore(new InternalTokenFilter(internalToken), AuthorizationFilter.class)
-                .authorizeHttpRequests(auth -> auth.anyRequest().hasRole(InternalTokenFilter.ROLE))
+                // 토큰 검사는 스타터 필터(trim·fail-closed·상수시간 비교) — 틀리면 그 자리에서 403 {"error":…}.
+                // 통과한 요청에만 주체를 심는다. 둘 다 빈으로 노출하지 않는다(Boot가 서블릿 필터로 한 번 더 등록한다).
+                .addFilterBefore(new com.platform.common.security.InternalTokenFilter(
+                        InternalApi.TOKEN_HEADER, internalToken, InternalApi.DENIED_MESSAGE), AuthorizationFilter.class)
+                .addFilterBefore(new InternalPrincipalFilter(), AuthorizationFilter.class)
+                .authorizeHttpRequests(auth -> auth.anyRequest().hasRole(InternalApi.ROLE))
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(denied)
                         .accessDeniedHandler(denied));
@@ -62,7 +66,7 @@ public class InternalApiSecurityConfig {
     private static final class InternalDenialHandler implements AccessDeniedHandler, AuthenticationEntryPoint {
 
         private static final byte[] BODY =
-                "{\"error\":\"내부 전용 경로입니다.\"}".getBytes(StandardCharsets.UTF_8);
+                ("{\"error\":\"" + InternalApi.DENIED_MESSAGE + "\"}").getBytes(StandardCharsets.UTF_8);
 
         @Override
         public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException e)

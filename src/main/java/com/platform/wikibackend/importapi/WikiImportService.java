@@ -51,7 +51,7 @@ import java.util.Optional;
  *
  * 권한 검사가 없다. 부르는 쪽은 이미 org-service로 대상 스페이스 ADMIN을 확인한 잡 워커이고,
  * 이 경로는 게이트웨이·nginx가 라우팅하지 않는다. 문 자체는 공유 비밀
- * ({@link com.platform.wikibackend.config.InternalTokenFilter})이 지킨다.
+ * ({@link com.platform.wikibackend.config.InternalApi})이 지킨다.
  */
 @Service
 @RequiredArgsConstructor

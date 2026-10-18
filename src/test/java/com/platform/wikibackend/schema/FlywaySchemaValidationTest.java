@@ -6,7 +6,7 @@ import com.platform.wikibackend.domain.PageComment;
 import com.platform.wikibackend.domain.PageStatus;
 import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.domain.Space;
-import com.platform.wikibackend.config.InternalTokenFilter;
+import com.platform.wikibackend.config.InternalApi;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.wikibackend.repository.PageCommentRepository;
@@ -288,8 +288,8 @@ class FlywaySchemaValidationTest {
                 try {
                     start.await(5, TimeUnit.SECONDS);
                     responses.add(mvc.perform(post("/internal/wiki/import/pages")
-                                    .header(InternalTokenFilter.TOKEN_HEADER, "test-internal-token")
-                                    .header(InternalTokenFilter.ACTOR_HEADER, "1")
+                                    .header(InternalApi.TOKEN_HEADER, "test-internal-token")
+                                    .header(InternalApi.ACTOR_HEADER, "1")
                                     .contentType(MediaType.APPLICATION_JSON)
                                     .content(body))
                             .andReturn().getResponse().getContentAsString());

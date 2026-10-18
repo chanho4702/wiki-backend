@@ -1,6 +1,6 @@
 package com.platform.wikibackend.importapi;
 
-import com.platform.wikibackend.config.InternalTokenFilter;
+import com.platform.wikibackend.config.InternalApi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,14 +37,14 @@ class WikiImportTokenUnsetTest {
     @Test
     void 토큰_미설정이면_어떤_헤더로도_통과하지_못한다() throws Exception {
         mvc.perform(post("/internal/wiki/import/pages")
-                        .header(InternalTokenFilter.TOKEN_HEADER, "")
-                        .header(InternalTokenFilter.ACTOR_HEADER, 1)
+                        .header(InternalApi.TOKEN_HEADER, "")
+                        .header(InternalApi.ACTOR_HEADER, 1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/internal/wiki/import/pages")
-                        .header(InternalTokenFilter.TOKEN_HEADER, "아무거나")
-                        .header(InternalTokenFilter.ACTOR_HEADER, 1)
+                        .header(InternalApi.TOKEN_HEADER, "아무거나")
+                        .header(InternalApi.ACTOR_HEADER, 1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden());
