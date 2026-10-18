@@ -61,6 +61,10 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 페이지 | `GET /api/wiki/pages/{id}` | VIEW |
 | 페이지 트리(지연) | `GET /api/wiki/spaces/{spaceId}/pages/children·recent·search·lookup·by-ids`, `GET /api/wiki/pages/{id}/ancestors·descendants`, `GET /api/wiki/pages/paths` | VIEW |
 | 블로그 | `GET /api/wiki/spaces/{spaceId}/blog[?before=&limit=]` | VIEW |
+| 복사 | `POST /api/wiki/pages/{id}/copy` `{includeDescendants?, includeRestrictions?, targetSpaceId?, targetParentId?}` | 원본 EDIT + 대상 스페이스 EDIT |
+| 알림 | `GET /api/wiki/notifications[?before=&limit=&type=]` → `{unreadCount, items, nextBefore}` | 본인 |
+| 내 초안 | `GET /api/wiki/drafts[?limit=]` → `[{page, spaceId, spaceName}]` | 본인 |
+| 구독 목록 | `GET /api/wiki/watches`, `POST /api/wiki/watches/unwatch` | 본인 |
 | 페이지 | `PUT/DELETE /api/wiki/pages/{id}` | EDIT |
 | 공동 초안 확정 | `PUT /api/wiki/pages/{id}/collaboration-draft` | EDIT |
 | 게시 | `POST /api/wiki/pages/{id}/publish` | EDIT |
