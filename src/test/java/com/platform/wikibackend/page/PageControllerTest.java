@@ -249,10 +249,13 @@ class PageControllerTest {
         long id = com.jayway.jsonpath.JsonPath.parse(body).read("$.id", Long.class);
 
         // 트리가 폴더 아이콘·초안 배지를 그리려면 두 값이 목록에도 실려야 한다
-        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(VIEWER, "Bob")))
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(EDITOR, "Alice")))
                 .andExpect(jsonPath("$[0].id").value((int) id))
                 .andExpect(jsonPath("$[0].type").value("page"))
                 .andExpect(jsonPath("$[0].status").value("draft"));
+        // 초안 노출 정책(2026-10-18): 작성자·관리자가 아닌 열람자의 트리에는 없다(DraftVisibilityTest)
+        mvc.perform(get("/api/wiki/spaces/" + space.getId() + "/pages/children").with(asUser(VIEWER, "Bob")))
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     /** 폴더는 게시 개념이 없다(기획 P3) — draft로 만들어달라고 해도 published로 고정한다. */

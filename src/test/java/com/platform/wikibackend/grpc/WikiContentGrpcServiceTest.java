@@ -70,7 +70,7 @@ class WikiContentGrpcServiceTest {
 
         perms = new com.platform.wikibackend.permission.FakePermissionClient();
         effective = new com.platform.wikibackend.permission.EffectivePermissionService(
-                pages, restrictions, userId -> java.util.List.of());
+                pages, restrictions, userId -> java.util.List.of(), perms);
 
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name).directExecutor()
@@ -278,5 +278,25 @@ class WikiContentGrpcServiceTest {
                 .setUserId(1L).addPageIds(open.getId()).addPageIds(restricted.getId()).build());
         org.assertj.core.api.Assertions.assertThat(all.getVisiblePageIdsList())
                 .containsExactlyInAnyOrder(open.getId(), restricted.getId());
+    }
+
+    /** 초안 노출 정책(2026-10-18) — OpenSearch 모드의 검색 권한 필터도 같은 판정을 탄다. */
+    @org.junit.jupiter.api.Test
+    void filterVisiblePages는_남의_초안을_작성자와_관리자에게만_남긴다() {
+        perms.reset();
+        Space sp = spaces.save(Space.of("drafts", "초안", null, 1L));
+        Page draft = pages.save(Page.of(sp.getId(), null, "초안", "본문", 1L,
+                com.platform.wikibackend.domain.PageType.PAGE, com.platform.wikibackend.domain.PageStatus.DRAFT));
+        for (long u : new long[] {1L, 2L, 3L}) {
+            perms.allow(u, sp.getId(), com.platform.wikibackend.permission.WikiAction.VIEW);
+        }
+        perms.allow(3L, sp.getId(), com.platform.wikibackend.permission.WikiAction.ADMIN);
+
+        for (long[] c : new long[][] {{1L, 1L}, {2L, 0L}, {3L, 1L}}) {
+            var res = stub.filterVisiblePages(com.platform.proto.wiki.v1.FilterVisiblePagesRequest.newBuilder()
+                    .setUserId(c[0]).addPageIds(draft.getId()).build());
+            org.assertj.core.api.Assertions.assertThat(res.getVisiblePageIdsCount()).as("user " + c[0])
+                    .isEqualTo((int) c[1]);
+        }
     }
 }

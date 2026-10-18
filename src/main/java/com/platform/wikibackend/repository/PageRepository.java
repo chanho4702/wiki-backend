@@ -252,6 +252,30 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             """, nativeQuery = true)
     List<Long> findSpaceIdsWithForeignParents(@Param("spaceIds") Collection<Long> spaceIds);
 
+    /*
+     * ── 초안 노출 정책(2026-10-18 사용자 결정) ──
+     * 초안은 작성자 + 스페이스 관리자 + 전역 관리자에게만 보인다. 판정(EffectivePermissionService)이
+     * 조상 체인 위의 초안을 알아야 하므로 (id, 작성자, 스페이스)만 가볍게 읽는다. 휴지통 포함(네이티브).
+     */
+
+    /** 이 id들 중 초안인 것 — [id, created_by, space_id]. */
+    @Query(value = "select id, created_by, space_id from page where id in (:ids) and status = 'DRAFT'",
+            nativeQuery = true)
+    List<Object[]> findDraftOwners(@Param("ids") Collection<Long> ids);
+
+    /** 스페이스의 초안 전부 — [id, created_by, space_id]. 트리 필터·검색 숨김 집합용. */
+    @Query(value = "select id, created_by, space_id from page where space_id = :spaceId and status = 'DRAFT'",
+            nativeQuery = true)
+    List<Object[]> findDraftOwnersBySpaceId(@Param("spaceId") Long spaceId);
+
+    /** 이 사용자가 쓰지 않은 초안이 있는 스페이스 — 그 스페이스만 숨김 판정을 한다(없는 설치는 비용 0). */
+    @Query(value = """
+            select distinct space_id from page
+             where space_id in (:spaceIds) and status = 'DRAFT' and created_by <> :userId
+            """, nativeQuery = true)
+    List<Long> findSpaceIdsWithOthersDrafts(@Param("spaceIds") Collection<Long> spaceIds,
+                                            @Param("userId") long userId);
+
     /** 휴지통 포함 단건 조회. */
     @Query(value = "select * from page where id = :id", nativeQuery = true)
     Optional<Page> findAnyById(@Param("id") Long id);

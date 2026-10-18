@@ -34,6 +34,11 @@ import java.util.Set;
  * 그래서 페이지 한 장 여는 비용이 스페이스 크기에 비례했다.
  * 스페이스 전량이 정말 필요한 곳은 트리 필터(visiblePageIds) 하나뿐이라 거기만 남겼다.
  *
+ * 4. 초안(Page.status=DRAFT, 2026-10-18 사용자 결정): 작성자 + 스페이스 ADMIN + 전역 ADMIN만 본다.
+ *    VIEW 제한과 같은 자리(조상 체인)에서 판정하므로 초안 아래의 하위 문서도 함께 가려진다 —
+ *    트리에서 부모가 사라진 고아가 생기지 않고, 위치·제목이 새지 않는다. 게시하면 정상 노출된다.
+ *    관리자 판정은 남의 초안을 실제로 만났을 때만 org에 묻는다(사용자·스페이스별 1회, memo).
+ *
  * 캐시를 쓰지 않는 것은 의도다 — 제한·트리 변경 직후의 스테일 인덱스는 그대로 누출이라,
  * 무효화가 완벽해야만 안전한 캐시보다 질의를 싸게 만드는 쪽을 택했다.
  */
@@ -44,6 +49,7 @@ public class EffectivePermissionService {
     private final PageRepository pages;
     private final PageRestrictionRepository restrictions;
     private final TeamDirectory teams;
+    private final PermissionClient permissions;
 
     public void requireView(long userId, Page page) {
         if (!canView(userId, page)) {
@@ -94,6 +100,7 @@ public class EffectivePermissionService {
         // 있는 곳(부모가 다른 스페이스로 옮겨진 뒤 휴지통에서 되살린 하위 등 — 그 조상의 제한도 상속된다).
         Set<Long> targets = new java.util.LinkedHashSet<>(restrictions.findSpaceIdsWithViewRestrictions(spaceIds));
         targets.addAll(pages.findSpaceIdsWithForeignParents(spaceIds));
+        targets.addAll(pages.findSpaceIdsWithOthersDrafts(spaceIds, userId)); // 남의 초안이 있는 곳(초안 정책)
         if (targets.isEmpty()) return Set.of();
         Principals me = principalsOf(userId);
         Set<Long> hidden = new HashSet<>();
@@ -156,7 +163,7 @@ public class EffectivePermissionService {
      */
     public Set<Long> visiblePageIds(long userId, long spaceId) {
         SpaceIndex idx = index(spaceId);
-        if (!idx.hasViewRestrictions()) return null;
+        if (!idx.hasViewRestrictions() && idx.draftsAllBy(userId)) return null;
         Principals me = principalsOf(userId);
         Set<Long> visible = new HashSet<>();
         for (Long pageId : idx.pageIds()) {
@@ -203,7 +210,7 @@ public class EffectivePermissionService {
     }
 
     private Principals principalsOf(long userId) {
-        return new Principals(userId, teams);
+        return new Principals(userId, teams, permissions);
     }
 
     /**
@@ -212,7 +219,7 @@ public class EffectivePermissionService {
      */
     private SpaceIndex chainIndex(Collection<Long> pageIds) {
         List<Long> seeds = pageIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
-        if (seeds.isEmpty()) return new SpaceIndex(Map.of(), Map.of(), Map.of());
+        if (seeds.isEmpty()) return new SpaceIndex(Map.of(), Map.of(), Map.of(), Map.of());
         Map<Long, Long> parentOf = new HashMap<>();
         for (Object[] row : pages.findAncestorClosure(seeds)) {
             parentOf.put(((Number) row[0]).longValue(),
@@ -221,7 +228,7 @@ public class EffectivePermissionService {
         // 한 번 읽어 VIEW/EDIT로 나눈다 — 같은 행을 종류별로 두 번 조회할 이유가 없다.
         List<PageRestriction> rows = restrictions.findByPageIdIn(parentOf.keySet());
         return new SpaceIndex(parentOf, byPage(rows, PageRestriction.Type.VIEW),
-                byPage(rows, PageRestriction.Type.EDIT));
+                byPage(rows, PageRestriction.Type.EDIT), drafts(pages.findDraftOwners(parentOf.keySet())));
     }
 
     private static Map<Long, List<PageRestriction>> byPage(List<PageRestriction> rows,
@@ -246,18 +253,48 @@ public class EffectivePermissionService {
             (r.getType() == PageRestriction.Type.VIEW ? view : edit)
                     .computeIfAbsent(r.getPageId(), k -> new ArrayList<>()).add(r);
         }
-        return new SpaceIndex(parentOf, view, edit);
+        return new SpaceIndex(parentOf, view, edit, drafts(pages.findDraftOwnersBySpaceId(spaceId)));
+    }
+
+    private static Map<Long, DraftOwner> drafts(List<Object[]> rows) {
+        if (rows.isEmpty()) return Map.of();
+        Map<Long, DraftOwner> out = new HashMap<>();
+        for (Object[] row : rows) {
+            out.put(((Number) row[0]).longValue(),
+                    new DraftOwner(((Number) row[1]).longValue(), ((Number) row[2]).longValue()));
+        }
+        return out;
+    }
+
+    /** 초안 한 장의 작성자와 스페이스 — 판정에 필요한 전부. */
+    private record DraftOwner(long createdBy, long spaceId) {
     }
 
     /** 팀 멤버십은 TEAM 제한을 실제로 판정할 때 1회만 조회(memo) — 제한 없는 요청은 org 왕복이 없다. */
     private static final class Principals {
         private final long userId;
         private final TeamDirectory teams;
+        private final PermissionClient permissions;
         private Set<Long> teamIds;
+        private final Map<Long, Boolean> spaceAdmin = new HashMap<>();
+        private Boolean globalAdmin;
 
-        Principals(long userId, TeamDirectory teams) {
+        Principals(long userId, TeamDirectory teams, PermissionClient permissions) {
             this.userId = userId;
             this.teams = teams;
+            this.permissions = permissions;
+        }
+
+        /**
+         * 초안을 볼 수 있는가 — 작성자 또는 그 스페이스 ADMIN 또는 전역 ADMIN. org 판정은 남의 초안을
+         * 만났을 때만, 사용자·스페이스별로 한 번. org 불능이면 503이 그대로 올라간다(조용히 숨기지 않는다).
+         */
+        boolean readsDraft(DraftOwner draft) {
+            if (draft.createdBy() == userId) return true;
+            if (spaceAdmin.computeIfAbsent(draft.spaceId(),
+                    sid -> permissions.isAllowed(userId, sid, WikiAction.ADMIN))) return true;
+            if (globalAdmin == null) globalAdmin = permissions.checkGlobal(userId, WikiAction.ADMIN).allowed();
+            return globalAdmin;
         }
 
         boolean matches(PageRestriction r) {
@@ -272,10 +309,16 @@ public class EffectivePermissionService {
     private record SpaceIndex(
             Map<Long, Long> parentOf,
             Map<Long, List<PageRestriction>> view,
-            Map<Long, List<PageRestriction>> edit) {
+            Map<Long, List<PageRestriction>> edit,
+            Map<Long, DraftOwner> drafts) {
 
         boolean hasViewRestrictions() {
             return !view.isEmpty();
+        }
+
+        /** 이 인덱스의 초안이 전부 이 사용자의 것인가(없으면 참) — 트리 필터 생략 힌트. */
+        boolean draftsAllBy(long userId) {
+            return drafts.values().stream().allMatch(d -> d.createdBy() == userId);
         }
 
         Set<Long> pageIds() {
@@ -289,6 +332,8 @@ public class EffectivePermissionService {
             while (cursor != null && visited.add(cursor)) {
                 List<PageRestriction> rows = view.get(cursor);
                 if (rows != null && rows.stream().noneMatch(me::matches)) return false;
+                DraftOwner draft = drafts.get(cursor);
+                if (draft != null && !me.readsDraft(draft)) return false; // 초안 정책 — 하위도 함께 가려진다
                 cursor = parentOf.get(cursor);
             }
             return true;
