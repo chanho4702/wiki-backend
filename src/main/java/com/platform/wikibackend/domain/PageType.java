@@ -27,6 +27,13 @@ public enum PageType {
     /** 미지정이면 page — 이 필드 도입 이전 클라이언트 호환. */
     @JsonCreator
     public static PageType from(String value) {
-        return value == null ? PAGE : valueOf(value.toUpperCase());
+        if (value == null) return PAGE;
+        try {
+            return valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            // 원문("No enum constant …")은 사용자에게 내보낼 수 없다 — 고를 수 있는 값을 한국어로 말한다.
+            throw new com.platform.common.error.BadRequestException(
+                    "문서 종류는 page·folder·blog 중 하나여야 합니다: " + value);
+        }
     }
 }

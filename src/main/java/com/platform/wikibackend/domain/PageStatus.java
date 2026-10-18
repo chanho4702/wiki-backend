@@ -20,6 +20,12 @@ public enum PageStatus {
     /** 미지정이면 published — 초안 개념 도입 이전 문서는 전부 게시된 상태였다. */
     @JsonCreator
     public static PageStatus from(String value) {
-        return value == null ? PUBLISHED : valueOf(value.toUpperCase());
+        if (value == null) return PUBLISHED;
+        try {
+            return valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new com.platform.common.error.BadRequestException(
+                    "문서 상태는 draft·published 중 하나여야 합니다: " + value);
+        }
     }
 }

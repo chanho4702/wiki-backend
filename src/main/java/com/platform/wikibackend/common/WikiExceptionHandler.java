@@ -25,6 +25,20 @@ public class WikiExceptionHandler {
                 Map.of("newlyRestrictedBy", e.getNewlyRestrictedBy()));
     }
 
+    /**
+     * 요청 본문 변환 실패 — 원인이 우리가 고른 한국어 400(BadRequestException, 예: JSON enum 생성자)이면 그 문구를,
+     * 아니면 스타터와 같은 고정 문구를 준다. Jackson이 생성자 예외를 감싸 원문이 사라지는 것을 되살린다.
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> unreadable(org.springframework.http.converter.HttpMessageNotReadableException e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof com.platform.common.error.BadRequestException bad) return Map.of("error", bad.getMessage());
+            if (t.getCause() == t) break;
+        }
+        return Map.of("error", com.platform.common.web.ErrorMessages.BAD_REQUEST);
+    }
+
     @ExceptionHandler(UnsafeInlineMediaTypeException.class)
     @ResponseStatus(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
     public Map<String, String> unsupportedInline(UnsafeInlineMediaTypeException e) {

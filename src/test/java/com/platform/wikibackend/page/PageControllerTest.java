@@ -299,4 +299,19 @@ class PageControllerTest {
         mvc.perform(post("/api/wiki/pages/" + id + "/publish").with(asUser(VIEWER, "Bob")))
                 .andExpect(status().isForbidden());
     }
+
+    /** 모르는 문서 종류·상태는 라이브러리 원문("No enum constant …")이 아니라 한국어 400. */
+    @Test
+    void 모르는_문서_종류는_한국어_400이다() throws Exception {
+        mvc.perform(post("/api/wiki/pages").with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + space.getId() + ",\"title\":\"t\",\"content\":\"\",\"type\":\"wiki\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("문서 종류는 page·folder·blog 중 하나여야 합니다: wiki"));
+        mvc.perform(post("/api/wiki/pages").with(asUser(EDITOR, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spaceId\":" + space.getId() + ",\"title\":\"t\",\"content\":\"\",\"status\":\"live\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("문서 상태는 draft·published 중 하나여야 합니다: live"));
+    }
 }
