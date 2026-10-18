@@ -61,6 +61,7 @@ class CollaborationDraftResetTest {
     @Autowired FakePermissionClient permissions;
     @Autowired RecordingCollaborationResetSignal signal;
     @Autowired PageService pageService;
+    @Autowired com.platform.wikibackend.page.RevisionService revisionService;
     @Autowired TaskService taskService;
     @Autowired ImportedPageWriter importWriter;
     @Autowired PlatformTransactionManager txManager;
@@ -194,7 +195,7 @@ class CollaborationDraftResetTest {
     void 리비전_복원도_새_버전이므로_초안을_리셋한다() {
         seedDraft(1, 1);
 
-        pageService.restore(1L, page.getId(), 1);
+        revisionService.restore(1L, page.getId(), 1);
 
         assertReset(2, 2);
     }

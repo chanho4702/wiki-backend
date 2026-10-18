@@ -1,52 +1,50 @@
 package com.platform.wikibackend.page;
 
-import com.platform.wikibackend.attachment.AttachmentStorageRouter;
 import com.platform.common.error.ConflictException;
 import com.platform.common.error.NotFoundException;
+import com.platform.wikibackend.audit.AuditService;
+import com.platform.wikibackend.collaboration.CollaborationDraftReset;
+import com.platform.wikibackend.common.ActorNames;
+import com.platform.wikibackend.domain.AuditAction;
+import com.platform.wikibackend.domain.CollaborationDraftMetadata;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRevision;
 import com.platform.wikibackend.domain.PageStatus;
-import com.platform.wikibackend.domain.CollaborationDraftMetadata;
+import com.platform.wikibackend.domain.PageType;
 import com.platform.wikibackend.event.EventRelay;
 import com.platform.wikibackend.event.WikiEvents;
-import com.platform.wikibackend.domain.PageRestriction;
-import com.platform.wikibackend.page.dto.CopyRequest;
-import com.platform.wikibackend.page.dto.PageCreateRequest;
-import com.platform.wikibackend.page.dto.PageMoveRequest;
+import com.platform.wikibackend.label.LabelService;
+import com.platform.wikibackend.notification.NotificationService;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitRequest;
 import com.platform.wikibackend.page.dto.CollaborationDraftCommitResponse;
+import com.platform.wikibackend.page.dto.PageCreateRequest;
 import com.platform.wikibackend.page.dto.PageResponse;
-import com.platform.wikibackend.page.dto.PageTreeItem;
 import com.platform.wikibackend.page.dto.PageUpdateRequest;
-import com.platform.wikibackend.page.dto.RevisionMeta;
-import com.platform.wikibackend.page.dto.RevisionResponse;
+import com.platform.wikibackend.permission.EffectivePermissionService;
 import com.platform.wikibackend.permission.WikiAction;
-import com.platform.wikibackend.attachment.AttachmentLifecycleStatus;
-import com.platform.wikibackend.attachment.AttachmentReferences;
-import com.platform.wikibackend.attachment.StoredObject;
-import com.platform.wikibackend.domain.Attachment;
-import com.platform.wikibackend.repository.AttachmentRepository;
 import com.platform.wikibackend.repository.CollaborationDraftMetadataRepository;
-import com.platform.wikibackend.repository.PageCommentRepository;
 import com.platform.wikibackend.repository.PageRepository;
-import com.platform.wikibackend.repository.PageRestrictionRepository;
 import com.platform.wikibackend.repository.PageRevisionRepository;
 import com.platform.wikibackend.space.SpaceService;
+import com.platform.wikibackend.task.TaskService;
+import com.platform.wikibackend.watch.WatchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashSet;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 페이지 본문의 생명주기 — 생성·조회·수정(새 버전)·공동 초안 게시·휴지통 보내기·게시.
+ *
+ * 2026-10-18에 도메인별로 나눴다: 복사(PageCopyService), 이동(PageMoveService), 메타데이터
+ * (PageMetaService), 이력·복원(RevisionService), 구조 공용 연산(PageStructure). 버전을 올리는 경로가
+ * 흩어져 한 경로만 검사가 빠지던 결함(W-01·W-07)을 줄이려고, 쓰기 경로마다 PageWriteGuard를 부른다.
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -54,32 +52,27 @@ import java.util.Set;
 public class PageService {
 
     private final PageRepository pages;
-    private final PageCommentRepository comments;
     private final PageRevisionRepository revisions;
-    private final PageRestrictionRepository restrictions;
     private final SpaceService spaces;
-    private final com.platform.wikibackend.notification.NotificationService notificationService;
-    private final com.platform.wikibackend.permission.EffectivePermissionService effective;
+    private final NotificationService notificationService;
+    private final EffectivePermissionService effective;
     private final EventRelay events;
-    private final AttachmentRepository attachments;
-    private final AttachmentStorageRouter storage;
     private final CollaborationDraftMetadataRepository collaborationDrafts;
-    private final com.platform.wikibackend.label.LabelService labelService;
-    private final com.platform.wikibackend.personal.PersonalService personal;
-    private final com.platform.wikibackend.audit.AuditService audit;
-    private final com.platform.wikibackend.watch.WatchService watches;
-    private final com.platform.wikibackend.common.ActorNames actorNames;
-    private final com.platform.wikibackend.task.TaskService taskSync;
-    private final com.platform.wikibackend.directory.DisplayNames displayNames;
-    private final com.platform.wikibackend.collaboration.CollaborationDraftReset collaborationReset;
+    private final LabelService labelService;
+    private final AuditService audit;
+    private final WatchService watches;
+    private final ActorNames actorNames;
+    private final TaskService taskSync;
+    private final CollaborationDraftReset collaborationReset;
+    private final PageStructure structure;
 
     public PageResponse create(long userId, PageCreateRequest req) {
         spaces.require(userId, req.spaceId(), WikiAction.EDIT);
-        validateParent(req.spaceId(), req.parentId(), null);
-        if (req.type() == com.platform.wikibackend.domain.PageType.BLOG && req.parentId() != null) {
+        structure.validateParent(req.spaceId(), req.parentId(), null);
+        if (req.type() == PageType.BLOG && req.parentId() != null) {
             throw new IllegalArgumentException("블로그 글은 트리에 넣을 수 없습니다");
         }
-        requireEditableTargetParent(userId, req.spaceId(), req.parentId());
+        structure.requireEditableTargetParent(userId, req.spaceId(), req.parentId());
         Page saved = pages.save(Page.of(req.spaceId(), req.parentId(), req.title(), req.content(), userId,
                 req.type(), req.status()));
         saved.resequence(pages.findMaxSortOrder(req.spaceId(), req.parentId()) + 1); // 형제 맨 뒤(V9)
@@ -91,145 +84,11 @@ public class PageService {
         // 경로(publish)만 알리면 대부분의 문서가 스페이스 구독자에게 조용히 지나간다(W27-4).
         // 폴더는 읽을 내용이 없으므로 제외한다.
         if (saved.getStatus() == PageStatus.PUBLISHED
-                && saved.getType() != com.platform.wikibackend.domain.PageType.FOLDER) {
+                && saved.getType() != PageType.FOLDER) {
             notificationService.onPagePublished(userId, saved);
         }
         events.afterCommit(WikiEvents.pageCreated(userId, saved));
         return PageResponse.from(saved);
-    }
-
-    /**
-     * 단일 페이지 복제 — Confluence "페이지 복사"의 1차 슬라이스.
-     *
-     * 범위(갭 분석 §4.1 복제 정책의 v1 확정):
-     * - 하위 페이지·댓글은 복사하지 않는다(하위 포함 복제는 후속).
-     * - CONFIRMED 첨부는 객체까지 복사하고 본문 inline 참조를 사본 첨부로 재작성한다 —
-     *   원본을 참조하게 두면 원본 페이지 삭제가 사본 이미지를 깨뜨린다.
-     * - PENDING 첨부(다른 편집 세션의 미확정 업로드)는 대상이 아니다.
-     * - 제목은 "제목 (사본)", 부모·타입·초안/게시 상태는 원본 그대로.
-     */
-    /**
-     * 한 번에 복사할 수 있는 페이지 수 상한.
-     *
-     * 서브트리 복사는 페이지마다 첨부를 저장소에서 읽어 다시 쓴다 — 한 트랜잭션에서 무한정
-     * 돌릴 일이 아니다. 넘으면 거절해서, 절반만 복사된 트리를 남기지 않는다.
-     */
-    public static final int MAX_COPY_PAGES = 200;
-
-    public PageResponse copy(long userId, long pageId, CopyRequest req) {
-        Page source = getOwned(pageId);
-        spaces.require(userId, source.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, source);
-        // 사본은 원본의 부모 아래 생긴다 — 그 부모가 보관 중이면 보관 상자에 새 문서가 들어간다
-        if (source.getParentId() != null) pages.findById(source.getParentId()).ifPresent(PageWriteGuard::requireWritableParent);
-
-        List<Page> sources = new ArrayList<>(List.of(source));
-        if (req.descendantsIncluded()) sources.addAll(copyableDescendants(userId, source));
-        if (sources.size() > MAX_COPY_PAGES) {
-            throw new IllegalArgumentException(
-                    "한 번에 복사할 수 있는 문서는 " + MAX_COPY_PAGES + "개까지입니다 (요청 "
-                            + sources.size() + "개)");
-        }
-
-        long rootSortOrder = pages.findMaxSortOrder(source.getSpaceId(), source.getParentId()) + 1;
-        Map<Long, Long> newIdOf = new HashMap<>();
-        Page copiedRoot = null;
-        for (Page original : sources) {
-            boolean isRoot = original.getId().equals(source.getId());
-            // 사본 표시는 뿌리에만 붙인다 — 하위까지 제목을 바꾸면 문서 안의 `[[제목]]`이 전부 어긋난다.
-            String title = isRoot ? copyTitle(original.getTitle()) : original.getTitle();
-            Long parentId = isRoot ? original.getParentId() : newIdOf.get(original.getParentId());
-            Page saved = pages.save(Page.of(original.getSpaceId(), parentId, title,
-                    original.getContent(), userId, original.getType(), original.getStatus()));
-            saved.resequence(isRoot ? rootSortOrder : original.getSortOrder());
-            newIdOf.put(original.getId(), saved.getId());
-            if (isRoot) copiedRoot = saved;
-
-            copyAttachmentsInto(userId, original, saved);
-            if (req.restrictionsIncluded()) copyRestrictionsInto(userId, original, saved);
-            revisions.save(PageRevision.snapshotOf(saved).withEditorName(actorNames.current()));
-            taskSync.sync(saved); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
-            labelService.reindexLinks(saved);
-            events.afterCommit(WikiEvents.pageCreated(userId, saved));
-        }
-        return PageResponse.from(java.util.Objects.requireNonNull(copiedRoot));
-    }
-
-    /**
-     * 복사 대상 후손 — **부모가 먼저 오는 순서**로 준다(자식이 부모의 새 id를 필요로 한다).
-     *
-     * 볼 수 없는 문서는 넣지 않는다. VIEW 제한은 하위로 상속되므로 가려진 노드를 빼면 그 아래도
-     * 자연히 빠진다 — 사용자는 애초에 그 문서의 존재를 모르며, 몰래 복사해 열어 두는 쪽이 나쁘다.
-     */
-    private List<Page> copyableDescendants(long userId, Page root) {
-        List<Long> ids = pages.findDescendantIds(root.getId());
-        if (ids.isEmpty()) return List.of();
-        List<Page> found = pages.findAllById(ids);
-        Set<Long> visible = effective.viewablePageIds(userId, found);
-
-        Map<Long, List<Page>> childrenOf = new HashMap<>();
-        for (Page p : found) {
-            if (!visible.contains(p.getId())) continue;
-            childrenOf.computeIfAbsent(p.getParentId(), k -> new ArrayList<>()).add(p);
-        }
-        for (List<Page> siblings : childrenOf.values()) {
-            siblings.sort(java.util.Comparator.comparing(Page::getSortOrder).thenComparing(Page::getId));
-        }
-
-        List<Page> ordered = new ArrayList<>();
-        Deque<Long> queue = new ArrayDeque<>(List.of(root.getId()));
-        Set<Long> seen = new java.util.HashSet<>(List.of(root.getId()));
-        while (!queue.isEmpty()) {
-            for (Page child : childrenOf.getOrDefault(queue.poll(), List.of())) {
-                if (!seen.add(child.getId())) continue; // 순환 방어 — 폐포가 이미 막지만 두 겹으로 둔다
-                ordered.add(child);
-                queue.add(child.getId());
-            }
-        }
-        return ordered;
-    }
-
-    private static String copyTitle(String title) {
-        String suffix = " (사본)";
-        String base = title.length() + suffix.length() > 255
-                ? title.substring(0, 255 - suffix.length())
-                : title;
-        return base + suffix;
-    }
-
-    /** 첨부를 복제하고, 본문의 인라인 참조를 새 첨부 id로 바꾼다. */
-    private void copyAttachmentsInto(long userId, Page original, Page saved) {
-        String content = original.getContent();
-        for (Attachment source : attachments.findByPageId(original.getId())) {
-            if (source.getLifecycleStatus() != AttachmentLifecycleStatus.CONFIRMED) continue;
-            Attachment copied = copyAttachment(userId, saved.getId(), source);
-            content = content.replace(
-                    AttachmentReferences.inlineUrl(source.getId()),
-                    AttachmentReferences.inlineUrl(copied.getId()));
-        }
-        if (!content.equals(original.getContent())) saved.rewriteContentForCopy(content);
-    }
-
-    /** 원본에 직접 걸린 제한만 옮긴다 — 상속분은 사본의 새 조상에서 다시 계산된다. */
-    private void copyRestrictionsInto(long userId, Page original, Page saved) {
-        for (PageRestriction source : restrictions.findByPageId(original.getId())) {
-            restrictions.save(PageRestriction.of(saved.getId(), source.getType(),
-                    source.getPrincipalType(), source.getPrincipalId(), userId));
-        }
-    }
-
-    private Attachment copyAttachment(long userId, long targetPageId, Attachment original) {
-        try (var input = storage.open(original.getStorageBackend(), original.getStorageBucket(),
-                original.getStorageKey(), original.getStorageVersion()).getInputStream()) {
-            StoredObject stored = storage.store(input, original.getSizeBytes(), original.getContentType());
-            // DB 트랜잭션이 실패하면 방금 만든 객체를 치운다 — 업로드 경로와 같은 보상 규칙
-            storage.deleteAfterRollback(stored);
-            return attachments.save(Attachment.of(targetPageId, original.getFilename(),
-                    original.getContentType(), original.getSizeBytes(), stored,
-                    original.getChecksumSha256(), userId));
-        } catch (java.io.IOException e) {
-            throw new IllegalStateException("첨부 복사 중 저장소 오류가 발생했습니다", e);
-        }
     }
 
     @Transactional(readOnly = true)
@@ -240,166 +99,10 @@ public class PageService {
         return PageResponse.from(p);
     }
 
-    /** 수정 = 새 버전. expectedVersion 불일치 409. parentId 변경은 이동(순환 검증). */
-    /**
-     * 트리 이동/재정렬(P1-001) — 부모 변경과 형제 순서를 한 트랜잭션에서 처리한다.
-     * 내용 편집이 아니므로 version을 올리지 않고 리비전도 쌓지 않는다(스토어 계약).
-     * 스페이스 행을 잠가 같은 스페이스의 동시 재정렬과 직렬화한다.
-     */
-    public PageResponse move(long userId, long pageId, PageMoveRequest req) {
-        Page page = getOwned(pageId);
-        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, page);
-        PageWriteGuard.requireWritable(page);
-        if (page.getType() == com.platform.wikibackend.domain.PageType.BLOG) {
-            throw new IllegalArgumentException("블로그 글은 트리에 속하지 않아 옮길 수 없습니다");
-        }
-        // W18 이동 영향(설계 §5) — 부모/스페이스가 실제로 바뀔 때, 새 조상의 VIEW 제한이 새로
-        // 적용되면 확인 없이는 409. 순수 재정렬(같은 부모)은 영향이 없다.
-        long targetSpaceId = req.spaceId() != null ? req.spaceId() : page.getSpaceId();
-        boolean relocated = targetSpaceId != page.getSpaceId()
-                || !Objects.equals(page.getParentId(), req.parentId());
-        // 대상 스페이스·부모를 먼저 인가해야 409 impact가 숨겨진 부모 제목/주체를 누출하지 않는다.
-        spaces.require(userId, targetSpaceId, WikiAction.EDIT);
-        requireEditableTargetParent(userId, targetSpaceId, req.parentId());
-        if (relocated) {
-            // 부모 변경은 서브트리 전체의 effective VIEW를 바꾼다. 숨겨진 자손을 대신 옮기지 못하게
-            // 실제 변경 대상 전부를 mutation 전에 판정한다.
-            effective.requireEditAll(userId, collectSubtree(pageId));
-        }
-        if (relocated && !req.impactConfirmed()) {
-            var impact = effective.newViewRestrictionsAfterMove(page, req.parentId());
-            if (!impact.isEmpty()) {
-                throw new com.platform.wikibackend.permission.MoveImpactException(impact);
-            }
-        }
-        if (req.spaceId() != null && !Objects.equals(req.spaceId(), page.getSpaceId())) {
-            return moveToSpace(userId, pageId, req);
-        }
-        spaces.lockForReorder(page.getSpaceId());
-        Page locked = pages.findByIdForUpdate(pageId)
-                .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
-        if (!Objects.equals(locked.getParentId(), req.parentId())) {
-            validateParent(locked.getSpaceId(), req.parentId(), pageId);
-        }
-        Long previousParentId = locked.getParentId();
-        boolean regrouped = !Objects.equals(previousParentId, req.parentId());
-
-        List<Page> group = new ArrayList<>(pages.findSiblings(locked.getSpaceId(), req.parentId()));
-        group.removeIf(sibling -> sibling.getId().equals(pageId));
-        int insertAt = -1;
-        if (req.beforeId() != null) {
-            for (int i = 0; i < group.size(); i++) {
-                if (group.get(i).getId().equals(req.beforeId())) { insertAt = i; break; }
-            }
-        }
-        // beforeId가 그룹에 없으면(드래그 중 stale 참조) 조용히 맨 뒤 — 화면은 이동 후 재조회한다
-        if (insertAt < 0) insertAt = group.size();
-        locked.rankTo(req.parentId(), locked.getSortOrder());
-        group.add(insertAt, locked);
-        for (int i = 0; i < group.size(); i++) group.get(i).resequence(i + 1L);
-        if (regrouped) {
-            resequenceSiblings(locked.getSpaceId(), previousParentId, pageId);
-            // 부모가 바뀐 사실이 나가지 않으면 색인·활동피드가 스테일해진다(순수 재정렬은 색인 무관)
-            events.afterCommit(WikiEvents.pageUpdated(userId, locked));
-        }
-        return PageResponse.from(locked);
-    }
-
-    /**
-     * 스페이스 간 이동 — 양쪽 스페이스 EDIT가 필요하고, 하위 처리는 요청이 정한다
-     * (children=with: 서브트리 동반 / promote: 하위는 원래 부모 밑에 남김).
-     * 첨부·댓글·리비전은 pageId에 묶여 있어 행 이동이 필요 없고, 검색 색인은 스페이스가
-     * 권한 필터라서 이동한 모든 페이지에 pageUpdated를 다시 발행한다.
-     */
-    private PageResponse moveToSpace(long userId, long pageId, PageMoveRequest req) {
-        Long targetSpaceId = req.spaceId();
-        spaces.require(userId, targetSpaceId, WikiAction.EDIT);
-        // 두 스페이스를 id 순서로 잠근다 — 반대 방향 이동과의 교착 방지
-        Page snapshot = getOwned(pageId);
-        Long sourceSpaceId = snapshot.getSpaceId();
-        long first = Math.min(sourceSpaceId, targetSpaceId);
-        long second = Math.max(sourceSpaceId, targetSpaceId);
-        spaces.lockForReorder(first);
-        spaces.lockForReorder(second);
-        Page locked = pages.findByIdForUpdate(pageId)
-                .orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
-
-        // 대상 부모는 대상 스페이스 소속이어야 한다
-        if (req.parentId() != null) {
-            Page targetParent = pages.findById(req.parentId())
-                    .orElseThrow(() -> new NotFoundException("부모 페이지 없음: " + req.parentId()));
-            if (!Objects.equals(targetParent.getSpaceId(), targetSpaceId)) {
-                throw new IllegalArgumentException("부모 페이지가 대상 스페이스에 없습니다");
-            }
-        }
-
-        List<Page> subtree = collectSubtree(pageId);
-        if (req.parentId() != null && !req.promoteChildren()
-                && subtree.stream().anyMatch(p -> p.getId().equals(req.parentId()))) {
-            throw new IllegalArgumentException("페이지를 자신의 하위로 이동할 수 없습니다");
-        }
-
-        Long previousParentId = locked.getParentId();
-        if (req.promoteChildren()) {
-            // 직계 하위를 원래 부모 밑으로 올린다(삭제 PROMOTE와 같은 의미론)
-            long nextOrder = pages.findMaxSortOrder(sourceSpaceId, previousParentId);
-            for (Page child : pages.findByParentId(pageId)) {
-                child.rankTo(previousParentId, ++nextOrder);
-                events.afterCommit(WikiEvents.pageUpdated(userId, child));
-            }
-        } else {
-            // 서브트리 동반 — 구조(부모 관계·형제 순서)는 유지하고 spaceId만 바꾼다
-            for (Page descendant : subtree) {
-                if (descendant.getId().equals(pageId)) continue;
-                descendant.moveToSpace(targetSpaceId, descendant.getParentId(), descendant.getSortOrder());
-                events.afterCommit(WikiEvents.pageUpdated(userId, descendant));
-            }
-        }
-
-        long order = pages.findMaxSortOrder(targetSpaceId, req.parentId()) + 1;
-        locked.moveToSpace(targetSpaceId, req.parentId(), order);
-        resequenceSiblings(sourceSpaceId, previousParentId, pageId);
-        events.afterCommit(WikiEvents.pageUpdated(userId, locked));
-        return PageResponse.from(locked);
-    }
-
-    /** 자기 자신 포함 서브트리 전체. visited로 손상 데이터의 순환에도 무한 루프하지 않는다. */
-    private List<Page> collectSubtree(long rootId) {
-        // 스페이스 전체의 (id, parentId)를 한 번에 읽고 메모리에서 BFS — 이전에는 노드당
-        // findByParentId를 날려 서브트리 크기만큼 왕복(N+1)했다(규모 검토 2026-08-23).
-        // 서브트리는 항상 한 스페이스 안에 있다(이동도 서브트리 단위로 스페이스를 옮긴다).
-        Page root = getOwned(rootId);
-        Map<Long, List<Long>> childrenOf = new HashMap<>();
-        for (PageRepository.IdParent row : pages.findIdParentBySpaceId(root.getSpaceId())) {
-            childrenOf.computeIfAbsent(row.getParentId(), k -> new ArrayList<>()).add(row.getId());
-        }
-        // BFS로 id만 모은 뒤 한 번에 읽는다 — 노드마다 findById를 돌던 N+1을 없앴다(감사 W-15).
-        List<Long> ids = new ArrayList<>();
-        Set<Long> visited = new HashSet<>();
-        java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>(List.of(rootId));
-        while (!queue.isEmpty()) {
-            long id = queue.poll();
-            if (!visited.add(id)) continue;
-            ids.add(id);
-            for (Long child : childrenOf.getOrDefault(id, List.of())) queue.add(child);
-        }
-        Map<Long, Page> byId = new HashMap<>();
-        for (Page p : pages.findAllById(ids)) byId.put(p.getId(), p);
-        return ids.stream().map(byId::get).filter(Objects::nonNull).toList(); // BFS 순서 유지
-    }
-
-    /** 떠난 그룹을 1..n으로 조밀화 — 빈 번호를 남기지 않아야 이후 삽입 계산이 단순하다. */
-    private void resequenceSiblings(Long spaceId, Long parentId, long excludedPageId) {
-        List<Page> siblings = pages.findSiblings(spaceId, parentId).stream()
-                .filter(p -> p.getId() != excludedPageId)
-                .toList();
-        for (int i = 0; i < siblings.size(); i++) siblings.get(i).resequence(i + 1L);
-    }
-
+    /** 수정 = 새 버전. expectedVersion 불일치 409. 부모 변경은 이동 API(PageMoveService). */
     public PageResponse update(long userId, long pageId, PageUpdateRequest req) {
         // page → 공동 초안 순서로 잠근다(게시와 같은 순서) — 동시 게시와 같은 버전 리비전을 두 번 만들지 않는다.
-        Page p = lockOwned(pageId);
+        Page p = structure.lockOwned(pageId);
         spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
         effective.requireEdit(userId, p);
         PageWriteGuard.requireWritable(p);
@@ -478,7 +181,7 @@ public class PageService {
             }
             // CASCADE는 자손을 삭제하고 PROMOTE도 자손의 제한 상속 체인을 바꾼다. 루트만 검사하면
             // 사용자가 볼 수 없는 제한 자손을 삭제·재배치할 수 있으므로 전체를 먼저 판정한다.
-            effective.requireEditAll(userId, collectSubtree(pageId));
+            effective.requireEditAll(userId, structure.collectSubtree(pageId));
             if (policy == ChildrenPolicy.PROMOTE) {
                 // 대상의 부모로 올린다. 부모는 자식의 조상이므로 순환이 생길 수 없다(검증 불필요).
                 long nextOrder = pages.findMaxSortOrder(p.getSpaceId(), p.getParentId());
@@ -513,7 +216,7 @@ public class PageService {
      * 복원 시 TrashService가 pageUpdated로 다시 올린다.
      */
     private void trashOne(long userId, Page p, boolean root) {
-        if (root) audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_TRASHED, p, null);
+        if (root) audit.recordPage(userId, AuditAction.PAGE_TRASHED, p, null);
         p.moveToTrash(userId, root);
         events.afterCommit(WikiEvents.pageDeleted(userId, p.getId(), p.getSpaceId()));
     }
@@ -532,88 +235,6 @@ public class PageService {
         return PageResponse.from(p);
     }
 
-    /**
-     * 소유자 지정·해제(W27-5) — 문서의 기본 책임자 표시다. 권한과는 무관하다(권한은 V12 제한).
-     *
-     * 메타데이터라 version·리비전을 올리지 않는다(아이콘·이동과 같은 취급). 대신 감사 로그에는
-     * 남긴다 — "이 문서 담당이 언제 누구에서 누구로 바뀌었나"는 나중에 반드시 물어보게 된다.
-     */
-    public PageResponse setOwner(long userId, long pageId, Long ownerId) {
-        if (ownerId != null && ownerId <= 0) throw new IllegalArgumentException("소유자 id가 올바르지 않습니다");
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, p);
-        PageWriteGuard.requireWritable(p);
-        Long before = p.getOwnerId();
-        p.changeOwner(ownerId);
-        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_OWNER_CHANGED, p,
-                (before == null ? "없음" : String.valueOf(before)) + " → "
-                        + (ownerId == null ? "없음" : String.valueOf(ownerId)));
-        return PageResponse.from(p);
-    }
-
-    /** 검증 기본 유효기간 — 분기 한 번. 이보다 짧으면 갱신이 일이 되고, 길면 배지가 무의미해진다. */
-    public static final int VERIFICATION_DAYS = 90;
-
-    /**
-     * 검증(W27-5) — 사람이 "지금 읽어봤고 맞다"를 누르는 것이다. 만료일이 지나도 문서가 숨거나
-     * 잠기지 않는다: 만료 판정은 읽는 쪽이 하고, 서버는 사람이 누른 사실만 저장한다.
-     */
-    public PageResponse verify(long userId, long pageId, java.time.LocalDate until) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, p);
-        PageWriteGuard.requireWritable(p);
-        java.time.LocalDate deadline = until == null
-                ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(VERIFICATION_DAYS)
-                : until;
-        p.verify(userId, deadline.atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
-        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_VERIFIED, p,
-                "유효기간 " + deadline);
-        return PageResponse.from(p);
-    }
-
-    public PageResponse unverify(long userId, long pageId) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, p);
-        PageWriteGuard.requireWritable(p);
-        p.unverify();
-        audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_UNVERIFIED, p, null);
-        return PageResponse.from(p);
-    }
-
-    /** 이모지 아이콘 설정/해제(null) — 메타데이터 변경이라 version·리비전을 올리지 않는다(move와 같은 취급). */
-    public PageResponse setIcon(long userId, long pageId, String icon) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, p);
-        PageWriteGuard.requireWritable(p);
-        p.changeIcon(icon);
-        // 트리 응답에 icon이 실리므로 검색 인덱스 재색인은 불필요(본문·제목 불변) — 이벤트 미발행.
-        return PageResponse.from(p);
-    }
-
-    /** 조회 1회 기록 — 원자 UPDATE(동시 조회 lost update 방지) 후 누적치 반환. */
-    /** 페이지 공유(W23) — 보는 사람이면 누구나 보낼 수 있다(링크 복사와 같은 범위). */
-    public com.platform.wikibackend.page.dto.ShareResponse share(
-            long userId, long pageId, com.platform.wikibackend.page.dto.ShareRequest req) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
-        effective.requireView(userId, p);
-        int delivered = notificationService.share(userId, p, req.userIds(), req.note());
-        return new com.platform.wikibackend.page.dto.ShareResponse(delivered);
-    }
-
-    public long recordView(long userId, long pageId) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
-        effective.requireView(userId, p);
-        pages.incrementViewCount(pageId);
-        // 개인 "최근 방문"도 여기서 남긴다 — 모든 열람이 이 경로를 지나므로 왕복을 늘릴 이유가 없다(W23).
-        personal.recordVisit(userId, pageId);
-        return pages.findViewCount(pageId);
-    }
 
     /** 협업 티켓 등 외부 서비스용 — space EDIT + 페이지 제한(effective)을 한 번에 통과시킨다. */
     @Transactional(readOnly = true)
@@ -628,168 +249,6 @@ public class PageService {
     /** 존재 검증만 — 권한은 호출부가. 첨부(Task 11)·리비전(Task 10)이 재사용. */
     @Transactional(readOnly = true)
     public Page getOwned(long pageId) {
-        return pages.findById(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
-    }
-
-    /** 버전을 올리는 쓰기용 — page 행을 잠근다. 공동 초안을 건드리는 경로는 모두 page를 먼저 잠근다. */
-    private Page lockOwned(long pageId) {
-        return pages.findByIdForUpdate(pageId).orElseThrow(() -> new NotFoundException("페이지 없음: " + pageId));
-    }
-
-    /** parent는 같은 스페이스 + (이동 시) 자기 자신·자손 금지. */
-    private void validateParent(Long spaceId, Long parentId, Long movingPageId) {
-        if (parentId == null) return;
-        Page parent = pages.findById(parentId).orElseThrow(() -> new IllegalArgumentException("부모 페이지 없음: " + parentId));
-        if (!Objects.equals(parent.getSpaceId(), spaceId)) {
-            throw new IllegalArgumentException("부모는 같은 스페이스여야 합니다");
-        }
-        if (parent.getType() == com.platform.wikibackend.domain.PageType.BLOG) {
-            throw new IllegalArgumentException("블로그 글 아래에는 문서를 둘 수 없습니다");
-        }
-        if (movingPageId != null) {
-            // 새 부모의 조상 폐포(자신 포함)를 재귀 CTE 한 번으로 — 조상마다 findById를 돌지 않는다(감사 W-15).
-            Map<Long, Long> parentOf = new HashMap<>();
-            for (Object[] row : pages.findAncestorClosure(List.of(parentId))) {
-                parentOf.put(((Number) row[0]).longValue(), row[1] == null ? null : ((Number) row[1]).longValue());
-            }
-            // visited: 손상 데이터(parent_id 순환)에서 무한 루프하지 않는다. 폐포는 깊이 64에서 끊기므로
-            // 그보다 깊은 트리는 남은 구간만 한 칸씩 읽는다(정상 규모에서는 타지 않는 길).
-            Set<Long> visited = new HashSet<>();
-            Long cursor = parentId;
-            while (cursor != null && visited.add(cursor)) {
-                if (Objects.equals(cursor, movingPageId)) throw new IllegalArgumentException("자기 자신/자손 아래로 이동 불가");
-                Long current = cursor;
-                cursor = parentOf.containsKey(current)
-                        ? parentOf.get(current)
-                        : pages.findById(current).map(Page::getParentId).orElse(null);
-            }
-        }
-    }
-
-    /** 새 자식 생성·이동 대상은 같은 스페이스이며 요청자가 직접 수정할 수 있는 페이지여야 한다. */
-    private void requireEditableTargetParent(long userId, Long spaceId, Long parentId) {
-        if (parentId == null) return;
-        Page parent = pages.findById(parentId)
-                .orElseThrow(() -> new IllegalArgumentException("부모 페이지 없음: " + parentId));
-        if (!Objects.equals(parent.getSpaceId(), spaceId)) {
-            throw new IllegalArgumentException("부모는 같은 스페이스여야 합니다");
-        }
-        effective.requireEdit(userId, parent);
-        PageWriteGuard.requireWritableParent(parent);
-    }
-
-    /**
-     * 이력 전체 목록(메타만). 화면은 쪽 단위({@link #listRevisionPage})를 쓴다.
-     */
-    @Transactional(readOnly = true)
-    public List<RevisionMeta> listRevisions(long userId, long pageId) {
-        requireRevisionView(userId, pageId);
-        // 전량 계약(기존 호출자) — 그래도 본문 바이트는 읽지 않는다(메타 프로젝션).
-        return withEditorNames(revisions.findMetaByPageId(pageId));
-    }
-
-    /** 한 쪽 상한 — 화면의 "더 보기" 한 번이 읽는 양. */
-    public static final int REVISION_PAGE_MAX = 100;
-
-    /**
-     * 이력 한 쪽(최신순, 버전 번호 커서). 버전이 수백 개인 문서도 첫 화면은 한 쪽만 읽는다.
-     * 전량 목록({@link #listRevisions})은 그대로 둔다 — 그걸 부르는 기존 호출자가 조용히 잘린
-     * 목록을 받으면 안 된다.
-     */
-    @Transactional(readOnly = true)
-    public com.platform.wikibackend.page.dto.RevisionPage listRevisionPage(
-            long userId, long pageId, Integer before, Integer limit) {
-        requireRevisionView(userId, pageId);
-        int size = limit == null ? 50 : Math.max(1, Math.min(limit, REVISION_PAGE_MAX));
-        // 한 건 더 읽어 다음 쪽이 있는지 안다 — 별도 존재 질의를 두지 않는다.
-        List<RevisionMeta> rows = revisions.findMetaPage(pageId, before,
-                org.springframework.data.domain.Limit.of(size + 1));
-        boolean more = rows.size() > size;
-        List<RevisionMeta> items = more ? rows.subList(0, size) : rows;
-        Integer next = more ? items.get(items.size() - 1).version() : null;
-        return new com.platform.wikibackend.page.dto.RevisionPage(
-                withEditorNames(items), next, revisions.countByPageId(pageId));
-    }
-
-    private void requireRevisionView(long userId, long pageId) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
-        effective.requireView(userId, p);
-    }
-
-    /**
-     * 편집자 이름은 저장 시점 스냅샷(V28)이고, 그 값이 없는 옛 리비전만 org 원장에서 채운다 —
-     * 목록 하나에 조회 <b>한 번</b>이다. 못 채우면 이름 없이 나가고 화면이 id로 폴백한다.
-     */
-    private List<RevisionMeta> withEditorNames(List<RevisionMeta> rows) {
-        Map<Long, String> names = displayNames.resolve(rows.stream()
-                .filter(r -> com.platform.wikibackend.directory.DisplayNames.needsFill(
-                        r.editedByName(), r.editedBy() == null ? 0L : r.editedBy()))
-                .map(RevisionMeta::editedBy)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList());
-        return rows.stream()
-                .map(r -> new RevisionMeta(r.version(), r.editedBy(), r.createdAt(), r.changeNote(),
-                        filled(r.editedByName(), r.editedBy(), names)))
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public RevisionResponse getRevision(long userId, long pageId, int version) {
-        Page p = getOwned(pageId);
-        spaces.require(userId, p.getSpaceId(), WikiAction.VIEW);
-        effective.requireView(userId, p);
-        PageRevision revision = revisions.findByPageIdAndVersion(pageId, version)
-                .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
-        Long editor = revision.getEditedBy();
-        // 이름이 이미 있으면 원장을 부르지 않는다 — 대부분의 리비전이 여기서 끝난다
-        Map<Long, String> names =
-                editor != null && com.platform.wikibackend.directory.DisplayNames.needsFill(revision.getEditedByName(), editor)
-                        ? displayNames.resolve(List.of(editor))
-                        : Map.of();
-        return RevisionResponse.from(revision, filled(revision.getEditedByName(), editor, names));
-    }
-
-    /**
-     * 스냅샷이 있으면 그대로 — 그때 그 사람이 쓰던 이름이라 지금 이름으로 덮지 않는다.
-     * 비어 있을 때만 원장의 이름을 넣고, 그것도 없으면 null로 두어 화면이 id로 폴백하게 한다.
-     */
-    private static String filled(String stored, Long userId, Map<Long, String> names) {
-        if (userId == null) return stored;
-        if (!com.platform.wikibackend.directory.DisplayNames.needsFill(stored, userId)) return stored;
-        return names.getOrDefault(userId, stored);
-    }
-
-    /** 복원 = 해당 리비전 내용으로 새 버전 생성(이력 보존 — 스펙). */
-    public PageResponse restore(long userId, long pageId, int version) {
-        return restore(userId, pageId, version, null);
-    }
-
-    /**
-     * 사람이 남긴 요약과 함께 복원한다(W30).
-     *
-     * 요약이 비어 있으면 기본값("v{n} 버전으로 복원")을 쓴다 — 어느 버전에서 되돌렸는지는 사람이
-     * 무엇을 적었든 이력에 남아야 하는 정보다. 사람이 적었으면 그것이 이긴다: 왜 되돌렸는지는
-     * 서버가 알 수 없고, 그 문장이 다음 사람에게 더 쓸모 있다.
-     */
-    public PageResponse restore(long userId, long pageId, int version, String changeNote) {
-        Page p = lockOwned(pageId); // page → 공동 초안 잠금 순서(update와 같다)
-        spaces.require(userId, p.getSpaceId(), WikiAction.EDIT);
-        effective.requireEdit(userId, p);
-        PageWriteGuard.requireWritable(p); // 이력 화면의 "이 버전으로 복원"도 편집이다
-        PageRevision target = revisions.findByPageIdAndVersion(pageId, version)
-                .orElseThrow(() -> new NotFoundException("리비전 없음: v" + version));
-        p.edit(target.getTitle(), target.getContent(), userId);
-        collaborationReset.afterExternalWrite(p); // 복원도 새 버전이다 — 공동 초안을 새 기준으로(차단-1)
-        // 복원도 이력에 남는다 — 어느 버전에서 되돌렸는지가 다음 사람에게 가장 중요한 정보다.
-        String note = changeNote == null || changeNote.isBlank()
-                ? "v" + version + " 버전으로 복원"
-                : changeNote;
-        revisions.save(PageRevision.snapshotOf(p, note).withEditorName(actorNames.current()));
-        taskSync.sync(p); // 작업 표는 본문의 파생물(W23) — 리비전과 같은 자리에서 갱신
-        labelService.reindexLinks(p);
-        events.afterCommit(WikiEvents.pageUpdated(userId, p));
-        return PageResponse.from(p);
+        return structure.getOwned(pageId);
     }
 }

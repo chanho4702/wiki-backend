@@ -29,6 +29,9 @@ import static com.platform.wikibackend.space.SpaceController.userId;
 public class PageController {
 
     private final PageService pages;
+    private final PageCopyService copies;
+    private final PageMoveService moves;
+    private final PageMetaService meta;
 
     @ConflictResponse("보관된 문서 아래에는 새 문서를 만들 수 없습니다")
     @Operation(summary = "페이지를 만든다")
@@ -67,7 +70,7 @@ public class PageController {
     @PostMapping("/api/wiki/pages/{id}/move")
     public PageResponse move(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                              @Valid @RequestBody PageMoveRequest req) {
-        return pages.move(userId(jwt), id, req);
+        return moves.move(userId(jwt), id, req);
     }
 
     /** 본문은 선택 — 없으면 단일 페이지 복사(기존 계약 그대로). */
@@ -76,7 +79,7 @@ public class PageController {
     @ResponseStatus(HttpStatus.CREATED)
     public PageResponse copy(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                              @RequestBody(required = false) com.platform.wikibackend.page.dto.CopyRequest req) {
-        return pages.copy(userId(jwt), id,
+        return copies.copy(userId(jwt), id,
                 req == null ? new com.platform.wikibackend.page.dto.CopyRequest(null, null) : req);
     }
 
@@ -84,7 +87,7 @@ public class PageController {
     @PutMapping("/api/wiki/pages/{id}/icon")
     public PageResponse setIcon(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                 @Valid @RequestBody PageIconRequest req) {
-        return pages.setIcon(userId(jwt), id, req.icon());
+        return meta.setIcon(userId(jwt), id, req.icon());
     }
 
     @Operation(summary = "페이지를 다른 사용자에게 공유해 알림을 보낸다")
@@ -92,13 +95,13 @@ public class PageController {
     public com.platform.wikibackend.page.dto.ShareResponse share(
             @AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
             @jakarta.validation.Valid @RequestBody com.platform.wikibackend.page.dto.ShareRequest req) {
-        return pages.share(userId(jwt), id, req);
+        return meta.share(userId(jwt), id, req);
     }
 
     @Operation(summary = "페이지 조회수를 올리고 최근 방문 기록에 남긴다")
     @PostMapping("/api/wiki/pages/{id}/views")
     public java.util.Map<String, Long> recordView(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
-        return java.util.Map.of("views", pages.recordView(userId(jwt), id));
+        return java.util.Map.of("views", meta.recordView(userId(jwt), id));
     }
 
     /** 소유자 지정·해제(W27-5) — 본문 {"ownerId": 3} 또는 {"ownerId": null}. EDIT 권한. */
@@ -106,7 +109,7 @@ public class PageController {
     @PutMapping("/api/wiki/pages/{id}/owner")
     public PageResponse setOwner(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                  @RequestBody com.platform.wikibackend.page.dto.PageOwnerRequest req) {
-        return pages.setOwner(userId(jwt), id, req.ownerId());
+        return meta.setOwner(userId(jwt), id, req.ownerId());
     }
 
     /** 검증(W27-5) — 본문 {"verifiedUntil": "2026-12-03"} 또는 {} (기본 90일). EDIT 권한. */
@@ -114,13 +117,13 @@ public class PageController {
     @PutMapping("/api/wiki/pages/{id}/verification")
     public PageResponse verify(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id,
                                @RequestBody(required = false) com.platform.wikibackend.page.dto.PageVerificationRequest req) {
-        return pages.verify(userId(jwt), id, req == null ? null : req.verifiedUntil());
+        return meta.verify(userId(jwt), id, req == null ? null : req.verifiedUntil());
     }
 
     @Operation(summary = "페이지 검증 표시를 해제한다")
     @DeleteMapping("/api/wiki/pages/{id}/verification")
     public PageResponse unverify(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long id) {
-        return pages.unverify(userId(jwt), id);
+        return meta.unverify(userId(jwt), id);
     }
 
     @Operation(summary = "초안 페이지를 게시한다")

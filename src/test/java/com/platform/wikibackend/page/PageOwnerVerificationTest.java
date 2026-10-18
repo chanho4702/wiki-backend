@@ -103,7 +103,7 @@ class PageOwnerVerificationTest {
                 .andReturn().getResponse().getContentAsString();
 
         String until = com.jayway.jsonpath.JsonPath.parse(body).read("$.verifiedUntil", String.class);
-        LocalDate expected = LocalDate.now(ZoneOffset.UTC).plusDays(PageService.VERIFICATION_DAYS);
+        LocalDate expected = LocalDate.now(ZoneOffset.UTC).plusDays(PageMetaService.VERIFICATION_DAYS);
         assertThat(until).startsWith(expected.toString());
     }
 

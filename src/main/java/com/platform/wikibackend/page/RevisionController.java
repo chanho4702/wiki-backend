@@ -23,12 +23,12 @@ import static com.platform.wikibackend.space.SpaceController.userId;
 @RequiredArgsConstructor
 public class RevisionController {
 
-    private final PageService pages;
+    private final RevisionService revisions;
 
     @Operation(summary = "페이지의 버전 목록을 조회한다")
     @GetMapping
     public List<RevisionMeta> list(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId) {
-        return pages.listRevisions(userId(jwt), pageId);
+        return revisions.listRevisions(userId(jwt), pageId);
     }
 
     /**
@@ -43,14 +43,14 @@ public class RevisionController {
             @Parameter(description = "이 버전보다 작은 것부터(이전 응답의 nextBefore). 생략하면 최신부터")
             @RequestParam(required = false) Integer before,
             @Parameter(description = "한 쪽 크기(1~100, 기본 50)") @RequestParam(required = false) Integer limit) {
-        return pages.listRevisionPage(userId(jwt), pageId, before, limit);
+        return revisions.listRevisionPage(userId(jwt), pageId, before, limit);
     }
 
     @Operation(summary = "특정 버전의 본문을 조회한다")
     @GetMapping("/{version}")
     public RevisionResponse get(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
                                 @Parameter(description = "조회할 버전 번호(1부터)") @PathVariable Integer version) {
-        return pages.getRevision(userId(jwt), pageId, version);
+        return revisions.getRevision(userId(jwt), pageId, version);
     }
 
     /**
@@ -62,6 +62,6 @@ public class RevisionController {
     public PageResponse restore(@AuthenticationPrincipal Jwt jwt, @Parameter(description = "페이지 ID") @PathVariable Long pageId,
                                 @Parameter(description = "되돌릴 버전 번호") @PathVariable Integer version,
                                 @RequestBody(required = false) @Valid RevisionRestoreRequest req) {
-        return pages.restore(userId(jwt), pageId, version, req == null ? null : req.changeNote());
+        return revisions.restore(userId(jwt), pageId, version, req == null ? null : req.changeNote());
     }
 }
