@@ -50,6 +50,34 @@ public interface PageLabelRepository extends JpaRepository<PageLabel, Long> {
                              @Param("prefix") String prefix,
                              org.springframework.data.domain.Limit limit);
 
+    /**
+     * 위 두 집계의 "숨은 문서 제외" 판 — 이 사용자가 볼 수 없는 문서(VIEW 제한·남의 초안)의 라벨과 건수를
+     * 빼고 센다(초안 노출 정책 2026-10-18: 숨은 초안의 라벨·개수가 집계로 새지 않게). 숨은 문서가 없으면
+     * 호출부가 원래 질의를 쓴다.
+     */
+    @Query("""
+            select l.name as name, count(l) as count
+              from PageLabel l, Page p
+             where l.pageId = p.id and p.spaceId = :spaceId and p.id not in :hidden
+             group by l.name
+             order by count(l) desc, l.name asc
+            """)
+    List<LabelCount> countBySpaceIdExcluding(@Param("spaceId") Long spaceId,
+                                             @Param("hidden") Collection<Long> hidden);
+
+    @Query("""
+            select l.name as name, count(l) as count
+              from PageLabel l, Page p
+             where l.pageId = p.id and p.spaceId in :spaceIds and p.id not in :hidden
+               and (:prefix = '' or l.name like concat(:prefix, '%') escape '\\')
+             group by l.name
+             order by count(l) desc, l.name asc
+            """)
+    List<LabelCount> suggestExcluding(@Param("spaceIds") Collection<Long> spaceIds,
+                                      @Param("prefix") String prefix,
+                                      @Param("hidden") Collection<Long> hidden,
+                                      org.springframework.data.domain.Limit limit);
+
     @Query("""
             select p.id from PageLabel l, Page p
              where l.pageId = p.id and p.spaceId = :spaceId and l.name = :name

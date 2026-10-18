@@ -86,10 +86,16 @@ public class LabelService {
     @Transactional(readOnly = true)
     public List<LabelCountResponse> listInSpace(long userId, long spaceId) {
         spaces.getForView(userId, spaceId);
-        return labels.countBySpaceId(spaceId).stream()
+        java.util.Set<Long> hidden = effective.hiddenPageIds(userId, List.of(spaceId));
+        if (hidden.size() > MAX_HIDDEN_BIND) return List.of(); // 판정 불가 규모 — 새는 것보다 빈 목록
+        return (hidden.isEmpty() ? labels.countBySpaceId(spaceId)
+                : labels.countBySpaceIdExcluding(spaceId, hidden)).stream()
                 .map(row -> new LabelCountResponse(row.getName(), row.getCount()))
                 .toList();
     }
+
+    /** 숨김 id를 IN 절로 싣는 상한 — PG 바인드 파라미터 한도(32767) 아래. */
+    static final int MAX_HIDDEN_BIND = 30_000;
 
     /** 자동완성 후보 상한 — 고르라고 띄우는 목록이라 길면 오히려 못 고른다. */
     public static final int SUGGEST_LIMIT = 20;
@@ -109,8 +115,13 @@ public class LabelService {
         if (spaceIds.isEmpty()) return List.of();
 
         String prefix = rawPrefix == null || rawPrefix.isBlank() ? "" : PageLabel.normalize(rawPrefix);
-        return labels.suggest(spaceIds, com.platform.wikibackend.common.LikePatterns.escape(prefix),
-                        org.springframework.data.domain.Limit.of(SUGGEST_LIMIT)).stream()
+        String escaped = com.platform.wikibackend.common.LikePatterns.escape(prefix);
+        var limit = org.springframework.data.domain.Limit.of(SUGGEST_LIMIT);
+        // 숨은 문서(VIEW 제한·남의 초안)의 라벨은 제안에도 세지 않는다(초안 노출 정책 2026-10-18)
+        java.util.Set<Long> hidden = effective.hiddenPageIds(userId, spaceIds);
+        if (hidden.size() > MAX_HIDDEN_BIND) return List.of();
+        return (hidden.isEmpty() ? labels.suggest(spaceIds, escaped, limit)
+                : labels.suggestExcluding(spaceIds, escaped, hidden, limit)).stream()
                 .map(row -> new LabelCountResponse(row.getName(), row.getCount()))
                 .toList();
     }

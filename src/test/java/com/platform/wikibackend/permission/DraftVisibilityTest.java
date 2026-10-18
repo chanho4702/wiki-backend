@@ -150,7 +150,60 @@ class DraftVisibilityTest {
                 .andExpect(jsonPath("$.length()").value(2));
     }
 
+    @Test
+    void 라벨_집계와_제안에서_남의_초안_라벨은_세지_않는다() throws Exception {
+        long draft = create(AUTHOR, null, "라벨 초안", "draft");
+        long open = create(AUTHOR, null, "라벨 게시", "published");
+        labels(draft, "[\"비밀기획\",\"공통\"]");
+        labels(open, "[\"공통\"]");
+
+        mvc.perform(get("/api/wiki/spaces/{id}/labels", space.getId()).with(asUser(READER, "Reader")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].name").value("공통"))
+                .andExpect(jsonPath("$[0].count").value(1));
+        mvc.perform(get("/api/wiki/labels").param("q", "비밀").with(asUser(READER, "Reader")))
+                .andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/wiki/spaces/{id}/labels", space.getId()).with(asUser(AUTHOR, "Author")))
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void 초안_아래_문서의_조상_경로와_백링크로_초안이_새지_않는다() throws Exception {
+        long draft = create(AUTHOR, null, "숨은 초안 부모", "draft");
+        long child = create(AUTHOR, draft, "초안 아래", "published");
+        long target = create(AUTHOR, null, "링크 대상", "published");
+        update(AUTHOR, draft, "숨은 초안 부모", "[[링크 대상]]", 1);
+
+        // 초안 아래 문서는 초안과 함께 가려진다 — 브레드크럼으로 초안 제목을 캐낼 수 없다
+        mvc.perform(get("/api/wiki/pages/{id}/ancestors", child).with(asUser(READER, "Reader")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/wiki/pages/paths").param("id", String.valueOf(child)).with(asUser(READER, "Reader")))
+                .andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/wiki/pages/{id}/backlinks", target).with(asUser(READER, "Reader")))
+                .andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/wiki/pages/{id}/backlinks", target).with(asUser(AUTHOR, "Author")))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void 초안을_공유해도_볼_수_없는_사람에게는_가지_않는다() throws Exception {
+        long draft = create(AUTHOR, null, "공유 초안", "draft");
+
+        mvc.perform(post("/api/wiki/pages/{id}/share", draft).with(asUser(AUTHOR, "Author"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userIds\":[" + READER + "," + SPACE_ADMIN + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(1)); // 스페이스 관리자만
+        assertThat(notifications.findByUserIdAndReadAtIsNull(READER)).isEmpty();
+    }
+
     // ── 도우미 ──
+
+    private void labels(long pageId, String json) throws Exception {
+        mvc.perform(put("/api/wiki/pages/{id}/labels", pageId).with(asUser(AUTHOR, "Author"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"labels\":" + json + "}"))
+                .andExpect(status().isOk());
+    }
 
     private ResultActions open(long userId, long pageId) throws Exception {
         return mvc.perform(get("/api/wiki/pages/{id}", pageId).with(asUser(userId, "u" + userId)));
