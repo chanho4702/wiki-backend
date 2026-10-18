@@ -62,6 +62,16 @@ public class EffectivePermissionService {
         return chainIndex(List.of(page.getId())).canView(principalsOf(userId), page.getId());
     }
 
+    /**
+     * 한 페이지를 여러 사용자에 대해 판정할 때 — 조상 체인 인덱스는 한 번만 만들고 사용자별로는
+     * 주체(팀·관리자 memo)만 바꾼다. 알림 발송이 수신자마다 질의 2회를 돌던 비용을 없앤다(감사 W-11).
+     * 사용자별 판정에서 org 불능이면 그 호출에서 503 예외가 난다 — 호출부가 사용자 단위로 처리한다.
+     */
+    public java.util.function.LongPredicate viewJudge(long pageId) {
+        SpaceIndex idx = chainIndex(List.of(pageId));
+        return userId -> idx.canView(principalsOf(userId), pageId);
+    }
+
     /** 여러 스페이스의 알림 목록처럼 페이지 묶음을 판정할 때 스페이스별 인덱스를 한 번만 만든다. */
     public Set<Long> viewablePageIds(long userId, Collection<Page> targets) {
         return viewableIds(userId, targets.stream().map(Page::getId).toList());

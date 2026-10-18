@@ -140,6 +140,16 @@ public interface PageRepository extends JpaRepository<Page, Long> {
         Long getSpaceId();
     }
 
+    /** 알림함 표시용 — (id, spaceId, title)만. 휴지통은 빠진다(@SQLRestriction, findAllById와 같다). */
+    @Query("select p.id as id, p.spaceId as spaceId, p.title as title from Page p where p.id in (:ids)")
+    List<IdSpaceTitle> findIdSpaceTitleByIds(@Param("ids") Collection<Long> ids);
+
+    interface IdSpaceTitle {
+        Long getId();
+        Long getSpaceId();
+        String getTitle();
+    }
+
     /** 자식 수 — 트리가 펼침 화살표를 그릴지 정하려면 자식을 불러오기 전에 알아야 한다. */
     @Query("select p.parentId as parentId, count(p) as count from Page p"
             + " where p.parentId in (:parentIds) and p.archivedAt is null group by p.parentId")

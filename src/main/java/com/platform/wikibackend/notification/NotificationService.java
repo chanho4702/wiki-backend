@@ -67,6 +67,7 @@ public class NotificationService {
 
     /** 페이지 내용 업데이트 후 호출 — oldBody는 수정 전 본문(새 멘션 판별용). */
     public void onPageUpdated(long actorId, Page page, String oldBody, String newBody) {
+        ViewJudge judge = new ViewJudge(page); // 체인 인덱스는 수신자 묶음에 한 번(W-11)
         Set<Long> before = mentionIds(oldBody);
         Set<Long> now = mentionIds(newBody);
 
@@ -74,30 +75,31 @@ public class NotificationService {
         newlyMentioned.removeAll(before);
         newlyMentioned.remove(actorId);
         for (long userId : newlyMentioned) {
-            deliver(userId, Notification.Type.MENTIONED, page, actorId);
+            deliver(userId, Notification.Type.MENTIONED, page, actorId, judge);
         }
 
         Set<Long> interested = interestedIn(page, now);
         interested.remove(actorId);
         interested.removeAll(newlyMentioned); // 멘션 알림과 업데이트 알림을 겹쳐 보내지 않는다
         for (long userId : interested) {
-            deliver(userId, Notification.Type.PAGE_UPDATED, page, actorId);
+            deliver(userId, Notification.Type.PAGE_UPDATED, page, actorId, judge);
         }
     }
 
     /** 댓글 작성 후 호출 — 댓글 본문 멘션은 MENTIONED, 그 외 관심 사용자는 COMMENT. */
     public void onCommentAdded(long actorId, Page page, String commentBody) {
+        ViewJudge judge = new ViewJudge(page); // 체인 인덱스는 수신자 묶음에 한 번(W-11)
         Set<Long> mentioned = mentionIds(commentBody);
         mentioned.remove(actorId);
         for (long userId : mentioned) {
-            deliver(userId, Notification.Type.MENTIONED, page, actorId);
+            deliver(userId, Notification.Type.MENTIONED, page, actorId, judge);
         }
 
         Set<Long> interested = interestedIn(page, mentionIds(page.getContent()));
         interested.remove(actorId);
         interested.removeAll(mentioned);
         for (long userId : interested) {
-            deliver(userId, Notification.Type.COMMENT, page, actorId);
+            deliver(userId, Notification.Type.COMMENT, page, actorId, judge);
         }
     }
 
@@ -137,10 +139,11 @@ public class NotificationService {
      * 대신 보내면 그 결정을 뒷문으로 뒤집는 셈이 된다.
      */
     public void onPagePublished(long actorId, Page page) {
+        ViewJudge judge = new ViewJudge(page); // 체인 인덱스는 수신자 묶음에 한 번(W-11)
         Set<Long> interested = subscribers(page);
         interested.remove(actorId); // 자기가 게시한 문서를 자기 알림함에서 다시 볼 이유가 없다
         for (long userId : interested) {
-            deliver(userId, Notification.Type.PAGE_PUBLISHED, page, actorId);
+            deliver(userId, Notification.Type.PAGE_PUBLISHED, page, actorId, judge);
         }
     }
 
@@ -175,11 +178,11 @@ public class NotificationService {
         return true;
     }
 
-    private void deliver(long userId, Notification.Type type, Page page, long actorId) {
+    private void deliver(long userId, Notification.Type type, Page page, long actorId, ViewJudge judge) {
         // 제한 변경 직후의 알림도 제목·경로를 노출하므로 저장 전에 수신자별 space+page VIEW를 확인한다.
         // org가 일시 불능이면 본문 업데이트까지 롤백하지 않고 그 알림만 fail-closed로 건너뛴다.
         try {
-            if (!isVisible(userId, page)) return;
+            if (!judge.visible(userId)) return;
         } catch (ServiceUnavailableException e) {
             log.warn("알림 수신 권한 확인 불가 — 발송 생략: user={} page={}", userId, page.getId());
             return;
@@ -200,34 +203,51 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public NotificationListResponse list(long userId) {
+        // 표시할 한 쪽(30건)만 엔티티로 읽는다. 안 읽은 건수는 페이지별 집계로, 페이지는 (id, 스페이스, 제목)
+        // 프로젝션으로 — 알림이 쌓인 사용자의 폴링마다 본문까지 전량을 읽던 비용을 없앴다(감사 W-11).
         List<Notification> rows = notifications.findByUserIdOrderByIdDesc(userId, PageRequest.of(0, PAGE_SIZE));
-        List<Notification> unreadRows = notifications.findByUserIdAndReadAtIsNull(userId);
-        // 페이지 제목·스페이스는 표시/라우팅용 — 휴지통에 있는 페이지는 findAllById가 걸러(@SQLRestriction)
-        // page == null이 되고 아래 visible 필터에서 빠진다. 영구 삭제 시엔 FK cascade로 행 자체가 사라진다.
+        List<NotificationRepository.PageCount> unreadByPage = notifications.countUnreadByPage(userId);
+        // 휴지통에 있는 페이지는 프로젝션에서 빠져(@SQLRestriction) 아래 visible 필터에서 함께 빠진다.
+        // 영구 삭제 시엔 FK cascade(또는 PageDataPurger)로 알림 행 자체가 사라진다.
         Set<Long> pageIds = new HashSet<>();
         rows.forEach(n -> pageIds.add(n.getPageId()));
-        unreadRows.forEach(n -> pageIds.add(n.getPageId()));
-        Map<Long, Page> byId = pages.findAllById(pageIds)
-                .stream().collect(Collectors.toMap(Page::getId, p -> p, (a, b) -> a));
-        // 제한 인덱스와 space 권한은 각각 스페이스당 한 번만 계산한다(요약 메일과 같은 판정).
-        Set<Long> visibleIds = visibility.visiblePageIds(userId, byId.values());
-        java.util.function.Predicate<Notification> visible = n -> {
-            Page page = byId.get(n.getPageId());
-            return page != null && visibleIds.contains(page.getId());
-        };
+        unreadByPage.forEach(c -> pageIds.add(c.getPageId()));
+        Map<Long, PageRepository.IdSpaceTitle> byId = pageIds.isEmpty() ? Map.of()
+                : pages.findIdSpaceTitleByIds(pageIds).stream()
+                        .collect(Collectors.toMap(PageRepository.IdSpaceTitle::getId, p -> p, (a, b) -> a));
+        Map<Long, Long> spaceOf = new java.util.HashMap<>();
+        byId.forEach((id, p) -> spaceOf.put(id, p.getSpaceId()));
+        // 제한 인덱스와 space 권한은 각각 묶음·스페이스당 한 번(요약 메일과 같은 판정).
+        Set<Long> visibleIds = visibility.visibleIds(userId, spaceOf);
+
         List<NotificationResponse> items = rows.stream()
-                .filter(visible)
+                .filter(n -> visibleIds.contains(n.getPageId()))
                 .map(n -> {
-                    Page page = byId.get(n.getPageId());
-                    return NotificationResponse.from(n,
-                            page == null ? null : page.getSpaceId(),
-                            page == null ? "" : page.getTitle());
+                    PageRepository.IdSpaceTitle page = byId.get(n.getPageId());
+                    return NotificationResponse.from(n, page.getSpaceId(), page.getTitle());
                 })
                 .toList();
-        long unreadCount = unreadRows.stream()
-                .filter(visible)
-                .count();
+        long unreadCount = unreadByPage.stream()
+                .filter(c -> visibleIds.contains(c.getPageId()))
+                .mapToLong(NotificationRepository.PageCount::getCount)
+                .sum();
         return new NotificationListResponse(unreadCount, items);
+    }
+
+    /** 한 페이지의 수신자 판정 — space VIEW는 사용자별(gRPC 캐시), 페이지 제한·초안은 공유 인덱스. 지연 생성. */
+    private final class ViewJudge {
+        private final Page page;
+        private java.util.function.LongPredicate effectiveJudge;
+
+        ViewJudge(Page page) {
+            this.page = page;
+        }
+
+        boolean visible(long userId) {
+            if (!permissions.isAllowed(userId, page.getSpaceId(), WikiAction.VIEW)) return false;
+            if (effectiveJudge == null) effectiveJudge = effective.viewJudge(page.getId());
+            return effectiveJudge.test(userId);
+        }
     }
 
     private boolean isVisible(long userId, Page page) {
@@ -238,9 +258,10 @@ public class NotificationService {
     /** ids가 비면 전체 읽음 — 본인 소유 행만 만진다. */
     public void markRead(long userId, List<Long> ids) {
         Instant now = Instant.now();
-        List<Notification> targets = (ids == null || ids.isEmpty())
-                ? notifications.findByUserIdAndReadAtIsNull(userId)
-                : notifications.findByIdInAndUserId(ids, userId);
-        targets.forEach(n -> n.markRead(now));
+        if (ids == null || ids.isEmpty()) {
+            notifications.markAllRead(userId, now); // 한 문장 — 안 읽은 전량을 읽어 고치지 않는다(W-11)
+            return;
+        }
+        notifications.findByIdInAndUserId(ids, userId).forEach(n -> n.markRead(now));
     }
 }

@@ -32,19 +32,23 @@ public class NotificationVisibility {
     private final EffectivePermissionService effective;
 
     public Set<Long> visiblePageIds(long userId, Collection<Page> pages) {
-        if (pages.isEmpty()) return Set.of();
+        Map<Long, Long> spaceOf = new HashMap<>();
+        for (Page page : pages) spaceOf.put(page.getId(), page.getSpaceId());
+        return visibleIds(userId, spaceOf);
+    }
+
+    /** 페이지 id → 스페이스 id만으로 판정한다 — 본문을 든 엔티티를 읽지 않는 호출부(알림함)가 쓴다. */
+    public Set<Long> visibleIds(long userId, Map<Long, Long> spaceOfPage) {
+        if (spaceOfPage.isEmpty()) return Set.of();
         Map<Long, Boolean> spaceVisible = new HashMap<>();
-        for (Page page : pages) {
-            spaceVisible.computeIfAbsent(page.getSpaceId(),
-                    spaceId -> permissions.isAllowed(userId, spaceId, WikiAction.VIEW));
+        for (Long spaceId : spaceOfPage.values()) {
+            spaceVisible.computeIfAbsent(spaceId, sid -> permissions.isAllowed(userId, sid, WikiAction.VIEW));
         }
-        Set<Long> effectiveVisible = effective.viewablePageIds(userId, pages);
+        Set<Long> effectiveVisible = effective.viewableIds(userId, spaceOfPage.keySet());
         Set<Long> out = new HashSet<>();
-        for (Page page : pages) {
-            if (spaceVisible.getOrDefault(page.getSpaceId(), false) && effectiveVisible.contains(page.getId())) {
-                out.add(page.getId());
-            }
-        }
+        spaceOfPage.forEach((pageId, spaceId) -> {
+            if (spaceVisible.getOrDefault(spaceId, false) && effectiveVisible.contains(pageId)) out.add(pageId);
+        });
         return out;
     }
 }
