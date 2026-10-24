@@ -203,6 +203,8 @@ class DocsSecurityTest {
             "/api/wiki/stars",
             "/api/wiki/recent",
             "/api/wiki/tasks/mine",
+            "/api/wiki/feed/following",
+            "/api/wiki/users/1/pages",
             "/api/wiki/audit/space-deletions",
             // 전역 감사 피드. `/api/wiki/audit/**` 규칙이 하위 세그먼트 없는 이 경로까지
             // 덮는지가 관건이라 별도로 못 박는다 — 안 덮으면 익명에게 전 스페이스의
@@ -218,7 +220,9 @@ class DocsSecurityTest {
             "/api/wiki/notifications/prefs",
             "/api/wiki/stars",
             "/api/wiki/recent",
-            "/api/wiki/tasks/mine"})
+            "/api/wiki/tasks/mine",
+            "/api/wiki/feed/following",
+            "/api/wiki/users/1/pages"})
     void 사용자_범위_경로는_임포터_토큰으로도_403이다(String path) throws Exception {
         mvc.perform(get(path).header(TOKEN_HEADER, "test-token")).andExpect(status().isForbidden());
     }

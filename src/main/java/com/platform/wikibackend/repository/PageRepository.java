@@ -381,4 +381,63 @@ public interface PageRepository extends JpaRepository<Page, Long> {
     // OFFSET이 아니라 id 커서라, 스캔 중 앞쪽 행이 지워져도 건너뛰지 않는다.
     List<Page> findByIdGreaterThanOrderByIdAsc(Long afterId, Limit limit);
     List<Page> findBySpaceIdAndIdGreaterThanOrderByIdAsc(Long spaceId, Long afterId, Limit limit);
+
+    /* ── 스페이스를 가로지르는 피드(F-07 사람별 최근 문서 · 홈 인기/팔로잉) ──
+     * 후보만 고른다 — 페이지 단위 가시성(제한·초안 정책)은 호출부가 EffectivePermissionService로 다시 거른다.
+     * 스페이스 경계는 SQL에서 자른다: allSpaces=true(GLOBAL 보유자)면 spaceIds를 보지 않는다. spaceIds가
+     * 비면 in 절이 성립하지 않으므로 호출부가 질의하기 전에 빈 결과로 끝낸다. 폴더는 읽는 문서가 아니라 뺀다. */
+
+    /** 그 사람이 만들었거나(createdBy) 마지막으로 고친(updatedBy) 문서 — 최근 수정순. 초안 포함(가시성은 호출부). */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.FeedCandidate(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt,
+                p.spaceId, p.viewCount)
+              from Page p
+             where (p.createdBy = :userId or p.updatedBy = :userId)
+               and p.archivedAt is null
+               and p.type <> com.platform.wikibackend.domain.PageType.FOLDER
+               and (:allSpaces = true or p.spaceId in (:spaceIds))
+             order by p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.FeedCandidate> findFeedByPerson(
+            @Param("userId") long userId,
+            @Param("allSpaces") boolean allSpaces, @Param("spaceIds") Collection<Long> spaceIds,
+            org.springframework.data.domain.Pageable page);
+
+    /** 인기 — 게시 문서 중 since 이후 수정된 것을 누적 조회수 내림차순(동률은 최근 수정순). */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.FeedCandidate(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt,
+                p.spaceId, p.viewCount)
+              from Page p
+             where p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED
+               and p.archivedAt is null
+               and p.type <> com.platform.wikibackend.domain.PageType.FOLDER
+               and p.updatedAt >= :since
+               and (:allSpaces = true or p.spaceId in (:spaceIds))
+             order by p.viewCount desc, p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.FeedCandidate> findFeedPopular(
+            @Param("since") Instant since,
+            @Param("allSpaces") boolean allSpaces, @Param("spaceIds") Collection<Long> spaceIds,
+            org.springframework.data.domain.Pageable page);
+
+    /** 팔로잉 — 내가 구독한 스페이스의 문서 + 내가 구독한 문서(게시만), 최근 수정순. */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.FeedCandidate(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt,
+                p.spaceId, p.viewCount)
+              from Page p
+             where p.status = com.platform.wikibackend.domain.PageStatus.PUBLISHED
+               and p.archivedAt is null
+               and p.type <> com.platform.wikibackend.domain.PageType.FOLDER
+               and (p.spaceId in (select sw.spaceId from SpaceWatch sw where sw.userId = :userId)
+                    or p.id in (select pw.pageId from PageWatch pw where pw.userId = :userId))
+               and (:allSpaces = true or p.spaceId in (:spaceIds))
+             order by p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.FeedCandidate> findFeedFollowing(
+            @Param("userId") long userId,
+            @Param("allSpaces") boolean allSpaces, @Param("spaceIds") Collection<Long> spaceIds,
+            org.springframework.data.domain.Pageable page);
 }

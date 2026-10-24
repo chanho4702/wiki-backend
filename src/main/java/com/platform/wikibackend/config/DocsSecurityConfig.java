@@ -69,6 +69,9 @@ public class DocsSecurityConfig {
                         .requestMatchers("/api/wiki/notifications", "/api/wiki/notifications/**").denyAll()
                         .requestMatchers("/api/wiki/stars", "/api/wiki/stars/**").denyAll()
                         .requestMatchers("/api/wiki/recent").denyAll()
+                        // 팔로잉은 로그인 사용자의 구독 기준이고, 사람별 문서는 공개 문서에 싣지 않는 사람 정보다.
+                        .requestMatchers("/api/wiki/feed/following").denyAll()
+                        .requestMatchers("/api/wiki/users/*/pages").denyAll()
                         .requestMatchers("/api/wiki/tasks", "/api/wiki/tasks/**").denyAll()
                         // 전역 감사 로그·관리자 현황(설계 §4.1)은 전역 관리자 전용이다. 이 인스턴스에는
                         // 전역 관리자가 없어 PublicReadPermissionClient.checkGlobal이 늘 거부하므로 권한
