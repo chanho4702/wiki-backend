@@ -9,7 +9,9 @@ CREATE INDEX idx_page_created_by_recent ON page (created_by, updated_at DESC, id
 CREATE INDEX idx_page_updated_by_recent ON page (updated_by, updated_at DESC, id DESC)
     WHERE deleted_at IS NULL AND archived_at IS NULL;
 
--- 인기: status = 'PUBLISHED' AND updated_at >= ? ORDER BY view_count DESC, updated_at DESC, id DESC
--- 정렬 순서대로 읽다가 limit을 채우면 멈춘다(전체 정렬 없음).
-CREATE INDEX idx_page_popular ON page (view_count DESC, updated_at DESC, id DESC)
+-- 인기·팔로잉: status = 'PUBLISHED' AND updated_at >= ? (인기는 이어서 view_count로 top-N 정렬)
+-- view_count를 인덱스 키로 넣지 않는다 — 문서를 열 때마다 incrementViewCount가 그 컬럼을 바꾸므로,
+-- 키에 있으면 HOT 갱신이 막혀 조회 한 번마다 page의 모든 인덱스에 새 항목이 쌓인다(가장 뜨거운 쓰기 경로).
+-- updated_at은 조회로 바뀌지 않으니 90일 창을 이 인덱스로 좁히고, 창 안 행만 정렬한다.
+CREATE INDEX idx_page_published_recent ON page (updated_at DESC, id DESC)
     WHERE status = 'PUBLISHED' AND deleted_at IS NULL AND archived_at IS NULL;

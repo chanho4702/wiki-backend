@@ -81,7 +81,7 @@ class PostgresFeedQueryTest extends PostgresTestSupport {
     void V44_피드_인덱스가_있다() {
         assertThat(jdbc.queryForList(
                 "select indexname from pg_indexes where tablename = 'page'", String.class))
-                .contains("idx_page_created_by_recent", "idx_page_updated_by_recent", "idx_page_popular");
+                .contains("idx_page_created_by_recent", "idx_page_updated_by_recent", "idx_page_published_recent");
     }
 
     private long create(String title) throws Exception {
