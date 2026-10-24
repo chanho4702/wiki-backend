@@ -61,7 +61,7 @@ class AccountDeniedMessageTest {
         TestPages.deleteAll(jdbc);
         spaces.deleteAllInBatch();
         perms.reset();
-        // 계정 상태 게이트는 이 테스트의 대상이 아니다 — 디렉터리를 비워 두면 "org에 아직 없는 사람"으로 통과한다
+        // 계정 상태 게이트는 이 테스트의 대상이 아니다 — 대역의 게이트 창구는 모르는 사람을 ACTIVE로 답한다(FakeMemberDirectory)
         directory.reset();
         gate.evictAll();
         space = spaces.save(Space.of("dm" + (System.nanoTime() % 100000), "문구", null, USER));

@@ -1,6 +1,7 @@
 package com.platform.wikibackend.directory;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -33,6 +34,15 @@ public interface MemberDirectory {
 
     /** id → 사람 + 조회 결과. 못 찾았거나 조회가 실패한 id는 {@code members}에 없다. */
     Lookup lookup(Collection<Long> ids);
+
+    /**
+     * 계정 상태 게이트용 단건 조회 — {@link #lookup}과 같은 왕복이다. 게이트가 이 창구를 따로 쓰는 이유는 하나다:
+     * 게이트는 "org에 없는 사람"을 승인 대기로 막는데(fail-closed), 이름 보강·메일 수신자 결정은 같은 "없음"을 폴백으로
+     * 읽는다. 테스트 대역이 두 의미를 따로 흉내 낼 수 있게 창구를 나눈다.
+     */
+    default Lookup accountStatus(long userId) {
+        return lookup(List.of(userId));
+    }
 
     /** 실패를 구분할 필요가 없는 호출측용 — 못 읽었으면 빈 결과다(메일 주소·이름 폴백이 그렇다) */
     default Map<Long, DirectoryMember> members(Collection<Long> ids) {
