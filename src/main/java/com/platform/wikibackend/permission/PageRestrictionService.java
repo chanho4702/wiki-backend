@@ -2,6 +2,7 @@ package com.platform.wikibackend.permission;
 
 import com.platform.common.error.ForbiddenException;
 import com.platform.common.error.NotFoundException;
+import com.platform.wikibackend.collaboration.CollaborationAccessChange;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageRestriction;
 import com.platform.wikibackend.permission.dto.InheritedRestriction;
@@ -50,6 +51,7 @@ public class PageRestrictionService {
     private final PrincipalDirectory principalDirectory;
     private final com.platform.wikibackend.audit.AuditService audit;
     private final TeamDirectory teams;
+    private final CollaborationAccessChange collaborationAccess;
 
     @Transactional(readOnly = true)
     public PageRestrictionsResponse get(long userId, long pageId) {
@@ -93,6 +95,8 @@ public class PageRestrictionService {
             rows.add(PageRestriction.of(pageId, PageRestriction.Type.EDIT, p.toType(), p.id(), userId));
         }
         restrictions.saveAll(rows);
+        // 제한은 하위로 상속된다 — 이 페이지와 자손의 열린 공동 편집 세션이 권한을 다시 확인하게 한다(높음-1).
+        collaborationAccess.afterCommit(subtreeIds(page));
         // 접근 범위가 바뀌는 조작이라 흔적을 남긴다 — "언제부터 이 페이지가 잠겼나"의 유일한 근거다.
         audit.recordPage(userId, com.platform.wikibackend.domain.AuditAction.PAGE_RESTRICTIONS_CHANGED,
                 page, rows.isEmpty() ? "제한 해제" : "보기 " + dedupe(view).size() + "명/팀, 편집 " + dedupe(edit).size() + "명/팀");
@@ -100,6 +104,24 @@ public class PageRestrictionService {
                 principals(rows, PageRestriction.Type.VIEW),
                 principals(rows, PageRestriction.Type.EDIT),
                 inheritedView(page));
+    }
+
+    /** 자기 포함 서브트리 id — 스페이스의 (id, parentId)를 한 번 읽어 메모리에서 모은다(순환 데이터에도 멈춘다). */
+    private List<Long> subtreeIds(Page root) {
+        Map<Long, List<Long>> childrenOf = new HashMap<>();
+        for (PageRepository.IdParent row : pages.findIdParentBySpaceId(root.getSpaceId())) {
+            childrenOf.computeIfAbsent(row.getParentId(), k -> new ArrayList<>()).add(row.getId());
+        }
+        List<Long> ids = new ArrayList<>();
+        Set<Long> visited = new HashSet<>();
+        java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>(List.of(root.getId()));
+        while (!queue.isEmpty()) {
+            long id = queue.poll();
+            if (!visited.add(id)) continue;
+            ids.add(id);
+            queue.addAll(childrenOf.getOrDefault(id, List.of()));
+        }
+        return ids;
     }
 
     /**

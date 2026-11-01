@@ -3,6 +3,7 @@ package com.platform.wikibackend.page;
 import com.platform.common.error.ConflictException;
 import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.audit.AuditService;
+import com.platform.wikibackend.collaboration.CollaborationAccessChange;
 import com.platform.wikibackend.collaboration.CollaborationDraftReset;
 import com.platform.wikibackend.common.ActorNames;
 import com.platform.wikibackend.domain.AuditAction;
@@ -64,6 +65,7 @@ public class PageService {
     private final ActorNames actorNames;
     private final TaskService taskSync;
     private final CollaborationDraftReset collaborationReset;
+    private final CollaborationAccessChange collaborationAccess;
     private final PageStructure structure;
 
     public PageResponse create(long userId, PageCreateRequest req) {
@@ -183,6 +185,9 @@ public class PageService {
             if (policy == null) {
                 throw new ConflictException("하위 페이지가 있어 삭제할 수 없습니다");
             }
+            // 휴지통으로 가는 자손(CASCADE)도, 제한 상속 체인이 바뀌는 자손(PROMOTE)도 열린 공동 편집 세션이
+            // 권한을 다시 확인해야 한다. 휴지통으로 보낸 뒤에는 조회에서 빠지므로 변경 전에 모은다(높음-1).
+            collaborationAccess.afterCommit(structure.collectSubtree(pageId).stream().map(Page::getId).toList());
             // CASCADE는 자손을 삭제하고 PROMOTE도 자손의 제한 상속 체인을 바꾼다. 루트만 검사하면
             // 사용자가 볼 수 없는 제한 자손을 삭제·재배치할 수 있으므로 전체를 먼저 판정한다.
             effective.requireEditAll(userId, structure.collectSubtree(pageId));
@@ -200,6 +205,7 @@ public class PageService {
             }
         }
         trashOne(userId, p, true);
+        if (children.isEmpty()) collaborationAccess.afterCommit(List.of(pageId));
     }
 
     /**

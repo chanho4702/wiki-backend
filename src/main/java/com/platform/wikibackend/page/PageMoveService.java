@@ -1,5 +1,6 @@
 package com.platform.wikibackend.page;
 
+import com.platform.wikibackend.collaboration.CollaborationAccessChange;
 import com.platform.common.error.NotFoundException;
 import com.platform.wikibackend.domain.Page;
 import com.platform.wikibackend.domain.PageType;
@@ -31,6 +32,7 @@ public class PageMoveService {
     private final EffectivePermissionService effective;
     private final EventRelay events;
     private final PageStructure structure;
+    private final CollaborationAccessChange collaborationAccess;
 
     /**
      * 트리 이동/재정렬(P1-001) — 부모 변경과 형제 순서를 한 트랜잭션에서 처리한다.
@@ -56,7 +58,10 @@ public class PageMoveService {
         if (relocated) {
             // 부모 변경은 서브트리 전체의 effective VIEW를 바꾼다. 숨겨진 자손을 대신 옮기지 못하게
             // 실제 변경 대상 전부를 mutation 전에 판정한다.
-            effective.requireEditAll(userId, structure.collectSubtree(pageId));
+            List<Page> subtree = structure.collectSubtree(pageId);
+            effective.requireEditAll(userId, subtree);
+            // 새 조상·스페이스의 권한이 서브트리 전체에 적용된다 — 열린 공동 편집 세션이 다시 확인하게 한다(높음-1).
+            collaborationAccess.afterCommit(subtree.stream().map(Page::getId).toList());
         }
         if (relocated && !req.impactConfirmed()) {
             var impact = effective.newViewRestrictionsAfterMove(page, req.parentId());
