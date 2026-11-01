@@ -37,6 +37,14 @@ public class FeedController {
         return feed.personPages(userId(jwt), personId, limit);
     }
 
+    @Operation(summary = "볼 수 있는 모든 스페이스의 문서를 최근 수정순으로 조회한다(보관 제외, 초안은 볼 수 있는 사람에게만)")
+    @GetMapping("/api/wiki/feed/recent")
+    public List<FeedService.FeedPage> recent(
+            @AuthenticationPrincipal Jwt jwt,
+            @Parameter(description = "최대 건수(기본 20, 최대 50)") @RequestParam(defaultValue = "20") int limit) {
+        return feed.recent(userId(jwt), limit);
+    }
+
     @Operation(summary = "최근 90일 안에 수정된 게시 문서를 누적 조회수순으로 조회한다")
     @GetMapping("/api/wiki/feed/popular")
     public List<FeedService.FeedPage> popular(

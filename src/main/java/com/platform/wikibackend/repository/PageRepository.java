@@ -404,6 +404,23 @@ public interface PageRepository extends JpaRepository<Page, Long> {
             @Param("allSpaces") boolean allSpaces, @Param("spaceIds") Collection<Long> spaceIds,
             org.springframework.data.domain.Pageable page);
 
+    /**
+     * 홈 최근 업데이트 — 스페이스 개요의 {@link #findRecentlyUpdated}를 스페이스를 가로질러 한 번에.
+     * 같은 범위다: 보관 제외, 초안·폴더 포함(초안은 호출부의 가시성 판정이 작성자·관리자에게만 남긴다).
+     */
+    @Query("""
+            select new com.platform.wikibackend.page.dto.FeedCandidate(
+                p.id, p.parentId, p.title, p.type, p.status, p.sortOrder, p.icon, p.updatedBy, p.updatedAt,
+                p.spaceId, p.viewCount)
+              from Page p
+             where p.archivedAt is null
+               and (:allSpaces = true or p.spaceId in (:spaceIds))
+             order by p.updatedAt desc, p.id desc
+            """)
+    List<com.platform.wikibackend.page.dto.FeedCandidate> findFeedRecent(
+            @Param("allSpaces") boolean allSpaces, @Param("spaceIds") Collection<Long> spaceIds,
+            org.springframework.data.domain.Pageable page);
+
     /** 인기 — 게시 문서 중 since 이후 수정된 것을 누적 조회수 내림차순(동률은 최근 수정순). */
     @Query("""
             select new com.platform.wikibackend.page.dto.FeedCandidate(

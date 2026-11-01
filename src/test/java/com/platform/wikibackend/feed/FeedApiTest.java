@@ -240,7 +240,58 @@ class FeedApiTest {
         following(OUTSIDER).andExpect(jsonPath("$.length()").value(0));
     }
 
+    // ── 최근 업데이트(교차 스페이스) ──
+
+    @Test
+    void 최근_업데이트는_볼_수_있는_모든_스페이스의_문서를_최근_수정순으로_준다() throws Exception {
+        long older = create(AUTHOR, space, null, "옛 문서", "published");
+        long inOther = create(AUTHOR, other, null, "다른 스페이스 문서", "published");
+        long folder = create(AUTHOR, space, null, "폴더", "published", "folder");
+        touch(older, Instant.now().minus(Duration.ofDays(3)));
+        touch(inOther, Instant.now().minus(Duration.ofDays(1)));
+        touch(folder, Instant.now().minus(Duration.ofDays(2)));
+
+        // 스페이스 개요 "최근 업데이트"와 같은 범위 — 폴더도 담는다
+        recent(AUTHOR, null).andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].page.id").value(contains((int) inOther, (int) folder, (int) older)))
+                .andExpect(jsonPath("$[0].spaceName").value("다른"));
+        // 다른 스페이스를 볼 수 없는 사람에게는 그 문서가 없다
+        recent(READER, null).andExpect(jsonPath("$[*].page.id").value(contains((int) folder, (int) older)));
+        recent(OUTSIDER, null).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void 최근_업데이트의_초안은_작성자와_관리자에게만_보이고_보관과_휴지통은_뺀다() throws Exception {
+        long published = create(AUTHOR, space, null, "게시 문서", "published");
+        long draft = create(AUTHOR, space, null, "초안", "draft");
+        long archived = create(AUTHOR, space, null, "보관 문서", "published");
+        long trashed = create(AUTHOR, space, null, "지운 문서", "published");
+        mvc.perform(post("/api/wiki/pages/{id}/archive", archived).with(asUser(AUTHOR, "a"))).andExpect(status().isOk());
+        mvc.perform(delete("/api/wiki/pages/{id}", trashed).with(asUser(AUTHOR, "a"))).andExpect(status().isNoContent());
+
+        recent(READER, null).andExpect(jsonPath("$[*].page.id").value(contains((int) published)));
+        for (long viewer : new long[] {AUTHOR, SPACE_ADMIN, GLOBAL_ADMIN}) {
+            recent(viewer, null).andExpect(jsonPath("$[*].page.id")
+                    .value(containsInAnyOrder((int) published, (int) draft)));
+        }
+    }
+
+    @Test
+    void 최근_업데이트는_기본_20건_최대_50건이다() throws Exception {
+        for (int i = 0; i < 55; i++) create(AUTHOR, space, null, "문서 " + i, "published");
+
+        recent(READER, null).andExpect(jsonPath("$.length()").value(20));
+        recent(READER, "1000").andExpect(jsonPath("$.length()").value(50));
+        recent(READER, "0").andExpect(jsonPath("$.length()").value(1));
+    }
+
     // ── 도우미 ──
+
+    private ResultActions recent(long caller, String limit) throws Exception {
+        MockHttpServletRequestBuilder req = get("/api/wiki/feed/recent").with(asUser(caller, "u" + caller));
+        if (limit != null) req = req.param("limit", limit);
+        return mvc.perform(req);
+    }
 
     private ResultActions person(long caller, long person, String limit) throws Exception {
         MockHttpServletRequestBuilder req = get("/api/wiki/users/{id}/pages", person).with(asUser(caller, "u" + caller));

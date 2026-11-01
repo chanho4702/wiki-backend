@@ -24,7 +24,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 스페이스를 가로지르는 문서 피드 — 사람 프로필의 최근 작업(F-07)과 홈의 인기·팔로잉.
+ * 스페이스를 가로지르는 문서 피드 — 사람 프로필의 최근 작업(F-07)과 홈의 최근 업데이트·인기·팔로잉.
  *
  * 가시성은 새로 짜지 않는다. 스페이스 경계는 org의 접근 범위({@link PermissionClient#accessibleSpaces})로
  * SQL에서 자르고, 페이지 단위(VIEW 제한 + 초안 정책 — 작성자·스페이스 ADMIN·전역 ADMIN, 초안 조상 아래
@@ -65,6 +65,15 @@ public class FeedService {
         java.time.Instant since = java.time.Instant.now().minus(POPULAR_WINDOW);
         return collect(callerId, limit, (scope, page) ->
                 pages.findFeedPopular(since, scope.all(), inList(scope), page));
+    }
+
+    /**
+     * 최근 업데이트 — 볼 수 있는 모든 스페이스의 문서를 최근 수정순으로. 스페이스 개요 "최근 업데이트"와 같은
+     * 범위(보관 제외, 폴더·볼 수 있는 초안 포함)라 홈이 스페이스마다 묻던 요청을 한 번으로 줄인다.
+     */
+    public List<FeedPage> recent(long callerId, int limit) {
+        return collect(callerId, limit, (scope, page) ->
+                pages.findFeedRecent(scope.all(), inList(scope), page));
     }
 
     /** 팔로잉 — 구독한 스페이스·문서의 게시 문서, 최근 수정순. */
