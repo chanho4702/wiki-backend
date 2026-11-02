@@ -7,6 +7,9 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -24,12 +27,15 @@ class RedisCollaborationRevokeSignalTest {
     void 재확인_신호는_계약_채널에_rooms_배열_JSON으로_발행한다() throws Exception {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
 
-        new RedisCollaborationRevokeSignal(redis, json).publish(List.of("page:7", "page:8"));
+        Clock clock = Clock.fixed(Instant.parse("2026-11-02T00:00:10Z"), ZoneOffset.UTC);
+        new RedisCollaborationRevokeSignal(redis, json, clock).publish(List.of("page:7", "page:8"));
 
         ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
         verify(redis).convertAndSend(eq("wiki:collaboration:revoke"), message.capture());
         JsonNode sent = json.readTree(message.getValue());
-        assertThat(sent.size()).isEqualTo(1);
+        assertThat(sent.size()).isEqualTo(2);
+        // collaboration-service가 티켓 issuedAt(같은 시계)과 비교해 회수 전 티켓으로 늦게 붙은 연결을 닫는다
+        assertThat(sent.path("revokedAt").asText()).isEqualTo("2026-11-02T00:00:10Z");
         assertThat(sent.path("rooms").isArray()).isTrue();
         assertThat(sent.path("rooms").get(0).asText()).isEqualTo("page:7");
         assertThat(sent.path("rooms").get(1).asText()).isEqualTo("page:8");

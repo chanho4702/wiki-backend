@@ -31,8 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 43번 높음-1: 접근 범위가 바뀌는 쓰기(휴지통·이동·페이지 제한) 뒤에, 공동 초안이 있는 room에만 커밋 후
- * 권한 재확인 신호가 나간다. 롤백된 변경은 아무 세션도 끊지 않는다.
+ * 43번 높음-1: 접근 범위가 바뀌는 쓰기(휴지통·이동·페이지 제한) 뒤에, 영향받은 room 전부에 커밋 후 권한 재확인
+ * 신호가 나간다(초안 행 유무로 거르지 않는다 — Codex P1). 롤백된 변경은 아무 세션도 끊지 않는다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -88,10 +88,10 @@ class CollaborationAccessChangeTest {
     }
 
     @Test
-    void 초안이_없는_문서는_신호를_보내지_않는다() {
+    void 초안_행이_없는_문서도_보낸다_확인과_커밋_사이에_새로_열린_세션을_놓치지_않게() {
         pageService.delete(1L, plain.getId(), null);
 
-        assertThat(signal.sent).isEmpty();
+        assertThat(signal.rooms()).containsExactly(room(plain));
     }
 
     @Test
