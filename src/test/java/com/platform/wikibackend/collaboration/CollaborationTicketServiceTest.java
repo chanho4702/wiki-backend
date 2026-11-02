@@ -183,6 +183,39 @@ class CollaborationTicketServiceTest {
     }
 
     @Test
+    void 발급_시각은_권한_조회보다_먼저_찍힌다_조회_중에_접근_변경이_커밋돼도_회수_대조를_통과하지_못하게() throws Exception {
+        stubTicketStorage();
+        Instant beforeLookup = Instant.parse("2026-08-16T12:00:00Z");
+        Instant revokedAt = Instant.parse("2026-08-16T12:00:05Z");
+        Instant[] now = {beforeLookup};
+        Clock moving = new Clock() {
+            @Override public ZoneOffset getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        CollaborationTicketService racing = new CollaborationTicketService(
+                pages, spaces, drafts, redis, json, Duration.ofMinutes(1), moving, random);
+        // 조회는 옛 권한으로 통과하지만, 그 사이 접근 변경이 커밋되고 회수 신호(revokedAt)가 나간 뒤에 끝난다
+        when(pages.getEditable(42L, 7L)).thenAnswer(invocation -> {
+            now[0] = revokedAt.plusSeconds(1);
+            return Page.of(3L, null, "문서", "본문", 1L);
+        });
+
+        racing.issue(42L, "Alice", 7L);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(values).set(any(), payload.capture(), any());
+        JsonNode issued = json.readTree(payload.getValue()).path("issuedAt");
+        // 이 테스트의 ObjectMapper는 Instant를 초 단위 숫자로 쓴다(운영 매퍼는 ISO 문자열) — 둘 다 읽는다
+        Instant issuedAt = issued.isNumber()
+                ? Instant.ofEpochMilli(Math.round(issued.asDouble() * 1000))
+                : Instant.parse(issued.asText());
+        assertThat(issuedAt).isEqualTo(beforeLookup);
+        // collaboration-service는 issuedAt <= revokedAt(+여유)면 닫는다 — 낡은 권한의 티켓이 통과하지 못한다
+        assertThat(issuedAt).isBefore(revokedAt);
+    }
+
+    @Test
     void TTL이_5분을_넘거나_0이면_구성_오류로_거부한다() {
         assertThatThrownBy(() -> new CollaborationTicketService(
                 pages, spaces, drafts, redis, json, Duration.ZERO, clock, random))
