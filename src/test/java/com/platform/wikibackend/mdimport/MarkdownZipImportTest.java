@@ -251,6 +251,26 @@ class MarkdownZipImportTest {
         assertThat(pagesInSpace()).isEmpty();
     }
 
+    /** Codex P2 — 참조형 이미지가 내려받기 주소로, 괄호가 든 목적지가 잘려 엉뚱한 첨부로 가던 것. */
+    @Test
+    void 참조형_이미지는_inline이고_괄호가_든_목적지는_통째로_푼다() throws Exception {
+        Map<String, Object> entries = new LinkedHashMap<>();
+        entries.put("doc.md", "![그림][pic] [명세](files/spec(v2).pdf)\n\n[pic]: img/a.png\n");
+        entries.put("img/a.png", png());
+        entries.put("files/spec(v2).pdf", "%PDF-1.4\n%%EOF".getBytes(StandardCharsets.US_ASCII));
+        entries.put("files/spec", "괄호 앞에서 잘리면 여기로 간다");
+        upload(zip(entries)).andExpect(status().isCreated());
+
+        Page doc = byTitle("doc");
+        List<Attachment> files = attachments.findByPageId(doc.getId());
+        assertThat(files).extracting(Attachment::getFilename).containsExactlyInAnyOrder("a.png", "spec(v2).pdf");
+        Attachment image = files.stream().filter(a -> a.getFilename().equals("a.png")).findFirst().orElseThrow();
+        Attachment pdf = files.stream().filter(a -> a.getFilename().equals("spec(v2).pdf")).findFirst().orElseThrow();
+        assertThat(doc.getContent())
+                .contains("[pic]: /api/wiki/attachments/" + image.getId() + "/inline")
+                .contains("[명세](/api/wiki/attachments/" + pdf.getId() + ")");
+    }
+
     @Test
     void 같은_이름의_다른_파일은_한_문서에서_이름을_바꿔_붙인다() throws Exception {
         upload(zip(Map.of(
