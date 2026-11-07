@@ -194,12 +194,28 @@ class MarkdownImportTest {
         assertThat(pagesInSpace()).isEmpty();
     }
 
+    /** Codex P2 — `---\n---`(빈 앞머리)가 substring(4, 3)으로 묶음 전체를 500으로 떨어뜨렸다. */
+    @Test
+    void 빈_앞머리는_빈_메타_블록으로_본다() throws Exception {
+        mvc.perform(request()
+                        .file(md("empty-front.md", "---\n---\n# 빈 앞머리 뒤 제목\n\n본문"))
+                        .file(md("only-front.md", "---\n---"))
+                        .with(asUser(USER, "김")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.pages[0].title").value("빈 앞머리 뒤 제목"))
+                .andExpect(jsonPath("$.pages[0].content").value("본문"))
+                .andExpect(jsonPath("$.pages[1].title").value("only-front"))
+                .andExpect(jsonPath("$.pages[1].content").value(""));
+    }
+
     @Test
     void 제목_파싱_단위() {
         assertThat(MarkdownImportService.parse("x.md", "# 제목 #\n본문").title()).isEqualTo("제목");
         assertThat(MarkdownImportService.parse("x.md", "## 두번째 수준\n본문").title()).isEqualTo("x");
         assertThat(MarkdownImportService.parse("x.md", "---\ntitle: 'a'\n---").body()).isEmpty();
         assertThat(MarkdownImportService.parse(".md", "").title()).isEqualTo("제목 없음");
+        assertThat(MarkdownImportService.parse("e.md", "---\n---\n").title()).isEqualTo("e");
+        assertThat(MarkdownImportService.parse("e.md", "---\n---\n").body()).isEmpty();
         assertThat(MarkdownImportService.parse("x.md", "# " + "가".repeat(300)).title()).hasSize(255);
     }
 }

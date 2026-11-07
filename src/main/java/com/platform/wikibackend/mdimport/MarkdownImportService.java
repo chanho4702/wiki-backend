@@ -159,7 +159,8 @@ public class MarkdownImportService {
         if (text.startsWith("---\n")) {
             int end = text.indexOf("\n---", 3);
             if (end > 0 && (end + 4 == text.length() || text.charAt(end + 4) == '\n')) {
-                String front = text.substring(4, end);
+                // `---\n---`(빈 앞머리)면 닫는 줄이 여는 줄 바로 뒤(end == 3)다 — 빈 메타 블록
+                String front = end > 4 ? text.substring(4, end) : "";
                 Matcher m = FRONT_MATTER_TITLE.matcher(front);
                 if (m.find()) {
                     title = firstNonNull(m.group(1), m.group(2), m.group(3));

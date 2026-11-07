@@ -207,6 +207,31 @@ class DocxExportTest {
         }
     }
 
+    /** Codex P2 — 참조형 `![x][ref]`·`[t][ref]`가 글자로 빠져 첨부 이미지·링크가 Word에서 사라졌다. */
+    @Test
+    void 참조형_이미지와_링크도_정의로_풀어_넣는다() throws Exception {
+        perms.allow(USER, space.getId(), WikiAction.EDIT);
+        Page page = pages.save(Page.of(space.getId(), null, "참조형", "본문", USER));
+        long attachmentId = uploadPng(page.getId(), USER);
+        page.rewriteContentForCopy("""
+                ![그림][img] 그리고 [문서 사이트][site], [site], [내부][wiki], [없는 참조][nope]
+
+                [img]: /api/wiki/attachments/%d/inline
+                [site]: https://example.com/docs
+                [wiki]: /wiki/spaces/1/pages/2
+                """.formatted(attachmentId));
+        pages.save(page);
+
+        try (XWPFDocument doc = open(export(page.getId(), USER, ""))) {
+            assertThat(doc.getAllPictures()).hasSize(1);
+            assertThat(doc.getHyperlinks()).extracting(h -> h.getURL())
+                    .containsExactly("https://example.com/docs", "https://example.com/docs");
+            String text = textOf(doc);
+            assertThat(text).contains("문서 사이트").contains("site").contains("내부").contains("[없는 참조][nope]");
+            assertThat(text).doesNotContain("https://example.com/docs").doesNotContain("/api/wiki/attachments");
+        }
+    }
+
     @Test
     void 볼_수_없는_문서의_첨부_이미지는_심지_않는다() throws Exception {
         Space secret = spaces.save(Space.of("secret", "비밀", null, STRANGER));

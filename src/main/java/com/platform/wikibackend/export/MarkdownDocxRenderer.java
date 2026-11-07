@@ -11,13 +11,16 @@ import com.vladsch.flexmark.ast.Heading;
 import com.vladsch.flexmark.ast.HtmlBlock;
 import com.vladsch.flexmark.ast.HtmlInline;
 import com.vladsch.flexmark.ast.Image;
+import com.vladsch.flexmark.ast.ImageRef;
 import com.vladsch.flexmark.ast.IndentedCodeBlock;
 import com.vladsch.flexmark.ast.Link;
+import com.vladsch.flexmark.ast.LinkRef;
 import com.vladsch.flexmark.ast.ListBlock;
 import com.vladsch.flexmark.ast.ListItem;
 import com.vladsch.flexmark.ast.MailLink;
 import com.vladsch.flexmark.ast.OrderedList;
 import com.vladsch.flexmark.ast.Paragraph;
+import com.vladsch.flexmark.ast.Reference;
 import com.vladsch.flexmark.ast.SoftLineBreak;
 import com.vladsch.flexmark.ast.StrongEmphasis;
 import com.vladsch.flexmark.ast.Text;
@@ -375,6 +378,28 @@ public class MarkdownDocxRenderer {
                 run(p, address, style.withLink("mailto:" + address));
             } else if (node instanceof Image img) {
                 image(p, img.getUrl().toString().trim(), img.getText().toString());
+            } else if (node instanceof ImageRef ref) {
+                // 참조형 이미지 `![alt][ref]` — 정의(`[ref]: url`)로 풀어 인라인 이미지와 같은 길을 탄다
+                Reference def = ref.getReferenceNode(ref.getDocument());
+                if (def != null) {
+                    image(p, def.getUrl().toString().trim(), ref.getText().toString());
+                } else {
+                    run(p, ref.getChars().unescape(), style); // 정의 없는 참조는 원문 글자
+                }
+            } else if (node instanceof LinkRef ref) {
+                // 참조형 링크 `[t][ref]`·`[ref]` — 정의의 주소로 일반 링크와 같은 규칙(외부만 하이퍼링크)
+                Reference def = ref.getReferenceNode(ref.getDocument());
+                if (def == null) {
+                    run(p, ref.getChars().unescape(), style);
+                } else {
+                    String url = def.getUrl().toString().trim();
+                    Style linkStyle = EXTERNAL_LINK.matcher(url).matches() ? style.withLink(url) : style;
+                    if (ref.hasChildren()) {
+                        inlines(p, ref, linkStyle);
+                    } else {
+                        run(p, ref.getReference().unescape(), linkStyle);
+                    }
+                }
             } else if (node instanceof SoftLineBreak) {
                 run(p, " ", style);
             } else if (node instanceof HardLineBreak) {
