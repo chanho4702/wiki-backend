@@ -219,6 +219,14 @@ public class OpenApiConfig {
                     || (type.isArray() && MultipartFile.class.isAssignableFrom(type.getComponentType()))) {
                 return true;
             }
+            // List<MultipartFile>(여러 파일 업로드 — Markdown 가져오기)
+            if (java.util.Collection.class.isAssignableFrom(type)) {
+                Class<?> element = org.springframework.core.ResolvableType.forMethodParameter(parameter)
+                        .asCollection().resolveGeneric(0);
+                if (element != null && MultipartFile.class.isAssignableFrom(element)) {
+                    return true;
+                }
+            }
         }
         return false;
     }

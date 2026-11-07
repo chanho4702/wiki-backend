@@ -66,6 +66,10 @@ dependencies {
     implementation 'com.vladsch.flexmark:flexmark-ext-gfm-tasklist:0.64.8'
     implementation 'io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.37'
     implementation 'org.jsoup:jsoup:1.18.3'   // flexmark HTML을 openhtmltopdf가 요구하는 XHTML로 정규화
+    // 페이지 Word(.docx) 내보내기 — flexmark AST를 Apache POI XWPF로 옮긴다(Apache-2.0, 순수 JVM).
+    // docx4j·flexmark-docx-converter를 쓰지 않는 이유: JAXB 런타임까지 끌고 와 이미지가 커지고, 변환기는
+    // flexmark 0.64 기준 javax JAXB(docx4j 8)라 Boot 4(jakarta)와 맞지 않는다.
+    implementation 'org.apache.poi:poi-ooxml:5.4.1'
     implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'

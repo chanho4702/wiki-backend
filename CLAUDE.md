@@ -60,9 +60,10 @@ FQCN 대신 import를 쓴다. 새 쓰기 경로를 만들면: `PageWriteGuard` �
 - **"지우고 다시 넣기" 교체**는 bulk `@Modifying` 삭제(즉시 실행) 또는 `flush()` 뒤에 넣는다 — 파생 `deleteBy`는
   flush 때 INSERT가 먼저 나가 운영 PG 유니크 제약에 걸린다.
 - **LIKE**는 `LikePatterns`로 이스케이프하고 질의에 `escape '\'`를 붙인다.
-- **PDF 렌더러는 외부 URL을 열지 않는다**(SSRF). 이미지는 위키 첨부만 저장소에서 읽어 data URI로 넣는다.
+- **PDF·Word 렌더러는 외부 URL을 열지 않는다**(SSRF). 이미지는 위키 첨부만 저장소에서 읽어 넣는다 — 범위·권한·이미지 판정은 `export/ExportDocuments` 한 곳.
 - **콘텐츠 gRPC(:9111)**는 무인증·search-service 전용 — `SEARCH_MODE=lite`면 뜨지 않는다. 서비스 간 토큰은 플랫폼 공통 작업.
 - **이관 로직은 위키에 넣지 않는다** — 내부 import API(`/internal/wiki/import/**`, `X-Internal-Token`)만.
+  `mdimport/`(사용자가 올린 .md → 새 문서)는 이관 엔진이 아니다 — 원격 호출·주체 매핑 없이 `PageService.create` 한 길만 탄다.
 
 ## Flyway 마이그레이션
 

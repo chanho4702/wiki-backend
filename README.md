@@ -468,7 +468,8 @@ src/main/java/com/platform/wikibackend/
 ├─ comment/ reaction/ label/ watch/ task/ template/ personal/  협업 부가 기능
 ├─ notification/  알림함·즉시/요약 메일(org 메일 허브 경유)
 ├─ search/        라이트 검색(GraphQL, OpenSearch 없는 배포)
-├─ export/        PDF 내보내기(외부 URL을 열지 않는다)
+├─ export/        PDF·Word(.docx) 내보내기(외부 URL을 열지 않는다, 범위·권한 판정은 ExportDocuments 공용)
+├─ mdimport/      Markdown 파일 가져오기(사용자 업로드 → PageService.create, 이관 엔진 아님)
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v2 계약·공동 초안 리셋
 ├─ importapi/     이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
 ├─ permission/    effective 판정(제한·초안)·org-service gRPC 어댑터(판정·팀·제한 주체)
