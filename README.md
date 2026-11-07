@@ -435,6 +435,10 @@ Document IR 스키마·정규화기·DC 클라이언트·잡 워커·보고서·
 | `WIKI_S3_ACCESS_KEY` / `WIKI_S3_SECRET_KEY` | 빈 값 | S3 요청 서명 자격증명 |
 | `WIKI_FILES_DIR` | `./data/attachments` | 기존 LOCAL 첨부 읽기 경로 |
 | `WIKI_MAX_ATTACHMENT_MB` | `20` | 파일·요청 최대 크기(MB) |
+| `WIKI_MD_IMPORT_ZIP_MAX_ENTRIES` | `1000` | Markdown zip 가져오기 — 항목 수 상한 |
+| `WIKI_MD_IMPORT_ZIP_MAX_TOTAL_SIZE` | `200MB` | Markdown zip 가져오기 — 실제로 풀린 크기 합계 상한(압축 폭탄 방어) |
+| `WIKI_MD_IMPORT_ZIP_MAX_ENTRY_SIZE` | `20MB` | Markdown zip 가져오기 — 첨부로 올릴 항목 하나의 상한(.md는 1MB 고정) |
+| `WIKI_MD_IMPORT_ZIP_MAX_PAGES` | `300` | Markdown zip 가져오기 — 한 번에 만드는 문서·폴더 수 상한 |
 | `WIKI_PENDING_ATTACHMENT_RETENTION` | `PT24H` | PENDING 첨부 정리 유예 |
 | `WIKI_COLLABORATION_TICKET_TTL` | `PT1M` | WebSocket 접속용 1회 ticket TTL(최대 5분) |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
@@ -469,7 +473,7 @@ src/main/java/com/platform/wikibackend/
 ├─ notification/  알림함·즉시/요약 메일(org 메일 허브 경유)
 ├─ search/        라이트 검색(GraphQL, OpenSearch 없는 배포)
 ├─ export/        PDF·Word(.docx) 내보내기(외부 URL을 열지 않는다, 범위·권한 판정은 ExportDocuments 공용)
-├─ mdimport/      Markdown 파일 가져오기(사용자 업로드 → PageService.create, 이관 엔진 아님)
+├─ mdimport/      Markdown 파일·zip 가져오기(사용자 업로드 → PageService.create + 첨부, 이관 엔진 아님)
 ├─ collaboration/ 단기 WebSocket ticket 발급·Redis v2 계약·공동 초안 리셋
 ├─ importapi/     이관 엔진이 부르는 내부 쓰기 API(/internal/wiki/import)
 ├─ permission/    effective 판정(제한·초안)·org-service gRPC 어댑터(판정·팀·제한 주체)

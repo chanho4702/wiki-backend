@@ -258,6 +258,29 @@ public class PageService {
 
     /** 존재 검증만 — 권한은 호출부가. 첨부(Task 11)·리비전(Task 10)이 재사용. */
     @Transactional(readOnly = true)
+    /**
+     * 같은 요청에서 방금 만든 문서(v1)의 본문을 마무리한다 — Markdown(zip) 가져오기가 첨부·문서 링크를 실제 id로
+     * 바꿔 넣을 때. 첨부와 다른 문서는 이 문서가 먼저 있어야 생기므로 한 번 쓰고 다시 눌러야 한다.
+     *
+     * 새 편집이 아니라 생성의 끝맺음이라 version을 올리지 않고 v1 리비전 본문도 같이 고친다(ImportedPageWriter.rewriteBody와
+     * 같은 원칙 — 올리면 가져온 문서마다 "v2 수정됨"이 생긴다). 작업 표·백링크는 본문의 파생물이라 다시 계산한다.
+     * 색인 이벤트는 id만 실어 커밋 뒤 본문을 다시 읽으므로 따로 쏘지 않는다.
+     */
+    public void finalizeCreatedContent(long pageId, String markdown) {
+        Page page = getOwned(pageId);
+        if (page.getVersion() == null || page.getVersion() != 1) {
+            throw new IllegalStateException("방금 만든 문서만 마무리할 수 있습니다: " + pageId);
+        }
+        if (Objects.equals(page.getContent(), markdown)) return;
+        page.rewriteImportedContent(markdown);
+        revisions.findByPageIdAndVersion(pageId, 1).ifPresent(revision -> {
+            revision.replaceContent(markdown);
+            revisions.save(revision);
+        });
+        taskSync.sync(page);
+        labelService.reindexLinks(page);
+    }
+
     public Page getOwned(long pageId) {
         return structure.getOwned(pageId);
     }

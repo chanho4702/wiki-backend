@@ -106,6 +106,49 @@ public class AttachmentService {
         }
     }
 
+    /** 다시 열 수 있는 바이트 원천 — zip 항목처럼 한 번 읽고 버리는 스트림을 형식 판별·저장에 두 번 쓴다. */
+    @FunctionalInterface
+    public interface ContentSource {
+        InputStream open() throws IOException;
+    }
+
+    /**
+     * Markdown(zip) 가져오기의 첨부 — 사용자가 올린 묶음 안의 파일을 방금 만든 문서에 붙인다.
+     *
+     * 일반 업로드와 같은 검사(스페이스 EDIT·문서 EDIT·보관 아님)와 같은 저장 규칙(형식은 바이트로 판별,
+     * DB가 롤백되면 저장소 객체도 지운다)을 탄다. 다른 점은 바이트 원천뿐이다(MultipartFile이 아니라 zip 항목).
+     * 같은 이름이 이미 있으면 새 버전으로 갈아끼우는 W23 규칙은 쓰지 않는다 — 부르는 쪽이 이름을 겹치지 않게
+     * 정해 넘긴다(가져오기 한 번이 같은 문서에 "v2"를 만들면 이력이 거짓이 된다).
+     */
+    public AttachmentResponse uploadImported(long userId, long pageId, String filename, long sizeBytes,
+                                             ContentSource content) {
+        Page page = pages.getOwned(pageId);
+        spaces.require(userId, page.getSpaceId(), WikiAction.EDIT);
+        effective.requireEdit(userId, page);
+        com.platform.wikibackend.page.PageWriteGuard.requireWritable(page);
+        try {
+            String contentType;
+            try (InputStream probe = content.open()) {
+                contentType = AttachmentMediaTypes.detect(probe);
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            StoredObject stored;
+            try (InputStream raw = content.open(); DigestInputStream input = new DigestInputStream(raw, digest)) {
+                stored = storage.store(input, sizeBytes, contentType);
+            }
+            storage.deleteAfterRollback(stored);
+            String checksum = HexFormat.of().formatHex(digest.digest());
+            Attachment saved = attachments.save(Attachment.of(pageId, filename, contentType, sizeBytes, stored,
+                    checksum, userId, AttachmentLifecycleStatus.CONFIRMED));
+            events.afterCommit(WikiEvents.attachmentAdded(userId, saved, page.getSpaceId()));
+            return AttachmentResponse.from(saved);
+        } catch (IOException e) {
+            throw new UncheckedIOException("가져오기 첨부 읽기 실패", e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256을 사용할 수 없습니다", e);
+        }
+    }
+
     /**
      * 이관용 스테이징(W29 M2) — 바이트를 저장소에 넣고 좌표만 돌려준다. 아직 어떤 페이지에도 붙지 않는다.
      *

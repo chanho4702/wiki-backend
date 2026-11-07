@@ -142,6 +142,14 @@ platform:
       interval: ${WIKI_ATTACHMENT_RECONCILIATION_INTERVAL:PT1H}
       initial-delay: ${WIKI_ATTACHMENT_RECONCILIATION_INITIAL_DELAY:PT5M}
       batch-size: ${WIKI_ATTACHMENT_RECONCILIATION_BATCH_SIZE:100}
+    markdown-import:
+      # Markdown zip 가져오기 상한(압축 폭탄 방어). 크기는 선언값이 아니라 실제로 풀면서 센다.
+      # zip 파일 자체의 크기는 업로드 상한(WIKI_MAX_ATTACHMENT_MB)을 따른다. .md 한 개는 1MB 고정.
+      zip:
+        max-entries: ${WIKI_MD_IMPORT_ZIP_MAX_ENTRIES:1000}
+        max-total-size: ${WIKI_MD_IMPORT_ZIP_MAX_TOTAL_SIZE:200MB}
+        max-entry-size: ${WIKI_MD_IMPORT_ZIP_MAX_ENTRY_SIZE:20MB}
+        max-pages: ${WIKI_MD_IMPORT_ZIP_MAX_PAGES:300}
     collaboration:
       # Access Token을 WebSocket query에 싣지 않기 위한 1회용 Redis ticket. 5분 초과는 부팅 시 거부한다.
       ticket-ttl: ${WIKI_COLLABORATION_TICKET_TTL:PT1M}

@@ -70,6 +70,10 @@ dependencies {
     // docx4j·flexmark-docx-converter를 쓰지 않는 이유: JAXB 런타임까지 끌고 와 이미지가 커지고, 변환기는
     // flexmark 0.64 기준 javax JAXB(docx4j 8)라 Boot 4(jakarta)와 맞지 않는다.
     implementation 'org.apache.poi:poi-ooxml:5.4.1'
+    // Markdown zip 가져오기 — 심볼릭 링크 판별(유닉스 모드 비트)과 중앙 디렉터리 기준 읽기가 필요해 JDK zip이 아니라
+    // commons-compress(Apache-2.0)를 쓴다. POI가 이미 같은 판(1.27.1)을 끌고 오므로 이미지 크기는 그대로다 — 직접 쓰는
+    // 의존성은 선언해 둔다(전이 의존성에 기대면 POI 판 올림에 조용히 바뀐다).
+    implementation 'org.apache.commons:commons-compress:1.27.1'
     implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'

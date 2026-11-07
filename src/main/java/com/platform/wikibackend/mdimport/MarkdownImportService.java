@@ -62,6 +62,7 @@ public class MarkdownImportService {
     private static final Pattern IMAGE = Pattern.compile("!\\[[^\\]]*\\]\\(\\s*<?([^)\\s>]+)");
 
     private final PageService pageService;
+    private final MarkdownZipImporter zipImporter;
 
     public record Warning(String file, String message) {
     }
@@ -76,6 +77,15 @@ public class MarkdownImportService {
     public Result importFiles(long userId, long spaceId, Long parentId, PageStatus status, List<MultipartFile> files) {
         if (files == null || files.isEmpty()) {
             throw new BadRequestException("가져올 Markdown 파일을 선택하세요");
+        }
+        boolean anyZip = files.stream().anyMatch(f -> isZip(displayName(f)));
+        if (anyZip) {
+            // zip은 폴더 구조·첨부·문서 사이 링크를 함께 옮기는 묶음이다 — 다른 파일과 섞으면 어디에 둘지 모호하다
+            if (files.size() > 1) {
+                throw new BadRequestException("zip 파일은 한 번에 하나만, 다른 파일 없이 가져올 수 있습니다");
+            }
+            return zipImporter.importZip(userId, spaceId, parentId,
+                    status == null ? PageStatus.PUBLISHED : status, files.get(0), displayName(files.get(0)));
         }
         if (files.size() > MAX_FILES) {
             throw new BadRequestException("한 번에 " + MAX_FILES + "개까지 가져올 수 있습니다");
@@ -102,6 +112,15 @@ public class MarkdownImportService {
             }
         }
         return new Result(created, warnings);
+    }
+
+    static boolean isZip(String name) {
+        return name.toLowerCase(Locale.ROOT).endsWith(".zip");
+    }
+
+    static boolean isMarkdownName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return EXTENSIONS.stream().anyMatch(lower::endsWith);
     }
 
     private static String displayName(MultipartFile file) {
@@ -135,6 +154,11 @@ public class MarkdownImportService {
         if (bytes.length > MAX_FILE_BYTES) {
             throw new BadRequestException("파일 하나는 1MB까지 가져올 수 있습니다: " + name);
         }
+        return decodeText(name, bytes);
+    }
+
+    /** UTF-8로 엄격히 풀고(잘못된 바이트는 거부) NUL이 있으면 텍스트가 아니라고 본다. zip 안의 .md도 같은 검사다. */
+    static String decodeText(String name, byte[] bytes) {
         String text;
         try {
             text = StandardCharsets.UTF_8.newDecoder()

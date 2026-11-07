@@ -63,7 +63,7 @@ FQCN 대신 import를 쓴다. 새 쓰기 경로를 만들면: `PageWriteGuard` �
 - **PDF·Word 렌더러는 외부 URL을 열지 않는다**(SSRF). 이미지는 위키 첨부만 저장소에서 읽어 넣는다 — 범위·권한·이미지 판정은 `export/ExportDocuments` 한 곳.
 - **콘텐츠 gRPC(:9111)**는 무인증·search-service 전용 — `SEARCH_MODE=lite`면 뜨지 않는다. 서비스 간 토큰은 플랫폼 공통 작업.
 - **이관 로직은 위키에 넣지 않는다** — 내부 import API(`/internal/wiki/import/**`, `X-Internal-Token`)만.
-  `mdimport/`(사용자가 올린 .md → 새 문서)는 이관 엔진이 아니다 — 원격 호출·주체 매핑 없이 `PageService.create` 한 길만 탄다.
+  `mdimport/`(사용자가 올린 .md·zip → 새 문서 트리)는 이관 엔진이 아니다 — 원격 호출·주체 매핑 없이 `PageService.create`·`AttachmentService.uploadImported` 길만 탄다. zip 상한은 `platform.wiki.markdown-import.zip.*`.
 
 ## Flyway 마이그레이션
 
