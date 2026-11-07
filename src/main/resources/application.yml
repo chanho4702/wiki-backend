@@ -30,11 +30,17 @@ spring:
 management:
   # 내부망 전용이다. 게이트웨이 라우트는 /api/** 뿐이고 nginx도 /api|oauth2|login|invite|.well-known/
   # 만 넘기므로 클러스터 밖에서는 /actuator/**에 닿지 않는다. 그 위에 SecurityFilterChain이
-  # health·info 두 경로만 permitAll 한다.
+  # health·info·prometheus 세 경로만 permitAll 한다. prometheus는 Alloy가 도커 내부망에서 긁는다
+  # (라이트 검색의 게이트웨이 search 라우트는 StripPrefix=2라, 게이트웨이가 /api/search/actuator/**를 denyAll 한다).
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  metrics:
+    tags:
+      # 모든 미터에 서비스 이름 태그. docs-backend도 같은 이름이라 Grafana에서는 Alloy가 붙이는
+      # compose service 라벨(wiki-backend / docs-backend)로 가른다.
+      application: ${spring.application.name}
   endpoint:
     health:
       # 게이트웨이 헬스 집계가 components.db·components.redis를 읽어 인프라 상태를 판정한다.

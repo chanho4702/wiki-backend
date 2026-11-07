@@ -10,8 +10,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -49,6 +51,14 @@ class DocsActuatorTest {
     void 빌드정보는_로그인_없이_200이다() throws Exception {
         mvc.perform(get("/actuator/info"))
                 .andExpect(status().isOk());
+    }
+
+    /** 메트릭도 열린다(Alloy가 내부망에서 긁는다) — denyAll 체인에서 빠뜨리면 docs-backend만 수집이 비어 보인다. */
+    @Test
+    void 메트릭은_로그인_없이_200이다() throws Exception {
+        mvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("jvm_memory_used_bytes")));
     }
 
     /** 관리자 현황은 공개 인스턴스에 있을 이유가 없다 — denyAll이 그대로 받아야 한다. */

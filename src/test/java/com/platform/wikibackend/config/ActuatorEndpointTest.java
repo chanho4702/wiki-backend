@@ -9,8 +9,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -19,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * 게이트웨이의 플랫폼 상태 집계가 컨테이너 네트워크에서 **토큰 없이** 이 두 경로를 프로브한다.
  * 인증을 요구하게 되는 순간 상태판 전체가 UNKNOWN으로 죽으므로 permitAll을 회귀로 못 박는다.
- * 동시에 다른 actuator 표면이 따라 열리지 않는지도 본다 — 노출 목록에 health·info만 있다.
+ * 동시에 다른 actuator 표면이 따라 열리지 않는지도 본다 — 노출 목록에 health·info·prometheus만 있다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -45,6 +47,15 @@ class ActuatorEndpointTest {
     void 헬스가_구성요소_상세를_싣는다() throws Exception {
         mvc.perform(get("/actuator/health"))
                 .andExpect(jsonPath("$.components.db.status").value("UP"));
+    }
+
+    /** 메트릭은 Alloy가 내부망에서 토큰 없이 긁는다 — 서비스 태그가 붙어 나와야 한다. */
+    @Test
+    void 메트릭은_토큰_없이_200이고_서비스_태그가_붙는다() throws Exception {
+        mvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("jvm_memory_used_bytes")))
+                .andExpect(content().string(containsString("application=\"wiki-backend\"")));
     }
 
     @Test

@@ -45,8 +45,8 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs", "/v3/api-docs/**").permitAll()
                         // 헬스·빌드정보 — 게이트웨이의 플랫폼 상태 집계가 컨테이너 네트워크에서
                         // 토큰 없이 프로브한다. 노출 목록(management.endpoints.web.exposure.include)에
-                        // 이 둘만 있으므로 나머지 /actuator/** 는 애초에 매핑되지 않는다.
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        // 이 셋만 있으므로 나머지 /actuator/** 는 애초에 매핑되지 않는다. prometheus는 Alloy가 긁는다.
+                        .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
