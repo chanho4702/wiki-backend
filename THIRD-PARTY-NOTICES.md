@@ -3,8 +3,8 @@
 이 문서는 `wiki-backend`의 **실행 이미지(bootJar)에 포함되는 서드파티 라이브러리**(`runtimeClasspath`)와 POM에 선언된 라이선스 목록이다.
 각 라이브러리의 저작권 고지·NOTICE·라이선스 전문은 해당 jar의 `META-INF/`와 아래 프로젝트 URL에 있다.
 
-- 생성: `infra-settings/scripts/notices/New-BackendNotices.ps1` (기준 build.gradle sha256 f0406b95f478, 서브프로젝트: (단일))
-- 라이브러리 수: 272
+- 생성: `infra-settings/scripts/notices/New-BackendNotices.ps1` (기준 build.gradle sha256 c6737123fd56, 서브프로젝트: (단일))
+- 라이브러리 수: 289
 - 컨테이너 베이스 이미지(eclipse-temurin, GPL-2.0 with Classpath Exception)와 플랫폼이 함께 띄우는 이미지 목록은 `infra-settings/THIRD-PARTY-NOTICES.md`.
 - 상표: Jira, Confluence, Atlassian은 Atlassian Pty Ltd의 상표이며 본 제품은 Atlassian과 무관합니다.
 
@@ -19,8 +19,8 @@
 
 | 라이선스 | 라이브러리 수 |
 |---|---|
-| Apache-2.0 | 215 |
-| BSD (조항 수 수동 확인) | 2 |
+| Apache-2.0 | 231 |
+| BSD (조항 수 수동 확인) | 3 |
 | BSD-2-Clause | 17 |
 | BSD-3-Clause | 4 |
 | BSD-3-Clause (수동 판정: https://www.antlr3.org/license.html) | 1 |
@@ -70,7 +70,9 @@
 | com.nimbusds:nimbus-jose-jwt | 10.4 | https://bitbucket.org/connect2id/nimbus-jose-jwt |
 | com.stoyanr:evictor | 1.0.0 | https://github.com/stoyanr/Evictor |
 | com.zaxxer:HikariCP | 7.0.2 | https://github.com/brettwooldridge/HikariCP |
+| com.zaxxer:SparseBitSet | 1.3 | https://github.com/brettwooldridge/SparseBitSet |
 | commons-codec:commons-codec | 1.19.0 | https://commons.apache.org/proper/commons-codec/ |
+| commons-io:commons-io | 2.18.0 | https://commons.apache.org/proper/commons-io/ |
 | commons-jxpath:commons-jxpath | 1.3 | http://commons.apache.org/jxpath/ |
 | commons-logging:commons-logging | 1.3.6 | https://commons.apache.org/proper/commons-logging/ |
 | de.rototor.pdfbox:graphics2d | 3.0.1 | https://github.com/rototor/pdfbox-graphics2d |
@@ -89,6 +91,7 @@
 | io.micrometer:micrometer-core | 1.16.5 | https://github.com/micrometer-metrics/micrometer |
 | io.micrometer:micrometer-jakarta9 | 1.16.5 | https://github.com/micrometer-metrics/micrometer |
 | io.micrometer:micrometer-observation | 1.16.5 | https://github.com/micrometer-metrics/micrometer |
+| io.micrometer:micrometer-registry-prometheus | 1.16.5 | https://github.com/micrometer-metrics/micrometer |
 | io.netty:netty-buffer | 4.2.12.Final | https://netty.io/ |
 | io.netty:netty-codec | 4.2.12.Final | https://netty.io/ |
 | io.netty:netty-codec-base | 4.2.12.Final | https://netty.io/ |
@@ -108,6 +111,12 @@
 | io.perfmark:perfmark-api | 0.27.0 | https://github.com/perfmark/perfmark |
 | io.projectreactor:reactor-core | 3.8.5 | https://github.com/reactor/reactor-core |
 | io.projectreactor.addons:reactor-extra | 3.6.0 | https://github.com/reactor/reactor-addons |
+| io.prometheus:prometheus-metrics-config | 1.4.3 | http://github.com/prometheus/client_java |
+| io.prometheus:prometheus-metrics-core | 1.4.3 | http://github.com/prometheus/client_java |
+| io.prometheus:prometheus-metrics-exposition-formats | 1.4.3 | http://github.com/prometheus/client_java |
+| io.prometheus:prometheus-metrics-exposition-textformats | 1.4.3 | http://github.com/prometheus/client_java |
+| io.prometheus:prometheus-metrics-model | 1.4.3 | http://github.com/prometheus/client_java |
+| io.prometheus:prometheus-metrics-tracer-common | 1.4.3 | http://github.com/prometheus/client_java |
 | io.swagger.core.v3:swagger-annotations-jakarta | 2.2.47 | https://github.com/swagger-api/swagger-core |
 | io.swagger.core.v3:swagger-core-jakarta | 2.2.47 | https://github.com/swagger-api/swagger-core |
 | io.swagger.core.v3:swagger-models-jakarta | 2.2.47 | https://github.com/swagger-api/swagger-core |
@@ -115,8 +124,11 @@
 | jakarta.validation:jakarta.validation-api | 3.1.1 | https://beanvalidation.org |
 | joda-time:joda-time | 2.3 | http://www.joda.org/joda-time/ |
 | net.bytebuddy:byte-buddy | 1.17.8 | https://bytebuddy.net |
+| org.apache.commons:commons-collections4 | 4.4 | https://commons.apache.org/proper/commons-collections/ |
+| org.apache.commons:commons-compress | 1.27.1 | https://commons.apache.org/proper/commons-compress/ |
 | org.apache.commons:commons-lang3 | 3.19.0 | https://commons.apache.org/proper/commons-lang/ |
 | org.apache.commons:commons-math | 2.2 | http://commons.apache.org/math/ |
+| org.apache.commons:commons-math3 | 3.6.1 | http://commons.apache.org/proper/commons-math/ |
 | org.apache.httpcomponents:httpclient | 4.5.3 | http://hc.apache.org/httpcomponents-client |
 | org.apache.httpcomponents:httpcore | 4.4.16 | http://hc.apache.org/httpcomponents-core-ga |
 | org.apache.httpcomponents.client5:httpclient5 | 5.5.2 | https://hc.apache.org/httpcomponents-client-5.5.x/${project.version}/ |
@@ -128,9 +140,13 @@
 | org.apache.pdfbox:pdfbox | 3.0.3 | https://www.apache.org/ |
 | org.apache.pdfbox:pdfbox-io | 3.0.3 | https://www.apache.org/ |
 | org.apache.pdfbox:xmpbox | 3.0.3 | https://www.apache.org/ |
+| org.apache.poi:poi | 5.4.1 | https://poi.apache.org/ |
+| org.apache.poi:poi-ooxml | 5.4.1 | https://poi.apache.org/ |
+| org.apache.poi:poi-ooxml-lite | 5.4.1 | https://poi.apache.org/ |
 | org.apache.tomcat.embed:tomcat-embed-core | 11.0.21 | https://tomcat.apache.org/ |
 | org.apache.tomcat.embed:tomcat-embed-el | 11.0.21 | https://tomcat.apache.org/ |
 | org.apache.tomcat.embed:tomcat-embed-websocket | 11.0.21 | https://tomcat.apache.org/ |
+| org.apache.xmlbeans:xmlbeans | 5.3.0 | https://xmlbeans.apache.org/ |
 | org.codehaus.jettison:jettison | 1.5.4 | https://github.com/jettison-json/jettison |
 | org.flywaydb:flyway-core | 11.14.1 | https://flywaydb.org |
 | org.flywaydb:flyway-database-postgresql | 11.14.1 | https://flywaydb.org |
@@ -263,6 +279,7 @@
 | 라이브러리 | 버전 | 프로젝트 URL |
 |---|---|---|
 | antlr:antlr | 2.7.7 | http://www.antlr.org/ |
+| com.github.virtuald:curvesapi | 1.08 | https://github.com/virtuald/curvesapi |
 | org.antlr:stringtemplate | 3.2.1 | http://www.stringtemplate.org |
 
 ## BSD-2-Clause
