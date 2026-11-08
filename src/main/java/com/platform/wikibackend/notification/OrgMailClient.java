@@ -76,11 +76,25 @@ public class OrgMailClient {
         String trimmed = internalUri == null ? "" : internalUri.trim();
         while (trimmed.endsWith("/")) trimmed = trimmed.substring(0, trimmed.length() - 1);
         this.baseUri = trimmed;
-        this.token = internalToken == null ? "" : internalToken.trim();
+        this.token = firstToken(internalToken);
         this.json = json;
         this.http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
         this.sendUri = this.baseUri.isEmpty() ? null : URI.create(this.baseUri + "/internal/org/mail");
         this.statusUri = this.baseUri.isEmpty() ? null : URI.create(this.baseUri + "/internal/org/mail/status");
+    }
+
+    /**
+     * 보낼 값 하나 — 설정값이 콤마 목록이면 비어 있지 않은 첫 항목(trim). {@code ORG_INTERNAL_TOKEN}(compose가
+     * {@code ORG_MAIL_TOKEN}에서 매핑, N5)은 org 수신 허용 목록과 같은 .env 변수라 회전 중엔 {@code 신,구}가 들어온다 —
+     * 목록째 실으면 403이다. auth-server {@code OrgInternalClient.firstToken}과 같은 의미론.
+     */
+    static String firstToken(String configured) {
+        if (configured == null) return "";
+        for (String item : configured.split(",")) {
+            String v = item.trim();
+            if (!v.isEmpty()) return v;
+        }
+        return "";
     }
 
     /** 허브가 메일을 보낼 수 있는 상태인가 — 설정 화면이 "스위치를 켜도 아무것도 안 온다"를 먼저 말하는 근거. */

@@ -166,6 +166,35 @@ class OrgMailClientTest {
         assertThat(sendCalls).isEmpty();
     }
 
+    /** 회전 중 ORG_INTERNAL_TOKEN(ORG_MAIL_TOKEN)=신,구 — 수신 허용 목록과 같은 변수지만 발신은 첫 항목만(목록째 보내면 403). */
+    @Test
+    void 토큰이_콤마_목록이면_첫_항목만_싣는다() {
+        OrgMailClient client = new OrgMailClient(baseUri, " ,new-token,old-token", json);
+
+        assertThat(client.send(List.of("bob@org.example"), "제목", "본문")).isTrue();
+
+        assertThat(sendCalls).hasSize(1);
+        assertThat(sendCalls.get(0).token()).isEqualTo("new-token");
+    }
+
+    @Test
+    void 콤마뿐인_토큰은_없는_것으로_본다() {
+        OrgMailClient client = new OrgMailClient(baseUri, " , ", json);
+
+        assertThat(client.enabled()).isFalse();
+        assertThat(client.send(List.of("bob@org.example"), "제목", "본문")).isFalse();
+        assertThat(statusCalls).hasValue(0);
+        assertThat(sendCalls).isEmpty();
+    }
+
+    @Test
+    void firstToken은_trim하고_빈_항목을_건너뛴다() {
+        assertThat(OrgMailClient.firstToken("a,b")).isEqualTo("a");
+        assertThat(OrgMailClient.firstToken(" ,b ")).isEqualTo("b");
+        assertThat(OrgMailClient.firstToken(null)).isEmpty();
+        assertThat(OrgMailClient.firstToken("")).isEmpty();
+    }
+
     /**
      * 허브는 한 요청의 수신자를 100명까지만 받고 넘으면 400이다. 잘라 보내면 101번째 사람만 조용히
      * 알림을 못 받는다 — 나눠 보내고, 아무도 빠지지 않는지 본다.
