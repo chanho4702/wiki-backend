@@ -285,7 +285,7 @@ class OpenApiDocsTest {
     }
 
     /**
-     * 409를 내는 엔드포인트 전부. ConflictException(13곳)과 MoveImpactException(1곳)을
+     * 409를 내는 엔드포인트 전부. ConflictException(14곳)과 MoveImpactException(1곳)을
      * 엔드포인트로 접은 결과다 — 사이트가 늘면 아래 SOURCE 카운트 가드가 먼저 깨져
      * 여기 매핑을 다시 보게 만든다.
      */
@@ -300,7 +300,8 @@ class OpenApiDocsTest {
             "PUT /api/wiki/pages/{pageId}/tasks/{lineNo}",
             "POST /api/wiki/spaces/{spaceId}/templates",
             "PUT /api/wiki/templates/{templateId}",
-            "POST /api/wiki/pages/{pageId}/save-as-template");
+            "POST /api/wiki/pages/{pageId}/save-as-template",
+            "GET /api/wiki/admin/attachments/orphans");
 
     @Test
     void 실제로_409를_내는_엔드포인트만_409를_문서화한다() throws Exception {
@@ -372,7 +373,7 @@ class OpenApiDocsTest {
 
     @Test
     void 충돌을_던지는_자리_수가_고정되어_있다() throws Exception {
-        assertThat(countInMainSources("new ConflictException(", "")).isEqualTo(13);
+        assertThat(countInMainSources("new ConflictException(", "")).isEqualTo(14);
         // 던지는 쪽이 FQN을 쓴다(new com.platform...MoveImpactException) — 이름 형태에 기대지 않고
         // 클래스명으로 센다. 선언 파일 자체(생성자)는 빼야 실제 throw 자리만 남는다.
         assertThat(countInMainSources("MoveImpactException(", "MoveImpactException.java")).isEqualTo(1);
