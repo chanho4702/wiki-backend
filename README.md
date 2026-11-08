@@ -78,6 +78,7 @@ dev 설정을 사용하고, auth-server JWKS와 org-service gRPC도 각각 `:190
 | 댓글 | `PUT/DELETE /api/wiki/comments/{id}` | 작성자 (삭제는 스페이스 ADMIN도) |
 | 감사 로그 | `GET /api/wiki/spaces/{spaceId}/audit` | 스페이스 ADMIN |
 | 감사 로그 | `GET /api/wiki/audit`, `GET /api/wiki/audit/space-deletions` | 전역 관리자 |
+| 첨부 고아 리포트 | `GET /api/wiki/admin/attachments/orphans?limit=&maxObjects=` — S3 버킷↔첨부 행 대조 드라이런(삭제 없음, S3 꺼지면 409) | 전역 관리자 |
 
 표는 요약이다. 전체 목록은 `/v3/api-docs`(아래 OpenAPI)가 정본이다.
 

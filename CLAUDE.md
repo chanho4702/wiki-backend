@@ -59,6 +59,7 @@ FQCN 대신 import를 쓴다. 새 쓰기 경로를 만들면: `PageWriteGuard` �
 - **보관 문서는 읽기 전용**(PageWriteGuard). 휴지통 복원 시 부모가 없거나·다른 스페이스·보관 중이면 루트로.
 - **"지우고 다시 넣기" 교체**는 bulk `@Modifying` 삭제(즉시 실행) 또는 `flush()` 뒤에 넣는다 — 파생 `deleteBy`는
   flush 때 INSERT가 먼저 나가 운영 PG 유니크 제약에 걸린다.
+- **첨부 고아 리포트**(`admin/AttachmentOrphanReportService`, `GET /api/wiki/admin/attachments/orphans`)는 읽기 전용 드라이런이다 — 참조 키는 `attachment`+`attachment_version` 둘 다, 최근 1시간 객체·행은 업로드 경합 때문에 뺀다. 회수(삭제)는 사용자 확인 뒤 별도 작업.
 - **LIKE**는 `LikePatterns`로 이스케이프하고 질의에 `escape '\'`를 붙인다.
 - **PDF·Word 렌더러는 외부 URL을 열지 않는다**(SSRF). 이미지는 위키 첨부만 저장소에서 읽어 넣는다 — 범위·권한·이미지 판정은 `export/ExportDocuments` 한 곳.
 - **콘텐츠 gRPC(:9111)**는 무인증·search-service 전용 — `SEARCH_MODE=lite`면 뜨지 않는다. 서비스 간 토큰은 플랫폼 공통 작업.
